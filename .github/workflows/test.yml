@@ -1,0 +1,62 @@
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: "go.mod"
+      # golangci-lint als Go-Linter-Standard (statt MegaLinter) — siehe .golangci.yml und
+      # .claude/skills/repo-bootstrap/SKILL.md im homelab-management-Repo.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: "go.mod"
+      - run: go build ./...
+      - run: go vet ./...
+      # -race braucht cgo (Race-Detector-Runtime); der Server-Build selbst bleibt pure-Go
+      # (go build/vet oben laufen mit CGO_ENABLED=0). Nur diese Stufe aktiviert cgo.
+      - name: Test (race + coverage)
+        env:
+          CGO_ENABLED: "1"
+        run: go test ./... -race -coverprofile=cover.out
+      - name: Coverage-Gate (test-coverage-pflicht.md)
+        run: |
+          chmod +x scripts/coverage-gate-strict.sh
+          # Die Schwellen kommen aus der Regel-Tabelle in test-coverage-pflicht.md
+          # (homelab-management), NICHT aus der gemessenen Ist-Coverage: bei einem
+          # Greenfield-Repo waere "an der Messung orientiert" zirkulaer und wuerde die
+          # Mindestwerte unterlaufen.
+          #
+          #   Auth-/Permission-Code ......... 90   auth_oidc.go, auth_token.go,
+          #                                        accounts.go, capabilities.go, config.go
+          #   Mutations-Logik ............... 85   clientpool.go, tools_destructive.go,
+          #                                        alle mutierenden Tool-Pfade
+          #   Business-Logik ................ 80   uebrige tools_*.go, server.go, errors.go
+          #   Adapter/Boot .................. 60   main.go, secrets.go
+          #
+          # Die Liste waechst mit jedem Umsetzungsschritt mit. Jede neue Datei bekommt
+          # ihre Schwelle im selben PR, in dem sie entsteht — nachtraeglich nachziehen
+          # heisst, das Gate fuer diese Datei nie scharf zu schalten.
+          ./scripts/coverage-gate-strict.sh cover.out \
+            cmd/fileee-mcp-server/version.go:90
+      - name: Doc-Coverage (exportierte Symbole)
+        run: |
+          chmod +x scripts/doc-coverage.sh
+          ./scripts/doc-coverage.sh

@@ -1,0 +1,43 @@
+version: "2"
+
+# golangci-lint als Go-Linter-Standard (statt MegaLinter) — Begründung siehe
+# .claude/skills/repo-bootstrap/SKILL.md Punkt „MegaLinter vs. golangci-lint" im
+# homelab-management-Repo: für reine Go-Repos ist der Polyglot-Aggregator MegaLinter
+# unverhältnismäßiger Overhead gegenüber dem idiomatischen Go-eigenen Linter.
+#
+# Aktivierte Linter sind bewusst der golangci-lint-Default-Satz (errcheck, govet,
+# ineffassign, staticcheck, unused) — kein aufgeblähtes Zusatz-Linter-Set beim
+# Erst-Einsatz, das den CI-Job sofort mit vielen neuen Stilfragen rot laufen lässt.
+# Config identisch zum Schwester-Repo go-fileee (dieselbe Config-Philosophie).
+linters:
+  default: standard
+  settings:
+    errcheck:
+      # Deferred Close()/Remove() auf Read-Pfaden: ein Fehler beim Schließen einer bereits
+      # gelesenen Response/Datei ändert das Programmergebnis nicht mehr — Standard-Ausnahme
+      # laut errcheck-eigener Doku ("excluding functions"), keine verdeckte Fehlerunterdrückung.
+      exclude-functions:
+        - (io.Closer).Close
+        - (net/http.Response).Body.Close
+        - (*os.File).Close
+        - os.Remove
+        # Access-Log-Zeile (accesslog.go): ein Schreibfehler auf dem Log-io.Writer ist im
+        # laufenden Request-Handler nicht sinnvoll behandelbar (kein Retry, kein Client-Bezug).
+        - fmt.Fprintf
+  exclusions:
+    rules:
+      # Test-Dateien: Fehler beim Schreiben/Lesen in Mock-Servern/Test-Fixtures sind kein
+      # Produktionsrisiko — Prüfung würde nur Test-Boilerplate aufblähen ohne echten Nutzen.
+      - path: _test\.go
+        linters:
+          - errcheck
+      # QF10xx = staticcheck "quickfix"-Stilvorschläge (z. B. Embedded-Field-Selector kürzen,
+      # switch statt if-Kette) — keine Bugs, bewusst nicht erzwungen beim Erst-Einsatz.
+      - linters:
+          - staticcheck
+        text: "^QF10"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
