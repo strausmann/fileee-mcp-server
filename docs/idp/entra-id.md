@@ -63,6 +63,28 @@ Für ein `https://`-Schema verlangt Entra eine im Tenant verifizierte Domain. Is
 
 Voller Scope-Wert: `<MCP_URL>/mcp.access` bzw. `api://<CLIENT_ID>/mcp.access`. Er wird im Protected-Resource-Metadata-Dokument des MCP-Servers unter `scopes_supported` veröffentlicht, damit der Client ihn anfordert.
 
+> **Alternative `.default`:** Statt eines benannten Scopes lässt sich auch der Entra-eigene Sammel-Scope `api://<CLIENT_ID>/.default` anfordern, der alle statisch konfigurierten Berechtigungen der App auflöst. Er funktioniert nur, wenn mindestens ein Scope existiert — ein leeres „Expose an API" lässt `.default` ins Leere laufen. Wer diesen Weg geht, legt trotzdem einen Scope an (üblich: `user_impersonation`) und fordert dann `.default` an.
+
+## 3a. App-Rollen für den Funktionsumfang (optional, empfohlen)
+
+Statt den Funktionsumfang je Benutzer in der Server-Konfiguration zu pflegen, lässt er sich in Entra verwalten. *App roles → Create app role*, je Capability-Gruppe eine Rolle:
+
+| Display name | Value | Allowed member types |
+|---|---|---|
+| `Reader` | `read` | Users/Groups |
+| `Writer` | `write` | Users/Groups |
+| `Sharer` | `share` | Users/Groups |
+
+Entra schreibt zugewiesene Rollen in den `roles`-Claim des Access-Tokens. Der Server kann daraus den Funktionsumfang ableiten, statt ihn pro Konto in einer Umgebungsvariable zu führen:
+
+```dotenv
+MCP_OIDC_CAPABILITY_CLAIM=roles
+```
+
+Die globale `FILEEE_CAPABILITIES`-Einstellung bleibt dabei die Obergrenze — eine Rolle kann nur freischalten, was global ohnehin erlaubt ist. Wer keine Rollen zuweist, bekommt den konfigurierten Standardumfang.
+
+`destructive` bewusst **nicht** als Rolle anlegen. Fileees Hard-DELETE ist unwiderruflich; diese Gruppe soll eine bewusste Entscheidung am Server bleiben, keine Klick-Zuweisung im Portal.
+
 ## 4. Token-Version auf v2.0 stellen
 
 *Manifest* öffnen und sicherstellen:
@@ -73,13 +95,19 @@ Voller Scope-Wert: `<MCP_URL>/mcp.access` bzw. `api://<CLIENT_ID>/mcp.access`. E
 
 Ohne diese Einstellung stellt Entra v1.0-Tokens mit abweichendem Issuer aus, und die Prüfung gegen `https://login.microsoftonline.com/<TENANT_ID>/v2.0` schlägt fehl.
 
-## 5. Zugriff einschränken
+## 5. Graph-Berechtigungen und Admin-Consent
 
-*Enterprise applications → `<APP_SLUG>` → Properties* → **Assignment required = Yes**, danach unter *Users and groups* gezielt zuweisen.
+*API permissions* → sicherstellen, dass die delegierten Microsoft-Graph-Berechtigungen `openid`, `profile` und **`offline_access`** vorhanden sind → **Grant admin consent**.
+
+`offline_access` ist der Punkt, der leicht übersehen wird: ohne diese Berechtigung stellt Entra **kein Refresh-Token** aus. Der Connector funktioniert dann zunächst einwandfrei und bricht ab, sobald das erste Access-Token abläuft — ein Fehlerbild, das sich schwer auf die Ursache zurückführen lässt, weil zwischen Einrichtung und Symptom Stunden liegen.
+
+## 6. Zugriff einschränken
+
+*Enterprise applications → `<APP_SLUG>` → Properties* → **Assignment required = Yes**, danach unter *Users and groups* gezielt zuweisen. Bei Verwendung von App-Rollen (Abschnitt 3a) wird hier zugleich die Rolle vergeben.
 
 Ohne diese Einstellung kann jeder Benutzer des Tenants den Connector verbinden.
 
-## 6. Ermittelte Werte
+## 7. Ermittelte Werte
 
 | Wert | Pfad |
 |---|---|
@@ -87,6 +115,8 @@ Ohne diese Einstellung kann jeder Benutzer des Tenants den Connector verbinden.
 | Issuer | `https://login.microsoftonline.com/<TENANT_ID>/v2.0` |
 | JWKS | aus dem Discovery-Dokument (`jwks_uri`) |
 | `aud` im v2-Token | `<CLIENT_ID>` |
+
+Der Server akzeptiert drei Audience-Werte als gültig: `MCP_RESOURCE_URL`, `MCP_OIDC_AUDIENCE` und `api://<CLIENT_ID>`. Entra füllt `aud` je nach angefordertem Scope und Token-Version unterschiedlich, und eine zu enge Prüfung erzeugt eine 401-Schleife, die im Client nur als „Authorization failed" ankommt.
 
 ```dotenv
 MCP_AUTH_MODE=oidc
@@ -108,7 +138,7 @@ Soll die Zuordnung über mehrere Anwendungen hinweg stabil sein, `MCP_OIDC_SUBJE
 
 Entra liefert den **kurzen** Namen im `scp`-Claim (`mcp.access`), während im Protected-Resource-Metadata-Dokument der volle URI-Scope veröffentlicht wird. `MCP_OIDC_REQUIRED_SCOPES` erwartet die kurze Form.
 
-## 7. Verifikation
+## 8. Verifikation
 
 ```bash
 curl -s https://login.microsoftonline.com/<TENANT_ID>/v2.0/.well-known/openid-configuration \
@@ -118,12 +148,12 @@ curl -s https://login.microsoftonline.com/<TENANT_ID>/v2.0/.well-known/openid-co
 Nach dem ersten erfolgreichen Login das Token prüfen:
 
 ```bash
-echo "<ACCESS_TOKEN>" | cut -d. -f2 | base64 -d 2>/dev/null | jq '{iss, aud, sub, oid, scp, exp}'
+echo "<ACCESS_TOKEN>" | cut -d. -f2 | base64 -d 2>/dev/null | jq '{iss, aud, sub, oid, scp, roles, exp}'
 ```
 
-Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.access`.
+Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.access`. Bei Verwendung von App-Rollen enthält `roles` die zugewiesenen Werte — fehlt der Claim, ist die Rollenzuweisung aus Abschnitt 6 nicht erfolgt.
 
-## 8. Bekannte Stolpersteine
+## 9. Bekannte Stolpersteine
 
 | Symptom | Ursache | Behebung |
 |---|---|---|
@@ -131,5 +161,8 @@ Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.ac
 | `iss` endet nicht auf `/v2.0` | `accessTokenAcceptedVersion` steht nicht auf `2` | Manifest korrigieren |
 | `AADSTS50011` (Redirect-URI-Mismatch) | Redirect-URI weicht ab, bei Claude Code der Port | exakte URI eintragen; Entra ignoriert den Port **nicht** |
 | Connector funktioniert plötzlich nicht mehr | Client-Secret abgelaufen | neues Secret erzeugen und im Connector aktualisieren |
+| Verbindung bricht nach der ersten Token-Laufzeit ab | `offline_access` fehlt, kein Refresh-Token | Schritt 5 nachholen, inklusive Admin-Consent |
+| 401-Schleife, „audience mismatch" | `aud` ist keiner der akzeptierten Werte | `accessTokenAcceptedVersion: 2` prüfen und sicherstellen, dass `MCP_OIDC_AUDIENCE` zur Application ID URI passt |
+| Write-Tools erscheinen nicht | App-Rolle nicht zugewiesen oder `MCP_OIDC_CAPABILITY_CLAIM` nicht gesetzt | Abschnitte 3a und 6 prüfen; `roles`-Claim im Token gegenprüfen |
 | Jeder Tenant-Benutzer kommt durch | „Assignment required" steht auf `No` | Schritt 5 nachholen |
 | Kein DCR möglich | Entra unterstützt weder Dynamic Client Registration noch Client ID Metadata Documents | vorregistrierte Client-ID/Secret im Connector-Dialog eintragen — der vorgesehene Weg |

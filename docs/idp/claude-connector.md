@@ -2,6 +2,17 @@
 
 Gilt unabhängig vom gewählten Identity Provider. Vorher muss der IdP eingerichtet sein — siehe [`authentik.md`](authentik.md) oder [`entra-id.md`](entra-id.md).
 
+## Zwei Bauweisen — nicht verwechseln
+
+Anleitungen für andere MCP-Server beschreiben teils eine andere Architektur. Der Unterschied ist am Redirect-URI erkennbar:
+
+| | Redirect-URI im IdP | Wer stellt das Token aus | Client-ID im Connector |
+|---|---|---|---|
+| **Resource Server** (dieses Projekt) | `https://claude.ai/api/mcp/auth_callback` | der IdP | muss eingetragen werden |
+| **Eigener Authorization Server** | `https://<mcp-host>/callback` | der MCP-Server selbst, IdP nur als Login-Broker | entfällt, sofern der Server Dynamic Client Registration anbietet |
+
+`fileee-mcp-server` ist ein Resource Server. Wird versehentlich der Redirect-URI der zweiten Variante im IdP eingetragen, schlägt der Login fehl, ohne dass der MCP-Server je einen Request sieht.
+
 ## Vorab prüfen
 
 ```bash
