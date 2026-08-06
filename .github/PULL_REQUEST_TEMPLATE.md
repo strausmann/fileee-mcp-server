@@ -31,6 +31,10 @@ Refs #… <!-- oder: Closes #… -->
       Handler-Kontext.
 - [ ] `TokenInfo.UserID` wird vom Verifier gesetzt (Session-Hijacking-Schutz des SDK).
 - [ ] Tool-Ausgaben mit Dokumentinhalten sind als nicht vertrauenswürdig gekennzeichnet.
+- [ ] Absolute URLs (PRM-`resource`, `resource_metadata` im `WWW-Authenticate`-Header) stammen aus
+      `MCP_RESOURCE_URL`, **nicht** aus `r.Host` oder `X-Forwarded-*`.
+- [ ] Keine Zugriffsentscheidung auf Basis der Client-IP — alle Claude-Nutzer teilen sich denselben
+      Egress-Bereich.
 
 ## Testnachweis
 
