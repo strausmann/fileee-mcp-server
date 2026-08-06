@@ -31,7 +31,10 @@ fi
 
 fail=0
 for spec in "$@"; do
-    pfad="${spec%%:*}"
+    # Am LETZTEN Doppelpunkt trennen, nicht am ersten: ein Pfad darf selbst Doppelpunkte
+    # enthalten (Windows-Laufwerksbuchstabe, exotische Modulpfade). Mit %%:* waere aus
+    # "C:/build/pkg/foo.go:90" der Pfad "C" geworden.
+    pfad="${spec%:*}"
     schwelle="${spec##*:}"
 
     # Substring-Match in awk statt grep: das umgeht sowohl die Options-Erkennung von grep bei
