@@ -2,9 +2,12 @@ package main
 
 import "testing"
 
+// Bewusst NICHT parallel: die beiden folgenden Tests schreiben die paketweite
+// Variable version. Aktuell entsteht daraus kein Race, weil ein parallel
+// markierter Test erst weiterlaeuft, wenn die seriellen Tests durch sind — aber
+// sobald jemand einem der schreibenden Tests ein t.Parallel() hinzufuegt, waere
+// es eines. Der Nebenlaeufigkeitsgewinn bei drei trivialen Tests ist null.
 func TestVersionDefault(t *testing.T) {
-	t.Parallel()
-
 	if got := Version(); got != "dev" {
 		t.Fatalf("Version() = %q, erwartet %q — ohne ldflags-Override muss der Platzhalter greifen", got, "dev")
 	}
