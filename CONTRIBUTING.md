@@ -50,7 +50,17 @@ Drei Bereiche sind sicherheitskritisch und brauchen im PR eine ausdrückliche Be
 
 Commit-Messages folgen [Conventional Commits](https://www.conventionalcommits.org/) und werden per Husky-Hook + [commitlint](https://commitlint.js.org/) geprüft (`.commitlintrc.json`, `@commitlint/config-conventional`):
 
-- **Typ:** `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:` — auf Deutsch formuliert, z. B. `fix(accounts): doppeltes subject bricht den start ab`.
+- **Typ:** `feat:`, `fix:`, `perf:`, `refactor:`, `build:`, `docs:`, `test:`, `chore:`, `ci:` — auf Deutsch formuliert, z. B. `fix(accounts): doppeltes subject bricht den start ab`.
+
+  Welcher Typ ein Release auslöst, steht in `.releaserc.json` und ist nicht selbsterklärend:
+
+  | Typ | Wirkung |
+  |---|---|
+  | `feat` | Minor-Release |
+  | `fix`, `perf` | Patch-Release |
+  | `refactor`, `build` | Patch-Release (abweichend vom Preset-Default, bewusst so gesetzt) |
+  | `docs`, `test`, `chore`, `ci` | kein Release |
+  | Footer `BREAKING CHANGE:` | Major-Release, unabhängig vom Typ |
 - **Subject in Kleinbuchstaben** (`subject-case`-Regel) — kein großgeschriebener Satzanfang.
 - **Scope** aus der festen Liste in `.commitlintrc.json` (`server`, `config`, `secrets`, `auth`, `accounts`, `tools`, `capabilities`, `deploy`, `adr`, `ci`, `deps`, `docs`, `release`) — kein neuer Scope ohne Anpassung der Datei.
 - **Issue-Referenz:** `Refs #N` oder `Closes #N` in Commit oder PR-Beschreibung.
