@@ -37,6 +37,17 @@ for spec in "$@"; do
     pfad="${spec%:*}"
     schwelle="${spec##*:}"
 
+    # Die Spec MUSS "pfad:schwelle" mit numerischer Schwelle sein. Ohne diese Pruefung wird ein
+    # Tippfehler wie "foo.go" (kein Doppelpunkt) oder "foo.go:" (leere Schwelle) von awk zu 0
+    # ausgewertet — die Datei besteht das Gate dann auch mit 0 Prozent Coverage, und zwar
+    # geraeuschlos. Ein wirkungsloses Gate ist schlimmer als kein Gate, weil es Sicherheit
+    # vortaeuscht.
+    if [[ "$spec" != *:* || -z "$schwelle" || ! "$schwelle" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "FAIL: '$spec' — erwartet wird <pfad>:<schwelle> mit numerischer Schwelle" >&2
+        fail=1
+        continue
+    fi
+
     # Substring-Match in awk statt grep: das umgeht sowohl die Options-Erkennung von grep bei
     # fuehrendem Bindestrich im Pfad als auch das Risiko, dass ein Kein-Treffer unter
     # set -euo pipefail die Auswertung STILLSCHWEIGEND beendet. Ein Tippfehler im Pfad oder eine
