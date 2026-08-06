@@ -35,7 +35,7 @@ while IFS= read -r file; do
     inblock {
       # Exportiertes Mitglied innerhalb des Blocks (fuehrender Whitespace ist Gofmt-Standard).
       if ($0 ~ /^[ \t]+[A-Z][A-Za-z0-9_]*/) {
-        name=$1
+        name=$1; sub(/[(\[,].*/,"",name)
         if (!blockdoc && !hascomment) print F":"NR": Block-Mitglied "name
       }
       hascomment=0; next
@@ -47,8 +47,10 @@ while IFS= read -r file; do
       hascomment=0; next
     }
     /^func [A-Z]/ { name=$2; sub(/[(\[].*/,"",name); if(!hascomment) print F":"NR": func "name; hascomment=0; next }
-    /^type [A-Z]/ { if(!hascomment) print F":"NR": type "$2; hascomment=0; next }
-    /^(const|var) [A-Z]/ { if(!hascomment) print F":"NR": "$1" "$2; hascomment=0; next }
+    # Wie bei func/Methoden den Namen von Generics-Parametern und Mehrfach-Deklarationen
+    # bereinigen, damit die Meldung den reinen Bezeichner nennt (type Foo[T any] -> Foo).
+    /^type [A-Z]/ { name=$2; sub(/[(\[,].*/,"",name); if(!hascomment) print F":"NR": type "name; hascomment=0; next }
+    /^(const|var) [A-Z]/ { name=$2; sub(/[(\[,].*/,"",name); if(!hascomment) print F":"NR": "$1" "name; hascomment=0; next }
     { hascomment=0 }
   ' "$file"
 done < <(find . -name '*.go' ! -name '*_test.go' \
