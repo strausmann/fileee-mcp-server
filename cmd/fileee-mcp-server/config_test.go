@@ -269,6 +269,58 @@ func TestLoadConfigFailFast(t *testing.T) {
 			erwartet: "FILEEE_KEEPALIVE_INTERVAL",
 		},
 		{
+			name: "doppelter konto-key",
+			env: func() map[string]string {
+				e := minimalOIDC()
+				e["FILEEE_MODE"] = "multi"
+				e["FILEEE_ACCOUNTS"] = "anna,anna"
+				e["FILEEE_ACCOUNT_ANNA_USERNAME"] = "anna@example.com"
+				e["FILEEE_ACCOUNT_ANNA_PASSWORD"] = "geheim"
+				e["FILEEE_ACCOUNT_ANNA_SUBJECTS"] = "anna"
+				return e
+			},
+			erwartet: "mehrfach",
+		},
+		{
+			name: "konto-keys kollidieren nach der praefix-normalisierung",
+			env: func() map[string]string {
+				e := minimalOIDC()
+				e["FILEEE_MODE"] = "multi"
+				e["FILEEE_ACCOUNTS"] = "foo-bar,foo_bar"
+				e["FILEEE_ACCOUNT_FOO_BAR_USERNAME"] = "u@example.com"
+				e["FILEEE_ACCOUNT_FOO_BAR_PASSWORD"] = "geheim"
+				return e
+			},
+			erwartet: "dieselben Variablen",
+		},
+		{
+			name: "negatives byte-limit",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_MAX_UPLOAD_BYTES"] = "-1"
+				return e
+			},
+			erwartet: "FILEEE_MAX_UPLOAD_BYTES",
+		},
+		{
+			name: "negative rate",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_RATE_RPS"] = "-0.5"
+				return e
+			},
+			erwartet: "FILEEE_RATE_RPS",
+		},
+		{
+			name: "nulldauer beim keepalive",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_KEEPALIVE_INTERVAL"] = "-5m"
+				return e
+			},
+			erwartet: "FILEEE_KEEPALIVE_INTERVAL",
+		},
+		{
 			name: "single-modus ohne credentials",
 			env: func() map[string]string {
 				return map[string]string{"MCP_API_TOKEN": "t0ken"}
@@ -359,14 +411,20 @@ func TestLoadConfigWarntBeiTokenModusMitOeffentlicherURL(t *testing.T) {
 		t.Fatal("keine Warnung erzeugt, erwartet einen Hinweis zum token-Modus auf oeffentlicher URL")
 	}
 
-	env["MCP_RESOURCE_URL"] = "http://127.0.0.1:8080/mcp"
-	cfg, err = LoadConfig(envOf(env))
-	if err != nil {
-		t.Fatalf("LoadConfig = Fehler %v", err)
-	}
-	for _, w := range cfg.Warnings {
-		if strings.Contains(w, "token") {
-			t.Fatalf("Warnung %q bei Loopback-Adresse, erwartet keine", w)
+	for _, lokal := range []string{
+		"http://127.0.0.1:8080/mcp",
+		"http://localhost:8080/mcp",
+		"http://[::1]:8080/mcp",
+	} {
+		env["MCP_RESOURCE_URL"] = lokal
+		cfg, err = LoadConfig(envOf(env))
+		if err != nil {
+			t.Fatalf("LoadConfig(%s) = Fehler %v", lokal, err)
+		}
+		for _, w := range cfg.Warnings {
+			if strings.Contains(w, "MCP_AUTH_MODE") {
+				t.Fatalf("Warnung %q bei Loopback-Adresse %s, erwartet keine", w, lokal)
+			}
 		}
 	}
 }

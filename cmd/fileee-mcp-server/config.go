@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -276,12 +278,29 @@ func ladeKonten(cfg *Config, env Env) error {
 		return fmt.Errorf("FILEEE_ACCOUNTS ist im Modus multi Pflicht")
 	}
 
+	// Zwei Pruefungen auf Eindeutigkeit: der Key selbst wird zum Dateinamen der Session,
+	// und das daraus abgeleitete Env-Praefix bestimmt, welche Variablen gelesen werden.
+	// "foo-bar" und "foo_bar" ergeben dasselbe Praefix und wuerden sich sonst
+	// unbemerkt dieselben Zugangsdaten teilen.
+	gesehen := map[string]bool{}
+	praefixe := map[string]string{}
+
 	for _, key := range keys {
+		if gesehen[key] {
+			return fmt.Errorf("der Konto-Key %q steht mehrfach in FILEEE_ACCOUNTS", key)
+		}
+		gesehen[key] = true
+
 		if !accountKeyMuster.MatchString(key) {
-			return fmt.Errorf("Konto-Key %q ist unzulaessig — erlaubt sind 1 bis 32 Zeichen aus "+
+			return fmt.Errorf("der Konto-Key %q ist unzulaessig — erlaubt sind 1 bis 32 Zeichen aus "+
 				"[a-z0-9_-]; der Key wird als Dateiname der Session verwendet", key)
 		}
 		praefix := "FILEEE_ACCOUNT_" + strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
+		if anderer, kollision := praefixe[praefix]; kollision {
+			return fmt.Errorf("die Konto-Keys %q und %q lesen dieselben Variablen (%s_*) — "+
+				"Bindestrich und Unterstrich werden im Praefix gleich behandelt", anderer, key, praefix)
+		}
+		praefixe[praefix] = key
 
 		konto := Account{
 			Key:      key,
@@ -310,7 +329,7 @@ func ladeKonten(cfg *Config, env Env) error {
 
 		for _, subject := range konto.Subjects {
 			if vorhanden, doppelt := cfg.subjectIndex[subject]; doppelt {
-				return fmt.Errorf("Subject %q zeigt auf zwei Konten (%q und %q) — bei zwei plausiblen "+
+				return fmt.Errorf("das Subject %q zeigt auf zwei Konten (%q und %q) — bei zwei plausiblen "+
 					"Zuordnungen gibt es keine richtige Wahl, deshalb kein first-match-wins",
 					subject, vorhanden, key)
 			}
@@ -347,6 +366,12 @@ func intWert(env Env, key string, fallback int64) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%s = %q ist keine ganze Zahl", key, roh)
 	}
+	// Negative Werte sind fuer jeden Konsumenten dieser Funktion unsinnig — Byte-Grenzen,
+	// Burst-Groessen, Nebenlaeufigkeit. Ohne diese Pruefung ergaebe ein negatives
+	// Upload-Limit ein negatives MaxRequestBodyBytes, und der Server startete damit.
+	if wert < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	}
 	return wert, nil
 }
 
@@ -358,6 +383,9 @@ func floatWert(env Env, key string, fallback float64) (float64, error) {
 	wert, err := strconv.ParseFloat(roh, 64)
 	if err != nil {
 		return 0, fmt.Errorf("%s = %q ist keine Zahl", key, roh)
+	}
+	if wert < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
 	}
 	return wert, nil
 }
@@ -371,13 +399,27 @@ func dauerWert(env Env, key string, fallback time.Duration) (time.Duration, erro
 	if err != nil {
 		return 0, fmt.Errorf("%s = %q ist keine Dauer (erwartet z. B. 15m, 30s)", key, roh)
 	}
+	if wert < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	}
 	return wert, nil
 }
 
 // istLoopback erkennt lokale Adressen, bei denen der token-Modus unbedenklich ist.
-func istLoopback(url string) bool {
-	ohneSchema := strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
-	host, _, _ := strings.Cut(ohneSchema, "/")
-	host, _, _ = strings.Cut(host, ":")
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+//
+// Die Auswertung laeuft ueber url.Parse und Hostname(), nicht ueber eigenes
+// Zerschneiden: nur so wird die Klammer-Schreibweise von IPv6 ("http://[::1]:8080/")
+// korrekt aufgeloest. Eine selbstgebaute Trennung am ersten Doppelpunkt haette
+// dort "[" ergeben und faelschlich vor einer oeffentlichen URL gewarnt.
+func istLoopback(roh string) bool {
+	u, err := url.Parse(roh)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
