@@ -81,7 +81,19 @@ FILEEE_CAPABILITIES=read,write,share,destructive      # zusätzlich FILEEE_ALLOW
 | `share` | Freigabe-Links, ZIP-Export, Konversations-Nachrichten und -Teilnehmer |
 | `destructive` | Hard-DELETE von Dokumenten, Kontakten und Erinnerungen — **doppeltes Gate** |
 
-Nicht freigeschaltete Tools werden dem Client gar nicht erst angeboten. Pro Konto lässt sich der Umfang zusätzlich einschränken; die globale Einstellung ist dabei die Obergrenze.
+Nicht freigeschaltete Tools werden dem Client gar nicht erst angeboten.
+
+### Wer wie viel darf
+
+Der Umfang kann aus drei Quellen kommen. Es gilt eine feste Rangfolge, keine Vermischung:
+
+1. **`FILEEE_CAPABILITIES` ist die Obergrenze.** Keine andere Quelle schaltet darüber hinaus etwas frei.
+2. **Der Identity Provider entscheidet**, sofern `MCP_OIDC_CAPABILITY_CLAIM` gesetzt ist — Entra über App-Rollen (`roles`), Authentik über Gruppen (`groups`). Damit werden Berechtigungen dort gepflegt, wo Benutzer ohnehin verwaltet werden. Für die meisten Setups genügen zwei Stufen: `read` und `write`.
+3. **Sonst** gilt `FILEEE_ACCOUNT_<KEY>_CAPABILITIES`, sonst die Obergrenze.
+
+Ist der Claim konfiguriert, der Benutzer hat aber keine passende Rolle oder Gruppe, bekommt er **`read`** — nicht den konfigurierten Standardumfang. Andernfalls wäre eine vergessene Zuweisung eine stille Rechteausweitung.
+
+`destructive` ist über keinen Claim erreichbar und bleibt eine bewusste Entscheidung am Server.
 
 Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die zwei Schalter, ein Audit-Log vor jeder Löschung und die Regel, dass eine zu löschende ID aus einer vorangegangenen Leseantwort derselben Sitzung stammen muss.
 

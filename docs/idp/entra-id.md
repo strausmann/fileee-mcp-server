@@ -73,7 +73,9 @@ Statt den Funktionsumfang je Benutzer in der Server-Konfiguration zu pflegen, l�
 |---|---|---|
 | `Reader` | `read` | Users/Groups |
 | `Writer` | `write` | Users/Groups |
-| `Sharer` | `share` | Users/Groups |
+| `Sharer` | `share` | Users/Groups (optional) |
+
+Zwei Rollen genügen für die meisten Setups: `Reader` und `Writer`. Der **Value** ist entscheidend, nicht der Anzeigename — er muss wörtlich der Capability-Gruppe entsprechen. Ein Benutzer mit beiden Rollen bekommt Lese- und Schreib-Tools.
 
 Entra schreibt zugewiesene Rollen in den `roles`-Claim des Access-Tokens. Der Server kann daraus den Funktionsumfang ableiten, statt ihn pro Konto in einer Umgebungsvariable zu führen:
 
@@ -81,9 +83,11 @@ Entra schreibt zugewiesene Rollen in den `roles`-Claim des Access-Tokens. Der Se
 MCP_OIDC_CAPABILITY_CLAIM=roles
 ```
 
-Die globale `FILEEE_CAPABILITIES`-Einstellung bleibt dabei die Obergrenze — eine Rolle kann nur freischalten, was global ohnehin erlaubt ist. Wer keine Rollen zuweist, bekommt den konfigurierten Standardumfang.
+Die globale `FILEEE_CAPABILITIES`-Einstellung bleibt dabei die Obergrenze — eine Rolle kann nur freischalten, was global ohnehin erlaubt ist.
 
-`destructive` bewusst **nicht** als Rolle anlegen. Fileees Hard-DELETE ist unwiderruflich; diese Gruppe soll eine bewusste Entscheidung am Server bleiben, keine Klick-Zuweisung im Portal.
+**Wichtig:** Sobald `MCP_OIDC_CAPABILITY_CLAIM` gesetzt ist, entscheidet der Claim allein. Ein Benutzer **ohne** zugewiesene Rolle bekommt dann `read`, nicht den konfigurierten Standardumfang — andernfalls wäre ein vergessener Rollen-Klick eine stille Rechteausweitung.
+
+`destructive` lässt sich **nicht** über eine Rolle vergeben; der Server ignoriert einen solchen Wert im Claim. Fileees Hard-DELETE ist unwiderruflich und bleibt eine bewusste Entscheidung am Server (`FILEEE_CAPABILITIES` plus `FILEEE_ALLOW_DESTRUCTIVE=true`), keine Klick-Zuweisung im Portal.
 
 ## 4. Token-Version auf v2.0 stellen
 

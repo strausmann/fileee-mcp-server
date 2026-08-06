@@ -85,15 +85,25 @@ Das Mapping anschließend im Provider unter *Scopes* auswählen. Beide Werte in 
 
 ## 4a. Gruppen für den Funktionsumfang (optional, empfohlen)
 
-Der Funktionsumfang lässt sich statt in der Server-Konfiguration im IdP verwalten. Dazu eine Gruppe je Capability-Gruppe anlegen (`<APP_SLUG>-read`, `<APP_SLUG>-write`, `<APP_SLUG>-share`) und den `groups`-Claim ins Token aufnehmen — in Authentik über das mitgelieferte Scope-Mapping `groups`, das im Provider unter *Scopes* auszuwählen ist.
+Der Funktionsumfang lässt sich statt in der Server-Konfiguration im IdP verwalten. Dazu eine Gruppe je Capability-Gruppe anlegen und den `groups`-Claim ins Token aufnehmen — in Authentik über das mitgelieferte Scope-Mapping `groups`, das im Provider unter *Scopes* auszuwählen ist.
+
+| Gruppenname | Wirkung |
+|---|---|
+| `read` | Lese-Tools |
+| `write` | zusätzlich Upload und Änderungen |
+| `share` | zusätzlich Freigaben und Export (optional) |
+
+Zwei Gruppen genügen für die meisten Setups: `read` und `write`. Der Gruppenname muss wörtlich der Capability-Gruppe entsprechen; wer Präfixe braucht, kann sie über eine eigene Scope-Mapping-Expression abschneiden.
 
 ```dotenv
 MCP_OIDC_CAPABILITY_CLAIM=groups
 ```
 
-Die globale `FILEEE_CAPABILITIES`-Einstellung bleibt die Obergrenze — eine Gruppe kann nur freischalten, was global ohnehin erlaubt ist. Wer in keiner der Gruppen ist, bekommt den konfigurierten Standardumfang.
+Die globale `FILEEE_CAPABILITIES`-Einstellung bleibt die Obergrenze — eine Gruppe kann nur freischalten, was global ohnehin erlaubt ist.
 
-`destructive` bewusst **nicht** als Gruppe anlegen. Fileees Hard-DELETE ist unwiderruflich; diese Gruppe soll eine bewusste Entscheidung am Server bleiben, keine Mitgliedschaft, die sich per Klick vergeben lässt.
+**Wichtig:** Sobald `MCP_OIDC_CAPABILITY_CLAIM` gesetzt ist, entscheidet der Claim allein. Wer in keiner der Gruppen ist, bekommt dann `read`, nicht den konfigurierten Standardumfang — andernfalls wäre eine vergessene Gruppenmitgliedschaft eine stille Rechteausweitung.
+
+`destructive` lässt sich **nicht** über eine Gruppe vergeben; der Server ignoriert einen solchen Wert im Claim. Fileees Hard-DELETE ist unwiderruflich und bleibt eine bewusste Entscheidung am Server (`FILEEE_CAPABILITIES` plus `FILEEE_ALLOW_DESTRUCTIVE=true`).
 
 Achtung: Der `groups`-Claim enthält **alle** Gruppen des Benutzers, nicht nur die für diese Anwendung relevanten. Der Server wertet deshalb nur exakt die konfigurierten Namen aus und ignoriert den Rest.
 
