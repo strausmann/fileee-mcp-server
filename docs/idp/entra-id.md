@@ -32,6 +32,15 @@ Nach dem Anlegen notieren: **Application (client) ID** = `<CLIENT_ID>`, **Direct
 
 Für lokale Tests mit Claude Code zusätzlich unter *Authentication → Add a platform → Mobile and desktop applications* die Loopback-URIs eintragen. Entra prüft Redirect-URIs exakt, **inklusive Port** — für jeden zu testenden Port ist ein eigener Eintrag nötig. Wer darauf verzichten kann, testet nur über die gehosteten Claude-Oberflächen.
 
+Wird `FILEEE_MODE=self-service` genutzt, kommt ein **zweiter** Redirect-URI in dieselbe App-Registrierung, Plattform *Web*:
+
+| Zweck | Redirect-URI |
+|---|---|
+| MCP-Connector in Claude | `https://claude.ai/api/mcp/auth_callback` |
+| Setup-Seite des Servers | `https://<mcp-host>/setup/callback` |
+
+Die Setup-Seite ist ein vertraulicher Client und braucht ein Client-Secret (`SETUP_OIDC_CLIENT_SECRET`) — dafür genügt dasselbe Secret aus Schritt 2. Das ändert nichts daran, dass `/mcp` reiner Resource Server bleibt; die Begründung steht in [ADR-0014](../adr/0014-self-service-onboarding.md).
+
 ## 2. Client-Secret erzeugen
 
 *Certificates & secrets → New client secret*
