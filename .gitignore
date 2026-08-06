@@ -1,0 +1,56 @@
+# Go
+/dist/
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+vendor/
+/fileee-mcp-server
+
+# Secrets / Credentials (NIE committen)
+*.env
+.env
+.env.*
+*.session
+*.cookies
+cookies.json
+*.token
+secrets.local.*
+fixtures/*.local.*
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go Workspace (nur lokaler Co-Dev-Fallback, NIE committen)
+go.work
+go.work.sum
+
+# Node-Tooling (Release/Commit, kein Publish)
+node_modules/
+
+# Build-Artefakte
+/tmp/
+
+# SDD-Ledger (scratch)
+.superpowers/
+
+# Superpowers-Task-Reports (scratch, nicht Teil des Repos)
+.superpowers-report-*.md
+
+# Lokale Session-Dateien des Client-Pools (Fileee-Session-Cookies = Secret)
+/sessions/
+*.session.json

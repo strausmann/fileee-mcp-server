@@ -1,0 +1,24 @@
+{
+  "extends": ["@commitlint/config-conventional"],
+  "rules": {
+    "scope-enum": [
+      2,
+      "always",
+      [
+        "server",
+        "config",
+        "secrets",
+        "auth",
+        "accounts",
+        "tools",
+        "capabilities",
+        "deploy",
+        "adr",
+        "ci",
+        "deps",
+        "docs",
+        "release"
+      ]
+    ]
+  }
+}

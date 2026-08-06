@@ -1,0 +1,69 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":enableVulnerabilityAlerts"
+  ],
+  "minimumReleaseAge": "3 days",
+  "packageRules": [
+    {
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "automerge": true
+    },
+    {
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "automerge": true
+    },
+    {
+      "matchManagers": [
+        "github-actions",
+        "dockerfile"
+      ],
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false
+    },
+    {
+      "matchPackageNames": [
+        "github.com/strausmann/go-fileee"
+      ],
+      "minimumReleaseAge": "0",
+      "description": "Interne Lib: sofort (kein Stabilitaets-Delay), damit der MCP-Server die frische go-fileee-Version in derselben Nacht zieht. Automerge kommt aus den Typ-Regeln (minor/patch=ja, major=manuell)."
+    },
+    {
+      "matchPackageNames": [
+        "github.com/modelcontextprotocol/go-sdk"
+      ],
+      "automerge": false,
+      "description": "MCP-SDK: kein Automerge, auch nicht bei minor/patch. Das SDK bestimmt Transport-, Session- und Auth-Semantik (u. a. MaxRequestBodyBytes-Default, TokenInfo-Propagierung, Session-Bindung) — ein stiller Bump kann Sicherheitsverhalten aendern, ohne dass ein Test rot wird."
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^deploy/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "INFISICAL_CLI_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "Infisical/infisical",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^infisical-cli/v(?<version>.*)$",
+      "description": "Die Infisical-CLI-Checksumme wird bewusst NICHT als zweite ARG gepinnt, sondern im Dockerfile zur Build-Zeit aus der offiziellen checksums.txt des Releases gezogen und verifiziert. Damit gibt es keinen zweiten Wert, den dieser Manager synchron halten muesste — siehe strausmann/fileee-server#24, wo genau diese Kopplung den Build bei jedem automergten Bump bricht."
+    }
+  ],
+  "platformAutomerge": true
+}
