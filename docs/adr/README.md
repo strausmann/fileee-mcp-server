@@ -31,7 +31,11 @@ Besonders relevant für dieses Repo sind [ADR-0005 (schonender Betrieb / Rate-Li
 
 | Nr. | Titel | Status | Datum |
 |-----|-------|--------|-------|
-| – | noch keine ADRs in diesem Repo | – | – |
+| [0009](0009-resource-server-statt-eigener-authorization-server.md) | Reiner Resource Server statt eigenem Authorization Server | accepted | 2026-08-06 |
+| [0010](0010-idp-agnostische-konfiguration.md) | IdP-agnostische Konfiguration über drei orthogonale Achsen | accepted | 2026-08-06 |
+| [0011](0011-capability-gating.md) | Funktionsumfang über nicht registrierte Tools statt Laufzeit-Ablehnung | accepted | 2026-08-06 |
+| [0012](0012-multi-account-mapping.md) | Konto-Auflösung über den signierten Claim des aktuellen Requests | accepted | 2026-08-06 |
+| [0013](0013-prompt-injection-schutz.md) | Dokumentinhalte sind fremdbestimmte Daten | accepted | 2026-08-06 |
 
 ## Status-Werte
 
