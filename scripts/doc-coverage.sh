@@ -17,6 +17,15 @@ gaps="$(mktemp)"
 trap 'rm -f "$gaps"' EXIT
 while IFS= read -r file; do
   awk -v F="$file" -v EXEMPT="$exempt" '
+    # Block-Doc-Comment /* ... */ — in Go gueltig, auch wenn // die uebliche Form ist.
+    # Ohne diesen Zweig meldet das Gate solche Symbole faelschlich als undokumentiert; ein Gate
+    # mit False Positives wird umgangen statt befolgt. Deckt auch die einzeilige Form ab.
+    /^[ \t]*\/\*/ { incomment=1 }
+    incomment {
+      if ($0 ~ /\*\//) { incomment=0; hascomment=1 }
+      next
+    }
+
     # Fuehrender Whitespace erlaubt: Doc-Comments an Block-Mitgliedern sind eingerueckt.
     /^[ \t]*\/\// { hascomment=1; next }
 

@@ -168,5 +168,5 @@ Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.ac
 | Verbindung bricht nach der ersten Token-Laufzeit ab | `offline_access` fehlt, kein Refresh-Token | Schritt 5 nachholen, inklusive Admin-Consent |
 | 401-Schleife, „audience mismatch" | `aud` ist keiner der akzeptierten Werte | `accessTokenAcceptedVersion: 2` prüfen und sicherstellen, dass `MCP_OIDC_AUDIENCE` zur Application ID URI passt |
 | Write-Tools erscheinen nicht | App-Rolle nicht zugewiesen oder `MCP_OIDC_CAPABILITY_CLAIM` nicht gesetzt | Abschnitte 3a und 6 prüfen; `roles`-Claim im Token gegenprüfen |
-| Jeder Tenant-Benutzer kommt durch | „Assignment required" steht auf `No` | Schritt 5 nachholen |
+| Jeder Tenant-Benutzer kommt durch | „Assignment required" steht auf `No` | Schritt 6 nachholen |
 | Kein DCR möglich | Entra unterstützt weder Dynamic Client Registration noch Client ID Metadata Documents | vorregistrierte Client-ID/Secret im Connector-Dialog eintragen — der vorgesehene Weg |
