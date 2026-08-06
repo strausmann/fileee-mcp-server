@@ -4,7 +4,7 @@
 **Datum:** 2026-08-06
 **Ersetzt:** —
 **Ersetzt durch:** —
-**Verwandt:** [ADR-0010](0010-idp-agnostische-konfiguration.md), [fileee-server ADR-0008](https://github.com/strausmann/fileee-server/blob/main/docs/adr/0008-fileee-server.md)
+**Verwandt:** [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0012](0012-multi-account-mapping.md), [ADR-0014](0014-self-service-onboarding.md), [fileee-server ADR-0008](https://github.com/strausmann/fileee-server/blob/main/docs/adr/0008-fileee-server.md)
 
 ## Kontext
 

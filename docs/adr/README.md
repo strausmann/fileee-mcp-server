@@ -36,6 +36,7 @@ Besonders relevant für dieses Repo sind [ADR-0005 (schonender Betrieb / Rate-Li
 | [0011](0011-capability-gating.md) | Funktionsumfang über nicht registrierte Tools statt Laufzeit-Ablehnung | accepted | 2026-08-06 |
 | [0012](0012-multi-account-mapping.md) | Konto-Auflösung über den signierten Claim des aktuellen Requests | accepted | 2026-08-06 |
 | [0013](0013-prompt-injection-schutz.md) | Dokumentinhalte sind fremdbestimmte Daten | accepted | 2026-08-06 |
+| [0014](0014-self-service-onboarding.md) | Self-Service-Onboarding der Fileee-Zugangsdaten über eine eigene Setup-Seite | accepted | 2026-08-06 |
 
 ## Status-Werte
 
