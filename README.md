@@ -18,7 +18,7 @@ Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/straus
 - **Ein oder mehrere Fileee-Konten**, zugeordnet über einen signierten Claim aus dem Token
 - **Konfigurierbarer Funktionsumfang** über Capability-Gruppen — nicht freigeschaltete Tools werden gar nicht erst registriert
 
-## Drei Betriebsarten
+## Vier Betriebsarten
 
 Derselbe Container bedient sehr verschiedene Setups. Die drei Achsen sind unabhängig voneinander schaltbar.
 
@@ -65,6 +65,24 @@ FILEEE_ACCOUNT_BOB_USERNAME=…
 
 Die Zuordnung läuft über einen konfigurierbaren Claim aus dem Token (Default `sub`). Mehrere Identitäten dürfen auf **ein** Fileee-Konto zeigen; eine Identität auf zwei Konten ist ein Startup-Fehler, kein „first match wins". Ein unbekanntes Subject bekommt `403` — es gibt keinen Fallback auf ein Standardkonto.
 
+### Mehrere Benutzer, die ihre Zugangsdaten selbst hinterlegen
+
+```dotenv
+MCP_AUTH_MODE=oidc
+FILEEE_MODE=self-service
+SETUP_BASE_URL=https://<mcp-host>
+SETUP_OIDC_CLIENT_ID=<client-id>
+SETUP_OIDC_CLIENT_SECRET=CHANGE_ME
+SETUP_ENCRYPTION_KEY=CHANGE_ME        # openssl rand -base64 32
+SETUP_DB_PATH=/data/accounts.db       # Default
+```
+
+Statt je Konto vier Secrets und einen Neustart hinterlegt jede Person ihre Fileee-Zugangsdaten selbst unter `https://<mcp-host>/setup`. Der Ablauf: Connector in Claude eintragen, verbinden, ein Tool aufrufen — der Server antwortet mit einem Hinweis samt Setup-Link. Dort meldet sich die Person nochmals am Identity Provider an und trägt Benutzername, Passwort und optional den TOTP-Seed ein. Die Daten werden gegen Fileee geprüft, verschlüsselt gespeichert und an das Subject aus dem Token gebunden.
+
+Dafür braucht der Identity Provider einen **zweiten Redirect-URI** `https://<mcp-host>/setup/callback` — der MCP-Endpunkt selbst bleibt reiner Resource Server. Wer nicht in der Gruppenbindung bzw. `MCP_ALLOWED_SUBJECTS` steht, kommt gar nicht erst bis zum Formular und bekommt weiterhin `403`.
+
+ENV-Konten und Self-Service dürfen nebeneinander bestehen; ein Subject in beiden Quellen bricht den Start ab. Details in [ADR-0014](docs/adr/0014-self-service-onboarding.md).
+
 ## Funktionsumfang festlegen
 
 ```dotenv
@@ -101,6 +119,7 @@ Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die 
 
 - **Credentials** (Fileee-Zugangsdaten, TOTP-Seed, API-Token) gehören ausschließlich in einen Secret-Manager, nie in Code oder Commits. Der Container unterstützt neben `.env` einen Infisical-Modus.
 - **Session-Dateien** des Client-Pools sind Secrets (`0600`, je Konto getrennt) und werden nie geloggt.
+- **Self-Service-Zugangsdaten** liegen AES-256-GCM-verschlüsselt in der SQLite-Datei (`0600`), der Schlüssel kommt aus `SETUP_ENCRYPTION_KEY` über das Secret-Backend. Das Subject steht nur als SHA-256-Hash im Klartext. Ohne den Schlüssel ist die Datei wertlos — er ist damit das wertvollste Secret des Deployments und gehört nicht neben die Datenbank auf dasselbe Volume.
 - **Dokumentinhalte sind fremdbestimmte Daten.** OCR-Text kann Anweisungen enthalten, die an das Modell gerichtet sind. Tool-Ausgaben werden deshalb als nicht vertrauenswürdig markiert, und destruktive Operationen sind zusätzlich abgesichert.
 - Die Core-Lib **schont Fileees Infrastruktur** über Rate-Limiting und Backoff. Dieser Server ergänzt einen globalen Deckel über alle Konten hinweg, damit mehrere Konten die Last nicht vervielfachen.
 
