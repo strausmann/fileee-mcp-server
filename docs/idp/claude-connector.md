@@ -52,6 +52,23 @@ Anschließend den Login-Flow durchlaufen und einen Tool-Aufruf testen.
 
 Ein Account, der nicht in der Gruppenbindung des IdP liegt bzw. nicht in `MCP_ALLOWED_SUBJECTS` steht, darf **nicht** durchkommen. Der Server antwortet in diesem Fall mit `403` und fällt nicht auf ein Standardkonto zurück.
 
+## Erster Login mit Self-Service
+
+Bei `FILEEE_MODE=self-service` sieht der Ablauf für eine neue Person so aus:
+
+1. Connector eintragen und *Verbinden* klicken, Login am Identity Provider durchlaufen.
+2. Ein beliebiges Tool aufrufen. Der Server antwortet mit einem Hinweis statt mit Daten: die Zugangsdaten sind noch nicht hinterlegt, plus der Link `https://<mcp-host>/setup`.
+3. Den Link öffnen. Es folgt ein **zweiter** Login am selben Identity Provider — diesmal für die Setup-Seite, mit dem Redirect-URI `https://<mcp-host>/setup/callback`.
+4. Fileee-Benutzername, Passwort und bei aktiver Zwei-Faktor-Authentifizierung den TOTP-Seed eintragen. Der Server prüft die Daten sofort gegen Fileee und speichert sie nur bei Erfolg.
+5. Zurück in Claude dasselbe Tool erneut aufrufen — jetzt kommen Daten.
+
+Zwei Punkte, die beim Debuggen Zeit sparen:
+
+- Der zweite Login ist **nicht** die Bauweise „eigener Authorization Server" aus der Tabelle oben. Der MCP-Endpunkt stellt weiterhin keine Tokens aus; die Setup-Seite ist ein getrennter Pfad mit eigener Client-Rolle.
+- Wer nicht in der Gruppenbindung bzw. in `MCP_ALLOWED_SUBJECTS` steht, kommt gar nicht bis Schritt 2 — der Server antwortet mit `403`, wie im Negativtest beschrieben. Ein `403` beim ersten Tool-Aufruf ist also ein Berechtigungsproblem im Identity Provider, kein fehlendes Onboarding.
+
+Details zur Entscheidung: [ADR-0014](../adr/0014-self-service-onboarding.md).
+
 ## Zeitgrenzen
 
 Claude wartet maximal 10 s auf Discovery-, Registration- und Token-Endpunkte und maximal 30 s auf Refresh-Requests. Ein Reverse Proxy, der Antworten puffert oder auf langsame Upstream-Aufrufe wartet, erzeugt sporadische Verbindungsfehler.

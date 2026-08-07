@@ -10,6 +10,7 @@
         "secrets",
         "auth",
         "accounts",
+        "setup",
         "tools",
         "capabilities",
         "deploy",

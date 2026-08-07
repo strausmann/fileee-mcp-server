@@ -33,6 +33,7 @@ Die Angaben unten sind gegen **Authentik 2026.2** verifiziert, teils über die A
 | Client ID / Client Secret | generieren lassen, **notieren** | wird später im Client eingetragen |
 | Redirect URIs | `https://claude.ai/api/mcp/auth_callback` | Callback der gehosteten Claude-Oberflächen |
 | Redirect URIs (optional, für lokale Tests) | Regex: `^http://(localhost\|127\.0\.0\.1)(:\d+)?/callback$` | Claude Code nutzt einen RFC-8252-Loopback-Redirect auf wechselndem Port; die Portangabe muss ignoriert werden |
+| Redirect URIs (nur bei `FILEEE_MODE=self-service`) | `https://<mcp-host>/setup/callback` | Callback der Setup-Seite, auf der Benutzer ihre Fileee-Zugangsdaten selbst hinterlegen — siehe [ADR-0014](../adr/0014-self-service-onboarding.md) |
 | Signing Key | vorhandenes Zertifikat auswählen | Ohne Signing Key werden Tokens nicht asymmetrisch signiert und der Resource Server kann sie nicht über JWKS prüfen |
 | Scopes | `openid`, `profile`, `email`, **`offline_access`** | siehe Kasten unten — ohne `offline_access` gibt es kein Refresh-Token |
 | Access-Token-Gültigkeit | kurz, z. B. `minutes=30` | Clients refreshen reaktiv bei 401 und proaktiv kurz vor Ablauf |
@@ -45,9 +46,12 @@ Die Angaben unten sind gegen **Authentik 2026.2** verifiziert, teils über die A
 ```json
 "redirect_uris": [
   {"matching_mode": "strict", "url": "https://claude.ai/api/mcp/auth_callback"},
+  {"matching_mode": "strict", "url": "https://<mcp-host>/setup/callback"},
   {"matching_mode": "regex",  "url": "^http://(localhost|127\\.0\\.0\\.1)(:\\d+)?/callback$"}
 ]
 ```
+
+**Zwei Rollen, ein Provider.** Bei `FILEEE_MODE=self-service` nutzt derselbe Provider zwei Callbacks: den von Claude für den MCP-Zugriff und den der Setup-Seite des Servers. Deren Client-Rolle ist eine andere — sie ist Relying Party und verwendet das Client-Secret des Providers als `SETUP_OIDC_CLIENT_SECRET`. Der MCP-Endpunkt bleibt davon unberührt reiner Resource Server; die Unterscheidung ist in [`claude-connector.md`](claude-connector.md) und [ADR-0014](../adr/0014-self-service-onboarding.md) beschrieben.
 
 ## 2. Application anlegen und an eine Gruppe binden
 

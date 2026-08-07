@@ -45,6 +45,7 @@ Drei Bereiche sind sicherheitskritisch und brauchen im PR eine ausdrückliche Be
 - **Konto-Auflösung.** Die Benutzeridentität wird ausschließlich aus `req.GetExtra().TokenInfo` gelesen, das pro Request neu gesetzt wird — **nie** aus dem Handler-Kontext. `auth.TokenInfoFromContext` liefert im Tool-Handler das Token des `initialize`-Requests und würde bei mehreren Benutzern pro Sitzung auf das falsche Fileee-Konto auflösen.
 - **`TokenInfo.UserID`.** Der Token-Verifier muss dieses Feld setzen, sonst greift der Session-Hijacking-Schutz des SDK nicht.
 - **Tool-Ausgaben.** Dokumentinhalte und OCR-Text sind fremdbestimmte Daten und können an das Modell gerichtete Anweisungen enthalten. Sie werden als nicht vertrauenswürdig gekennzeichnet zurückgegeben.
+- **Setup-Formular.** Eingegebene Zugangsdaten werden nie geloggt — auch nicht im Fehlerpfad, auch nicht gekürzt. Absolute URLs kommen ausschließlich aus `SETUP_BASE_URL`, nie aus `r.Host` oder `X-Forwarded-*`. Cookies sind `Secure`, `HttpOnly` und `SameSite=Lax` (`Strict` bricht den Rücksprung vom Identity Provider); ihr Wert ist eine zufällige Session-ID, nie das Subject. Der TOTP-Seed wird nach dem Speichern nie wieder ausgeliefert. Die Fehlermeldung bei falschem Login ist generisch und timing-neutral, damit sie nicht verrät, ob ein Fileee-Benutzername existiert. Begründung in [ADR-0014](docs/adr/0014-self-service-onboarding.md).
 
 ## Commit-Konvention
 

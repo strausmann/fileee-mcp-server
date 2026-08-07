@@ -60,3 +60,7 @@ jobs:
         run: |
           chmod +x scripts/doc-coverage.sh
           ./scripts/doc-coverage.sh
+      - name: ADR-Registry (Registry-Pflicht + Lineage)
+        run: |
+          chmod +x scripts/adr-registry-check.sh
+          ./scripts/adr-registry-check.sh
