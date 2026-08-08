@@ -2,7 +2,8 @@ package config
 
 // version ist der Platzhalter fuer die Release-Version. Der Release-Workflow
 // ueberschreibt ihn beim Container-Build per ldflags
-// (-X main.version=${VERSION}); ohne Override bleibt es bei "dev".
+// (-X github.com/strausmann/fileee-mcp-server/internal/config.version=${VERSION});
+// ohne Override bleibt es bei "dev".
 //
 // Bewusst eine Variable und keine Konstante: eine Konstante liefe erneut in das
 // Problem aus strausmann/fileee-server#17, wo der hartkodierte Wert hinter dem
