@@ -24,8 +24,8 @@ github.com/segmentio/encoding v0.5.4 h1:OW1VRern8Nw6ITAtwSZ7Idrl3MXCFwXHPgqESYfv
 github.com/segmentio/encoding v0.5.4/go.mod h1:HS1ZKa3kSN32ZHVZ7ZLPLXWvOVIiZtyJnO1gPH1sKt0=
 github.com/strausmann/gangway v0.2.0 h1:y0mIvTkhqrF5CYjqn8NuRMHlb4SEuLS/SUxuq65/mBI=
 github.com/strausmann/gangway v0.2.0/go.mod h1:XC0TNH0MTkcaeEiXMvdCnS1o6boDbnqq9wH4XekYPdQ=
-github.com/strausmann/go-fileee v0.1.1 h1:tho2U+MGSY26ocWt6OrilifufW+yV6iTWBMZMVF0KQg=
-github.com/strausmann/go-fileee v0.1.1/go.mod h1:bUjpFm7ehlrdAH0ZaTyP+ffSRDRD/G4YLanHGjAcv8s=
+github.com/strausmann/go-fileee v0.2.0 h1:tdJf063enKFBIcojXqJmw6Ge2iyKUe/LpgHj3aOCYxU=
+github.com/strausmann/go-fileee v0.2.0/go.mod h1:bUjpFm7ehlrdAH0ZaTyP+ffSRDRD/G4YLanHGjAcv8s=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0 h1:TivCn/peBQ7UY8ooIcPgZFpTNSz0Q2U6UrFlUfqbe0Q=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
