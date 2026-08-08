@@ -58,7 +58,10 @@ func testConfig(t *testing.T) *Config {
 func TestUnauthenticatedRequestIsRefusedWithAChallenge(t *testing.T) {
 	cfg := testConfig(t)
 
-	s, err := New(context.Background(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -88,7 +91,10 @@ func TestUnauthenticatedRequestIsRefusedWithAChallenge(t *testing.T) {
 func TestUnauthenticatedRequestReachesTheChallengeNotA404(t *testing.T) {
 	cfg := testConfig(t)
 
-	s, err := New(context.Background(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -111,7 +117,10 @@ func TestRequestFromDisallowedOriginIsRejectedBeforeAuth(t *testing.T) {
 	// Nur Loopback erlaubt — die Testadresse liegt bewusst ausserhalb.
 	cfg.AllowedOriginPrefixes = mustPrefix(t, "127.0.0.1/32")
 
-	s, err := New(context.Background(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -137,7 +146,10 @@ func TestHealthzIsReachableWithoutAuthOrAllowlist(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.AllowedOriginPrefixes = mustPrefix(t, "127.0.0.1/32")
 
-	s, err := New(context.Background(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -274,16 +286,24 @@ func TestNewRejectsResourceURLWithoutMCPSuffix(t *testing.T) {
 	}
 }
 
+// Pruefbefund: New() und Run() muessen denselben Kontext verwenden. Gangway
+// haengt an New()s ctx auch die Hintergrundarbeit des Identity Providers
+// (periodisches Nachladen der Signierschluessel, siehe der Kommentar in
+// main.go zu signal.NotifyContext) — wird New() mit einem anderen Kontext
+// gebaut als dem, der spaeter abgebrochen wird, erreicht der Abbruch diese
+// Hintergrundarbeit nie, und der Test raeumt nur zur Haelfte auf.
 func TestRunStopsCleanlyWhenContextIsCancelled(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.ListenAddr = "127.0.0.1:0"
 
-	s, err := New(context.Background(), cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() { errc <- s.Run(ctx) }()
 
