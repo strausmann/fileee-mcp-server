@@ -50,7 +50,9 @@ Anschließend den Login-Flow durchlaufen und einen Tool-Aufruf testen.
 
 ## Negativtest
 
-Ein Account, der nicht in der Gruppenbindung des IdP liegt bzw. nicht in `MCP_ALLOWED_SUBJECTS` steht, darf **nicht** durchkommen. Der Server antwortet in diesem Fall mit `403` und fällt nicht auf ein Standardkonto zurück.
+Ein Account, der nicht in der Gruppenbindung des IdP liegt bzw. nicht in `MCP_ALLOWED_SUBJECTS` steht, darf **nicht** durchkommen — und fällt nicht auf ein Standardkonto zurück. Die Ablehnung sieht dabei **nicht** wie ein `403` aus, sondern wie ein gewöhnliches, fehlgeschlagenes Werkzeugergebnis über **HTTP 200**: Der Token selbst ist gültig, Gangway lässt die Anfrage bis zum Werkzeug durch (Authentifizierung ist bestanden), erst dort schlägt die Konto-Auflösung fehl (`accounts.ErrNoAccount`, sichtbar am Fehlertext „access denied" im Werkzeugergebnis).
+
+Ein echtes `403` liefert eine **andere Schicht** — die Herkunfts-Freigabeliste (`FILEEE_ALLOWED_ORIGIN_PREFIXES`), die schon vor der Authentifizierung greift, wenn die Anfrage von einer nicht zugelassenen Adresse kommt. Wer den Negativtest gegen die falsche Erwartung (403) durchführt, hält eine funktionierende Absicherung für kaputt.
 
 ## Zeitgrenzen
 
