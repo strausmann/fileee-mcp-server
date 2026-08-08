@@ -491,7 +491,6 @@ func TestLoadConfigListenUndZahlenwerte(t *testing.T) {
 	t.Parallel()
 
 	env := minimalToken()
-	env["MCP_ALLOWED_HOSTS"] = "mcp.example.com, mcp2.example.com"
 	env["FILEEE_TRUSTED_PROXIES"] = "10.0.0.0/8,192.168.0.1"
 	env["FILEEE_MAX_INFLIGHT"] = "3"
 	env["FILEEE_RATE_RPS"] = "2"
@@ -500,9 +499,6 @@ func TestLoadConfigListenUndZahlenwerte(t *testing.T) {
 	cfg, err := LoadConfig(envOf(env))
 	if err != nil {
 		t.Fatalf("LoadConfig = Fehler %v", err)
-	}
-	if len(cfg.AllowedHosts) != 2 || cfg.AllowedHosts[1] != "mcp2.example.com" {
-		t.Errorf("AllowedHosts = %v, erwartet zwei getrimmte Eintraege", cfg.AllowedHosts)
 	}
 	if len(cfg.TrustedProxies) != 2 {
 		t.Errorf("TrustedProxies = %v, erwartet zwei Eintraege", cfg.TrustedProxies)

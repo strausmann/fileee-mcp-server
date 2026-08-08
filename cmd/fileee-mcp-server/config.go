@@ -79,7 +79,6 @@ type Config struct {
 	ResourceURL         string
 	APIToken            string
 	AllowedSubjects     []string
-	AllowedHosts        []string
 
 	AccountMode AccountMode
 	Accounts    []Account
@@ -150,7 +149,6 @@ func LoadConfig(env Env) (*Config, error) {
 		ResourceURL:         strings.TrimSpace(env("MCP_RESOURCE_URL")),
 		APIToken:            env("MCP_API_TOKEN"),
 		AllowedSubjects:     splitListe(env("MCP_ALLOWED_SUBJECTS")),
-		AllowedHosts:        splitListe(env("MCP_ALLOWED_HOSTS")),
 		AccountMode:         AccountMode(orDefault(env("FILEEE_MODE"), string(ModeSingle))),
 		ListenAddr:          orDefault(env("MCP_LISTEN_ADDR"), ":8080"),
 		SessionDir:          orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
