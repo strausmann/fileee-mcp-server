@@ -33,13 +33,14 @@ Die Schwellen pro Datei stehen in [`.github/workflows/test.yml`](.github/workflo
 |---|---|---|
 | Auth/Permission | 90 | `auth_oidc.go`, `auth_token.go`, `internal/accounts/accounts.go`, `internal/config/capabilities.go`, `internal/config/config.go` |
 | Mutations-Logik | 85 | `internal/clientpool/pool.go`, `tools_destructive.go`, mutierende Tool-Pfade |
-| Business-Logik | 80 | übrige `tools_*.go`, `internal/server/server.go`, `errors.go` |
+| Business-Logik | 80 | `internal/tools/read.go`, übrige `tools_*.go`, `internal/server/server.go`, `errors.go` |
 | Adapter/Boot | 60 | `cmd/fileee-mcp-server/main.go`, `secrets.go` |
 
 Dateien, die noch nicht existieren (`auth_oidc.go`, `auth_token.go`,
-`tools_destructive.go`, `tools_*.go`, `errors.go`, `secrets.go`), sind absichtlich ohne Verzeichnis
-notiert — ihr Paketzuschnitt (u. a. `internal/tools`)
-entsteht in den Umsetzungsschritten, die sie einführen, und bekommt dort seinen vollen Pfad.
+`tools_destructive.go`, weitere `tools_*.go`, `errors.go`, `secrets.go`), sind absichtlich ohne
+Verzeichnis notiert — ihr Paketzuschnitt entsteht in den Umsetzungsschritten, die sie einführen,
+und bekommt dort seinen vollen Pfad. `internal/tools/read.go` (die ersten beiden lesenden
+Werkzeuge, `list_documents`/`search_documents`) ist die erste Datei in diesem Paketzuschnitt.
 
 Jede neue Datei bekommt ihre Schwelle **im selben PR**, in dem sie entsteht. Nachträglich nachziehen heißt, das Gate für diese Datei nie scharf zu schalten.
 

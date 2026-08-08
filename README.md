@@ -108,6 +108,10 @@ Ist der Claim konfiguriert, der Benutzer hat aber keine passende Rolle oder Grup
 
 Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die zwei Schalter, ein Audit-Log vor jeder Löschung und die Regel, dass eine zu löschende ID aus einer vorangegangenen Leseantwort derselben Sitzung stammen muss.
 
+## Werkzeuge
+
+Der Katalog entsteht schrittweise. Was heute existiert (`read`: `list_documents`, `search_documents`) steht in [`docs/tools.md`](docs/tools.md), inklusive der Absicherung gegen präparierte Dokumenttitel.
+
 ## Sicherheit
 
 - **Credentials** (Fileee-Zugangsdaten, TOTP-Seed, API-Token) gehören ausschließlich in einen Secret-Manager, nie in Code oder Commits. Der Container unterstützt neben `.env` einen Infisical-Modus.
