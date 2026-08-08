@@ -1,4 +1,4 @@
-package main
+package config
 
 // version ist der Platzhalter fuer die Release-Version. Der Release-Workflow
 // ueberschreibt ihn beim Container-Build per ldflags

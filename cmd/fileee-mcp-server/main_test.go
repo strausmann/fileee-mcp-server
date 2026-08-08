@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/strausmann/fileee-mcp-server/internal/config"
 )
 
 func TestRunVersionSubcommand(t *testing.T) {
@@ -15,8 +17,8 @@ func TestRunVersionSubcommand(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run(version) = Exit-Code %d, erwartet 0", code)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != Version() {
-		t.Errorf("stdout = %q, erwartet %q", got, Version())
+	if got := strings.TrimSpace(stdout.String()); got != config.Version() {
+		t.Errorf("stdout = %q, erwartet %q", got, config.Version())
 	}
 }
 

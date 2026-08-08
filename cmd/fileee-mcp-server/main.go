@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/strausmann/fileee-mcp-server/internal/config"
 )
 
 func main() {
@@ -23,16 +25,16 @@ func main() {
 // des Signal-Kontexts ausserhalb dieser Funktion, damit ein Test einen
 // fehlerhaften Start am Rueckgabewert beobachten kann statt am tatsaechlichen
 // Prozess-Exit.
-func run(args []string, env Env, stdout, stderr io.Writer) int {
+func run(args []string, env config.Env, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "version" {
 		// Fprintf statt Fprintln: .golangci.yml nimmt errcheck nur fmt.Fprintf
 		// von der Pflicht aus, den Rueckgabewert zu pruefen — ein Schreibfehler
 		// auf stdout ist hier ohnehin nicht sinnvoll behandelbar.
-		fmt.Fprintf(stdout, "%s\n", Version())
+		fmt.Fprintf(stdout, "%s\n", config.Version())
 		return 0
 	}
 
-	cfg, err := LoadConfig(env)
+	cfg, err := config.LoadConfig(env)
 	if err != nil {
 		fmt.Fprintf(stderr, "fileee-mcp-server: Konfiguration ungueltig: %v\n", err)
 		return 1
@@ -52,7 +54,7 @@ func run(args []string, env Env, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "fileee-mcp-server %s hoert auf %s\n", Version(), cfg.ListenAddr)
+	fmt.Fprintf(stdout, "fileee-mcp-server %s hoert auf %s\n", config.Version(), cfg.ListenAddr)
 	if err := srv.Run(ctx); err != nil {
 		fmt.Fprintf(stderr, "fileee-mcp-server: beendet mit Fehler: %v\n", err)
 		return 1
@@ -69,7 +71,7 @@ func run(args []string, env Env, stdout, stderr io.Writer) int {
 // Aufrufer voraussetzen — ein kuenftiger Refactor, der die Reihenfolge in
 // run() aendert oder eine zweite Aufrufstelle hinzufuegt, darf nicht mit
 // einem Nil-Pointer-Absturz bezahlen (siehe TestReportWarningsIsNilSafe).
-func reportWarnings(stderr io.Writer, cfg *Config) {
+func reportWarnings(stderr io.Writer, cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
