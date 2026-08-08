@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/strausmann/fileee-mcp-server/internal/config"
 	"github.com/strausmann/gangway/serve"
 )
 
@@ -20,7 +21,7 @@ const mcpSuffix = "/mcp"
 // Zugriffsprotokoll — dieser Typ uebersetzt nur unsere Config in Gangways
 // eigene und haengt den (heute noch leeren) MCP-Server ein.
 type Server struct {
-	cfg *Config
+	cfg *config.Config
 	gw  *serve.Server
 }
 
@@ -36,8 +37,8 @@ type Server struct {
 // statisches Bearer-Token) einzuhaengen. cfg.AuthMode token/both aus Aufgabe 1
 // sind damit vorerst nicht ueber diesen Server erreichbar; siehe den
 // Nachtrag zu ADR-0015 und den Bericht zu dieser Aufgabe.
-func New(ctx context.Context, cfg *Config) (*Server, error) {
-	if cfg.AuthMode != AuthOIDC {
+func New(ctx context.Context, cfg *config.Config) (*Server, error) {
+	if cfg.AuthMode != config.AuthOIDC {
 		return nil, fmt.Errorf("fileee-mcp: MCP_AUTH_MODE=%q wird von diesem Server (noch) nicht "+
 			"unterstuetzt — Gangway v0.2.0 baut intern immer einen OIDC-Verifier auf und bietet keinen "+
 			"Weg, einen anderen identity.Verifier einzuhaengen (siehe ADR-0015-Nachtrag)", cfg.AuthMode)
@@ -89,7 +90,7 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	// TestUnauthenticatedRequestReachesTheChallengeNotA404.
 	mcpServer := mcp.NewServer(&mcp.Implementation{
 		Name:    "fileee-mcp-server",
-		Version: Version(),
+		Version: config.Version(),
 	}, nil)
 	gw.AttachMCP(mcpServer)
 

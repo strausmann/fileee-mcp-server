@@ -44,21 +44,28 @@ jobs:
           # Greenfield-Repo waere "an der Messung orientiert" zirkulaer und wuerde die
           # Mindestwerte unterlaufen.
           #
-          #   Auth-/Permission-Code ......... 90   auth_oidc.go, auth_token.go,
-          #                                        accounts.go, capabilities.go, config.go
+          #   Auth-/Permission-Code ......... 90   auth_oidc.go, auth_token.go, accounts.go,
+          #                                        internal/config/capabilities.go,
+          #                                        internal/config/config.go
           #   Mutations-Logik ............... 85   clientpool.go, tools_destructive.go,
           #                                        alle mutierenden Tool-Pfade
-          #   Business-Logik ................ 80   uebrige tools_*.go, server.go, errors.go
-          #   Adapter/Boot .................. 60   main.go, secrets.go
+          #   Business-Logik ................ 80   uebrige tools_*.go,
+          #                                        internal/server/server.go, errors.go
+          #   Adapter/Boot .................. 60   cmd/fileee-mcp-server/main.go, secrets.go
+          #
+          # Noch nicht existierende Dateien (auth_oidc.go, auth_token.go, accounts.go,
+          # clientpool.go, tools_destructive.go, tools_*.go, errors.go, secrets.go) sind
+          # bewusst ohne Verzeichnis notiert - ihr Paketzuschnitt (u.a. internal/accounts,
+          # internal/clientpool, internal/tools) entsteht im jeweiligen Umsetzungsschritt.
           #
           # Die Liste waechst mit jedem Umsetzungsschritt mit. Jede neue Datei bekommt
           # ihre Schwelle im selben PR, in dem sie entsteht — nachtraeglich nachziehen
           # heisst, das Gate fuer diese Datei nie scharf zu schalten.
           ./scripts/coverage-gate-strict.sh cover.out \
-            cmd/fileee-mcp-server/config.go:90 \
-            cmd/fileee-mcp-server/capabilities.go:90 \
-            cmd/fileee-mcp-server/version.go:90 \
-            cmd/fileee-mcp-server/server.go:80 \
+            internal/config/config.go:90 \
+            internal/config/capabilities.go:90 \
+            internal/config/version.go:90 \
+            internal/server/server.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |

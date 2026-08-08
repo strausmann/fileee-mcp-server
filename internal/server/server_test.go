@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -9,8 +9,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/strausmann/fileee-mcp-server/internal/config"
 	"github.com/strausmann/gangway/identity/testidp"
 )
+
+// envOf baut ein config.Env aus einer Map — dieselbe kleine Hilfsfunktion wie
+// in internal/config/config_test.go, hier lokal dupliziert statt importiert:
+// Test-Helfer eines fremden Pakets sind ausserhalb dieses Pakets nicht sichtbar,
+// und ein eigenes Test-Hilfspaket waere fuer eine Zeile Logik unverhaeltnismaessig.
+func envOf(m map[string]string) config.Env {
+	return func(key string) string { return m[key] }
+}
 
 // mustPrefix parst eine feste CIDR-Liste fuer Testfaelle, in denen ein
 // Parse-Fehler ein Programmierfehler im Test selbst waere, kein zu
@@ -30,10 +39,10 @@ func mustPrefix(t *testing.T, cidrs ...string) []netip.Prefix {
 
 // testConfig baut die kleinstmoegliche gueltige Einstellung mit einem lokalen
 // Test-Aussteller (kein Netzwerkzugriff, siehe testidp.New) — ein echtes
-// LoadConfig statt eines von Hand gebauten *Config, weil sonst die
+// LoadConfig statt eines von Hand gebauten *config.Config, weil sonst die
 // unexportierte subjectIndex-Aufloesung uebergangen wuerde und der Test etwas
 // pruefte, das mit dem echten Startpfad nicht mehr uebereinstimmt.
-func testConfig(t *testing.T) *Config {
+func testConfig(t *testing.T) *config.Config {
 	t.Helper()
 	idp := testidp.New(t)
 
@@ -48,7 +57,7 @@ func testConfig(t *testing.T) *Config {
 		"FILEEE_PASSWORD":                "geheim",
 	}
 
-	cfg, err := LoadConfig(envOf(env))
+	cfg, err := config.LoadConfig(envOf(env))
 	if err != nil {
 		t.Fatalf("testConfig: LoadConfig = %v", err)
 	}
@@ -180,7 +189,7 @@ func TestNewFailsWhenIssuerIsUnreachable(t *testing.T) {
 		"FILEEE_PASSWORD":                "geheim",
 	}
 
-	cfg, err := LoadConfig(envOf(env))
+	cfg, err := config.LoadConfig(envOf(env))
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -231,7 +240,7 @@ func TestNewFailsWhenIssuerRespondsWithAnError(t *testing.T) {
 		"FILEEE_PASSWORD":                "geheim",
 	}
 
-	cfg, err := LoadConfig(envOf(env))
+	cfg, err := config.LoadConfig(envOf(env))
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -254,12 +263,45 @@ func TestNewFailsWhenIssuerRespondsWithAnError(t *testing.T) {
 	}
 }
 
+// Ablehnung eines nicht unterstuetzten Auth-Modus (Pruefbefund zu PR #18).
+// Vor dem Umzug lag dieser Zweig im selben Paket wie sein einziger direkter
+// Beleg (main_test.go, TestRunFailsFastForUnsupportedAuthMode) — der Test
+// deckte damals also sowohl run() als auch diesen Zweig in New() ab. Nach dem
+// Umzug liegt New() in diesem Paket, der bisherige Test aber weiterhin im
+// fremden cmd/fileee-mcp-server und prueft die Ablehnung nur als Nebeneffekt
+// eines Ende-zu-Ende-Wegs durch run() — bei einem Gegenversuch (Ablehnung
+// entfernt) schlaegt er sogar aus dem falschen Grund fehl, weil run() dann
+// bei der naechsten Pruefung (Issuer unerreichbar) haengen bliebe statt am
+// erwarteten MCP_AUTH_MODE-Hinweis. Dieser direkte Test verankert die
+// Absicherung wieder dort, wo der Code liegt.
+func TestNewRejectsUnsupportedAuthMode(t *testing.T) {
+	for _, mode := range []config.AuthMode{config.AuthToken, config.AuthBoth} {
+		t.Run(string(mode), func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.AuthMode = mode
+
+			s, err := New(context.Background(), cfg)
+			if err == nil {
+				t.Fatalf("New() mit AuthMode=%q = nil error, erwartet einen Fehlschlag — Gangway v0.2.0 "+
+					"baut intern immer einen OIDC-Verifier auf und bietet keinen Weg, einen anderen "+
+					"identity.Verifier einzuhaengen (siehe ADR-0015-Nachtrag)", mode)
+			}
+			if s != nil {
+				t.Error("New lieferte einen nicht-nil *Server zusammen mit einem Fehler")
+			}
+			if !strings.Contains(err.Error(), "MCP_AUTH_MODE") {
+				t.Errorf("err = %q, erwartet einen Hinweis auf MCP_AUTH_MODE", err)
+			}
+		})
+	}
+}
+
 // Absicherung (Prüfbefund): New() darf bei einer ResourceURL, die nicht auf
 // /mcp endet oder kuerzer als das Suffix ist, nicht aus dem Bereich laufen —
-// auch dann nicht, wenn ein Aufrufer eine *Config von Hand baut oder
+// auch dann nicht, wenn ein Aufrufer eine *config.Config von Hand baut oder
 // veraendert, statt sie ueber LoadConfig zu beziehen (LoadConfig erzwingt das
 // Suffix nur auf dem eigenen Weg, New() ist trotzdem exportiert und nimmt
-// jede *Config entgegen).
+// jede *config.Config entgegen).
 func TestNewRejectsResourceURLWithoutMCPSuffix(t *testing.T) {
 	cases := []string{
 		"https://mcp.example.com/", // falsches Suffix

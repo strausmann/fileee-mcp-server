@@ -123,7 +123,7 @@ und der Konfiguration (`AuthMode`, `APIToken`) vorsieht.
 **Was das bedeutet.** Solange Gangway keinen Weg bietet, den Verifier auszutauschen, kann dieser
 Server `MCP_AUTH_MODE=token` (und `both`, dessen Token-Zweig genauso betroffen ist) **nicht** über
 Gangway bedienen — unabhängig davon, wie gut `LoadConfig` diesen Modus validiert. `New` in
-`cmd/fileee-mcp-server/server.go` lehnt deshalb jeden Config mit `AuthMode != AuthOIDC` explizit und
+`internal/server/server.go` lehnt deshalb jeden Config mit `AuthMode != AuthOIDC` explizit und
 mit benannter Ursache ab, statt eine verwirrende Fehlermeldung tief aus `identity.NewOIDC` (leere
 `IssuerURL`) durchsickern zu lassen oder — schlimmer — Gangway zu umgehen und selbst eine
 Auth-Schicht für den Token-Fall zu bauen. Letzteres widerspräche der Entscheidung dieses ADRs direkt:
