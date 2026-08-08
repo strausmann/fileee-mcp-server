@@ -8,6 +8,15 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/config"
 )
 
+// envOf baut ein config.Env aus einer Map — dieselbe kleine Hilfsfunktion wie
+// in internal/config/config_test.go und internal/server/server_test.go, hier
+// lokal dupliziert statt importiert: Test-Helfer eines fremden Pakets sind
+// ausserhalb dieses Pakets nicht sichtbar, und ein eigenes Test-Hilfspaket
+// waere fuer eine Zeile Logik unverhaeltnismaessig.
+func envOf(m map[string]string) config.Env {
+	return func(key string) string { return m[key] }
+}
+
 func TestRunVersionSubcommand(t *testing.T) {
 	t.Parallel()
 
@@ -35,7 +44,7 @@ func TestRunFailsFastWithoutRequiredConfig(t *testing.T) {
 		t.Fatalf("run() = Exit-Code 0 bei leerer Konfiguration, erwartet einen Fehler-Code")
 	}
 	// Bei leerem Env schlaegt LoadConfig auf der ersten fehlenden Pflichtvariable
-	// fehl (Default-Modus ist token, siehe config.go) — das ist MCP_API_TOKEN,
+	// fehl (Default-Modus ist token, siehe internal/config/config.go) — das ist MCP_API_TOKEN,
 	// nicht FILEEE_USERNAME. Entscheidend ist hier nicht WELCHE Variable zuerst
 	// benannt wird, sondern DASS run() die von LoadConfig benannte Variable
 	// unveraendert durchreicht, statt sie durch eine generische Meldung zu
@@ -47,7 +56,8 @@ func TestRunFailsFastWithoutRequiredConfig(t *testing.T) {
 }
 
 // Ein AuthMode, den dieser Server (noch) nicht bedienen kann (siehe New in
-// server.go), muss beim Start scheitern — nicht erst beim ersten Request.
+// internal/server/server.go), muss beim Start scheitern — nicht erst beim
+// ersten Request.
 func TestRunFailsFastForUnsupportedAuthMode(t *testing.T) {
 	t.Parallel()
 

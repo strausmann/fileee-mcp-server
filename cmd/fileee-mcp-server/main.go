@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/strausmann/fileee-mcp-server/internal/config"
+	"github.com/strausmann/fileee-mcp-server/internal/server"
 )
 
 func main() {
@@ -48,7 +49,7 @@ func run(args []string, env config.Env, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv, err := New(ctx, cfg)
+	srv, err := server.New(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(stderr, "fileee-mcp-server: Start fehlgeschlagen: %v\n", err)
 		return 1
