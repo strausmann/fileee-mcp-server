@@ -66,6 +66,20 @@ func NewMulti(bySubject map[string]fileee.Credentials) Resolver {
 // the caller's subject — never a credential field of any account,
 // including one that is not the caller's own.
 func (m multi) Credentials(_ context.Context, id *identity.Identity) (fileee.Credentials, error) {
+	// Both guards run before the map is ever consulted, so the trust
+	// boundary holds regardless of what bySubject happens to contain —
+	// including a "" key, which is a perfectly valid Go map key and would
+	// otherwise silently match a caller with no subject at all. A blank
+	// key can arise from an ordinary configuration mistake (an unset field
+	// while building the map, or a parsing bug that yields an empty
+	// string), so this is not a contrived case.
+	if id == nil {
+		return fileee.Credentials{}, fmt.Errorf("%w: no verified identity", ErrNoAccount)
+	}
+	if id.Subject == "" {
+		return fileee.Credentials{}, fmt.Errorf("%w: subject is empty", ErrNoAccount)
+	}
+
 	creds, ok := m.bySubject[id.Subject]
 	if !ok {
 		// This error carries the caller's subject in the clear. That is
