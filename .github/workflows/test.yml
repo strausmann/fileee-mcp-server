@@ -55,6 +55,8 @@ jobs:
           # ihre Schwelle im selben PR, in dem sie entsteht — nachtraeglich nachziehen
           # heisst, das Gate fuer diese Datei nie scharf zu schalten.
           ./scripts/coverage-gate-strict.sh cover.out \
+            cmd/fileee-mcp-server/config.go:90 \
+            cmd/fileee-mcp-server/capabilities.go:90 \
             cmd/fileee-mcp-server/version.go:90
       - name: Doc-Coverage (exportierte Symbole)
         run: |

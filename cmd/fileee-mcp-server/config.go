@@ -1,0 +1,425 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Env liest eine Umgebungsvariable. Der Umweg ueber diesen Typ statt ueber
+// os.Getenv haelt LoadConfig frei von globalem Zustand und macht die
+// Konfiguration ohne t.Setenv parallel testbar.
+type Env func(key string) string
+
+// AuthMode bestimmt, wie sich Clients gegenueber diesem Server ausweisen.
+type AuthMode string
+
+// Die drei Authentifizierungs-Modi.
+const (
+	// AuthOIDC prueft Bearer-Tokens eines externen Identity Providers.
+	AuthOIDC AuthMode = "oidc"
+	// AuthToken prueft ein statisches Bearer-Token aus der Konfiguration.
+	AuthToken AuthMode = "token"
+	// AuthBoth erlaubt beides; der JWT-Pfad hat Vorrang.
+	AuthBoth AuthMode = "both"
+)
+
+// AccountMode bestimmt, ob der Server ein oder mehrere Fileee-Konten bedient.
+type AccountMode string
+
+// Die zwei Konto-Modi.
+const (
+	// ModeSingle bedient genau ein Konto aus FILEEE_USERNAME/_PASSWORD.
+	ModeSingle AccountMode = "single"
+	// ModeMulti bildet Token-Subjects auf mehrere Konten ab.
+	ModeMulti AccountMode = "multi"
+)
+
+// defaultAccountKey ist der Konto-Key im single-Modus. Der Pool behandelt
+// beide Modi damit identisch — single ist ein Pool mit genau einem Eintrag.
+const defaultAccountKey = "default"
+
+// accountKeyMuster begrenzt Konto-Keys auf Zeichen, die als Dateiname sicher
+// sind. Ohne diese Pruefung waere ein Key wie "../../etc/x" ein Schreibzugriff
+// ausserhalb des Session-Verzeichnisses.
+var accountKeyMuster = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+
+// Account beschreibt ein Fileee-Konto samt der Identitaeten, die darauf zeigen.
+type Account struct {
+	// Key ist der interne Bezeichner, zugleich Name der Session-Datei.
+	Key string
+	// Username, Password und TOTPSeed sind die Fileee-Zugangsdaten.
+	Username string
+	Password string
+	TOTPSeed string
+	// Subjects sind die Claim-Werte, die auf dieses Konto abbilden.
+	Subjects []string
+	// Capabilities schraenkt den Funktionsumfang dieses Kontos ein.
+	Capabilities Set
+	// HasCapabilities gibt an, ob ueberhaupt eine Einschraenkung konfiguriert ist.
+	HasCapabilities bool
+}
+
+// Config buendelt die gesamte Laufzeitkonfiguration. Sie entsteht ausschliesslich
+// in LoadConfig — keine andere Stelle im Server liest Umgebungsvariablen.
+type Config struct {
+	AuthMode            AuthMode
+	OIDCIssuer          string
+	OIDCAudience        string
+	OIDCSubjectClaim    string
+	OIDCCapabilityClaim string
+	OIDCRequiredScopes  []string
+	ResourceURL         string
+	APIToken            string
+	AllowedSubjects     []string
+	AllowedHosts        []string
+
+	AccountMode AccountMode
+	Accounts    []Account
+
+	Capabilities     Set
+	AllowDestructive bool
+
+	MaxDownloadBytes    int64
+	MaxUploadBytes      int64
+	MaxRequestBodyBytes int64
+	MaxInflight         int
+
+	ListenAddr        string
+	SessionDir        string
+	KeepaliveInterval time.Duration
+	RateRPS           float64
+	RateBurst         int
+	RateGlobalRPS     float64
+	RateGlobalBurst   int
+	TrustedProxies    []string
+	ClientIPHeaders   []string
+	LogLevel          string
+
+	// Warnings sind Hinweise, die den Start nicht verhindern, aber beim Boot
+	// protokolliert werden sollen.
+	Warnings []string
+
+	subjectIndex map[string]string
+}
+
+// AccountBySubject loest einen Claim-Wert auf einen Konto-Key auf. Ein
+// unbekanntes Subject liefert bewusst kein Ergebnis — es gibt keinen Fallback
+// auf ein Standardkonto.
+func (c *Config) AccountBySubject(subject string) (string, bool) {
+	key, ok := c.subjectIndex[subject]
+	return key, ok
+}
+
+// LoadConfig liest die vollstaendige Konfiguration und validiert sie
+// vollstaendig, bevor der Server startet. Jede Verletzung ist ein Abbruch mit
+// einer Meldung, die die betroffene Variable benennt.
+func LoadConfig(env Env) (*Config, error) {
+	cfg := &Config{
+		AuthMode:            AuthMode(orDefault(env("MCP_AUTH_MODE"), string(AuthToken))),
+		OIDCIssuer:          strings.TrimSpace(env("MCP_OIDC_ISSUER")),
+		OIDCAudience:        strings.TrimSpace(env("MCP_OIDC_AUDIENCE")),
+		OIDCSubjectClaim:    orDefault(env("MCP_OIDC_SUBJECT_CLAIM"), "sub"),
+		OIDCCapabilityClaim: strings.TrimSpace(env("MCP_OIDC_CAPABILITY_CLAIM")),
+		OIDCRequiredScopes:  splitListe(env("MCP_OIDC_REQUIRED_SCOPES")),
+		ResourceURL:         strings.TrimSpace(env("MCP_RESOURCE_URL")),
+		APIToken:            env("MCP_API_TOKEN"),
+		AllowedSubjects:     splitListe(env("MCP_ALLOWED_SUBJECTS")),
+		AllowedHosts:        splitListe(env("MCP_ALLOWED_HOSTS")),
+		AccountMode:         AccountMode(orDefault(env("FILEEE_MODE"), string(ModeSingle))),
+		ListenAddr:          orDefault(env("MCP_LISTEN_ADDR"), ":8080"),
+		SessionDir:          orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
+		TrustedProxies:      splitListe(env("FILEEE_TRUSTED_PROXIES")),
+		ClientIPHeaders:     splitListe(orDefault(env("FILEEE_CLIENT_IP_HEADERS"), "CF-Connecting-IP,X-Real-IP,X-Forwarded-For")),
+		LogLevel:            orDefault(env("FILEEE_LOG_LEVEL"), "info"),
+	}
+
+	switch cfg.AuthMode {
+	case AuthOIDC, AuthToken, AuthBoth:
+	default:
+		return nil, fmt.Errorf("MCP_AUTH_MODE = %q — erlaubt sind oidc, token, both", cfg.AuthMode)
+	}
+	switch cfg.AccountMode {
+	case ModeSingle, ModeMulti:
+	default:
+		return nil, fmt.Errorf("FILEEE_MODE = %q — erlaubt sind single, multi", cfg.AccountMode)
+	}
+
+	var err error
+	if cfg.Capabilities, err = ParseCapabilities(orDefault(env("FILEEE_CAPABILITIES"), string(CapRead))); err != nil {
+		return nil, fmt.Errorf("FILEEE_CAPABILITIES: %w", err)
+	}
+	cfg.AllowDestructive = env("FILEEE_ALLOW_DESTRUCTIVE") == "true"
+	if cfg.Capabilities.Has(CapDestructive) && !cfg.AllowDestructive {
+		return nil, fmt.Errorf("FILEEE_CAPABILITIES enthaelt destructive, aber FILEEE_ALLOW_DESTRUCTIVE " +
+			"ist nicht true — Fileees Hard-DELETE ist unwiderruflich und braucht zwei bewusste Schalter")
+	}
+
+	if err := ladeZahlenwerte(cfg, env); err != nil {
+		return nil, err
+	}
+	if err := ladeAuth(cfg); err != nil {
+		return nil, err
+	}
+	if err := ladeKonten(cfg, env); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func ladeZahlenwerte(cfg *Config, env Env) error {
+	var err error
+	if cfg.MaxDownloadBytes, err = intWert(env, "FILEEE_MAX_DOWNLOAD_BYTES", 1<<20); err != nil {
+		return err
+	}
+	if cfg.MaxUploadBytes, err = intWert(env, "FILEEE_MAX_UPLOAD_BYTES", 2<<20); err != nil {
+		return err
+	}
+	inflight, err := intWert(env, "FILEEE_MAX_INFLIGHT", 8)
+	if err != nil {
+		return err
+	}
+	cfg.MaxInflight = int(inflight)
+
+	burst, err := intWert(env, "FILEEE_RATE_BURST", 3)
+	if err != nil {
+		return err
+	}
+	cfg.RateBurst = int(burst)
+	globalBurst, err := intWert(env, "FILEEE_RATE_GLOBAL_BURST", 3)
+	if err != nil {
+		return err
+	}
+	cfg.RateGlobalBurst = int(globalBurst)
+
+	if cfg.RateRPS, err = floatWert(env, "FILEEE_RATE_RPS", 1); err != nil {
+		return err
+	}
+	if cfg.RateGlobalRPS, err = floatWert(env, "FILEEE_RATE_GLOBAL_RPS", 1); err != nil {
+		return err
+	}
+	if cfg.KeepaliveInterval, err = dauerWert(env, "FILEEE_KEEPALIVE_INTERVAL", 15*time.Minute); err != nil {
+		return err
+	}
+
+	// Base64 blaeht den Nutzinhalt um Faktor 4/3 auf, dazu kommt der
+	// JSON-RPC-Rahmen. Ohne diese Ableitung wuerde der 4-MiB-Default des SDK
+	// groessere Uploads mit 413 abweisen, bevor der Tool-Handler laeuft.
+	cfg.MaxRequestBodyBytes = cfg.MaxUploadBytes*4/3 + 64<<10
+	return nil
+}
+
+func ladeAuth(cfg *Config) error {
+	brauchtOIDC := cfg.AuthMode == AuthOIDC || cfg.AuthMode == AuthBoth
+	brauchtToken := cfg.AuthMode == AuthToken || cfg.AuthMode == AuthBoth
+
+	if brauchtOIDC {
+		if cfg.OIDCIssuer == "" {
+			return fmt.Errorf("MCP_OIDC_ISSUER ist im Modus %q Pflicht", cfg.AuthMode)
+		}
+		if cfg.ResourceURL == "" {
+			return fmt.Errorf("MCP_RESOURCE_URL ist im Modus %q Pflicht — der Wert muss exakt der "+
+				"URL entsprechen, die im Client eingetragen wird", cfg.AuthMode)
+		}
+		// Im single-Modus ist die Allowlist die einzige Autorisierungsstufe.
+		// Ohne sie duerfte jeder Account des IdP auf die Dokumente zugreifen.
+		if cfg.AccountMode == ModeSingle && len(cfg.AllowedSubjects) == 0 {
+			return fmt.Errorf("MCP_ALLOWED_SUBJECTS ist im Modus %q zusammen mit FILEEE_MODE=single "+
+				"Pflicht — leer hiesse: jeder authentifizierte Benutzer des IdP darf zugreifen", cfg.AuthMode)
+		}
+	}
+	if brauchtToken && cfg.APIToken == "" {
+		return fmt.Errorf("MCP_API_TOKEN ist im Modus %q Pflicht", cfg.AuthMode)
+	}
+
+	if brauchtToken && cfg.ResourceURL != "" && !istLoopback(cfg.ResourceURL) {
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf(
+			"MCP_AUTH_MODE=%q auf der oeffentlich erreichbaren URL %s — der Zugriff auf die Dokumente "+
+				"haengt damit an einem einzigen statischen String. Fuer Produktion ist oidc vorgesehen.",
+			cfg.AuthMode, cfg.ResourceURL))
+	}
+	return nil
+}
+
+func ladeKonten(cfg *Config, env Env) error {
+	cfg.subjectIndex = map[string]string{}
+
+	if cfg.AccountMode == ModeSingle {
+		user, pass := env("FILEEE_USERNAME"), env("FILEEE_PASSWORD")
+		if user == "" || pass == "" {
+			return fmt.Errorf("FILEEE_USERNAME und FILEEE_PASSWORD sind im Modus single Pflicht")
+		}
+		cfg.Accounts = []Account{{
+			Key:      defaultAccountKey,
+			Username: user,
+			Password: pass,
+			TOTPSeed: env("FILEEE_TOTP_SEED"),
+			Subjects: cfg.AllowedSubjects,
+		}}
+		for _, s := range cfg.AllowedSubjects {
+			cfg.subjectIndex[s] = defaultAccountKey
+		}
+		return nil
+	}
+
+	// Ein statisches Token traegt kein Subject — im multi-Modus gaebe es nichts
+	// aufzuloesen. Bei both bleibt der JWT-Pfad nutzbar, der Token-Pfad nicht.
+	if cfg.AuthMode == AuthToken {
+		return fmt.Errorf("FILEEE_MODE=multi zusammen mit MCP_AUTH_MODE=token ist nicht aufloesbar: " +
+			"ein statisches Token traegt kein Subject, das auf ein Konto zeigen koennte")
+	}
+
+	keys := splitListe(env("FILEEE_ACCOUNTS"))
+	if len(keys) == 0 {
+		return fmt.Errorf("FILEEE_ACCOUNTS ist im Modus multi Pflicht")
+	}
+
+	// Zwei Pruefungen auf Eindeutigkeit: der Key selbst wird zum Dateinamen der Session,
+	// und das daraus abgeleitete Env-Praefix bestimmt, welche Variablen gelesen werden.
+	// "foo-bar" und "foo_bar" ergeben dasselbe Praefix und wuerden sich sonst
+	// unbemerkt dieselben Zugangsdaten teilen.
+	gesehen := map[string]bool{}
+	praefixe := map[string]string{}
+
+	for _, key := range keys {
+		if gesehen[key] {
+			return fmt.Errorf("der Konto-Key %q steht mehrfach in FILEEE_ACCOUNTS", key)
+		}
+		gesehen[key] = true
+
+		if !accountKeyMuster.MatchString(key) {
+			return fmt.Errorf("der Konto-Key %q ist unzulaessig — erlaubt sind 1 bis 32 Zeichen aus "+
+				"[a-z0-9_-]; der Key wird als Dateiname der Session verwendet", key)
+		}
+		praefix := "FILEEE_ACCOUNT_" + strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
+		if anderer, kollision := praefixe[praefix]; kollision {
+			return fmt.Errorf("die Konto-Keys %q und %q lesen dieselben Variablen (%s_*) — "+
+				"Bindestrich und Unterstrich werden im Praefix gleich behandelt", anderer, key, praefix)
+		}
+		praefixe[praefix] = key
+
+		konto := Account{
+			Key:      key,
+			Username: env(praefix + "_USERNAME"),
+			Password: env(praefix + "_PASSWORD"),
+			TOTPSeed: env(praefix + "_TOTP_SEED"),
+			Subjects: splitListe(env(praefix + "_SUBJECTS")),
+		}
+		if konto.Username == "" || konto.Password == "" {
+			return fmt.Errorf("%s_USERNAME und %s_PASSWORD sind Pflicht", praefix, praefix)
+		}
+
+		if roh := env(praefix + "_CAPABILITIES"); roh != "" {
+			caps, err := ParseCapabilities(roh)
+			if err != nil {
+				return fmt.Errorf("%s_CAPABILITIES: %w", praefix, err)
+			}
+			if caps.Intersect(cfg.Capabilities) != caps {
+				return fmt.Errorf("%s_CAPABILITIES = %q ueberschreitet die Obergrenze %q aus "+
+					"FILEEE_CAPABILITIES — ein Konto kann nur einschraenken, nie erweitern",
+					praefix, caps.String(), cfg.Capabilities.String())
+			}
+			konto.Capabilities = caps
+			konto.HasCapabilities = true
+		}
+
+		for _, subject := range konto.Subjects {
+			if vorhanden, doppelt := cfg.subjectIndex[subject]; doppelt {
+				return fmt.Errorf("das Subject %q zeigt auf zwei Konten (%q und %q) — bei zwei plausiblen "+
+					"Zuordnungen gibt es keine richtige Wahl, deshalb kein first-match-wins",
+					subject, vorhanden, key)
+			}
+			cfg.subjectIndex[subject] = key
+		}
+		cfg.Accounts = append(cfg.Accounts, konto)
+	}
+	return nil
+}
+
+func orDefault(wert, fallback string) string {
+	if strings.TrimSpace(wert) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(wert)
+}
+
+func splitListe(roh string) []string {
+	var out []string
+	for _, teil := range strings.Split(roh, ",") {
+		if t := strings.TrimSpace(teil); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func intWert(env Env, key string, fallback int64) (int64, error) {
+	roh := strings.TrimSpace(env(key))
+	if roh == "" {
+		return fallback, nil
+	}
+	wert, err := strconv.ParseInt(roh, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s = %q ist keine ganze Zahl", key, roh)
+	}
+	// Negative Werte sind fuer jeden Konsumenten dieser Funktion unsinnig — Byte-Grenzen,
+	// Burst-Groessen, Nebenlaeufigkeit. Ohne diese Pruefung ergaebe ein negatives
+	// Upload-Limit ein negatives MaxRequestBodyBytes, und der Server startete damit.
+	if wert < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	}
+	return wert, nil
+}
+
+func floatWert(env Env, key string, fallback float64) (float64, error) {
+	roh := strings.TrimSpace(env(key))
+	if roh == "" {
+		return fallback, nil
+	}
+	wert, err := strconv.ParseFloat(roh, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s = %q ist keine Zahl", key, roh)
+	}
+	if wert < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	}
+	return wert, nil
+}
+
+func dauerWert(env Env, key string, fallback time.Duration) (time.Duration, error) {
+	roh := strings.TrimSpace(env(key))
+	if roh == "" {
+		return fallback, nil
+	}
+	wert, err := time.ParseDuration(roh)
+	if err != nil {
+		return 0, fmt.Errorf("%s = %q ist keine Dauer (erwartet z. B. 15m, 30s)", key, roh)
+	}
+	if wert < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	}
+	return wert, nil
+}
+
+// istLoopback erkennt lokale Adressen, bei denen der token-Modus unbedenklich ist.
+//
+// Die Auswertung laeuft ueber url.Parse und Hostname(), nicht ueber eigenes
+// Zerschneiden: nur so wird die Klammer-Schreibweise von IPv6 ("http://[::1]:8080/")
+// korrekt aufgeloest. Eine selbstgebaute Trennung am ersten Doppelpunkt haette
+// dort "[" ergeben und faelschlich vor einer oeffentlichen URL gewarnt.
+func istLoopback(roh string) bool {
+	u, err := url.Parse(roh)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
