@@ -109,6 +109,51 @@ bauen müsste.
    der bereits verifizierten Identität auszuwählen. Das ist keine Fileee-spezifische Einschränkung,
    sondern eine offene Erweiterung von Gangway selbst — nachzuverfolgen im Gangway-Repo, nicht hier.
 
+## Nachtrag (2026-08-08): `MCP_AUTH_MODE=token` ist über Gangway derzeit nicht erreichbar
+
+**Anlass.** Beim Umsetzungsschritt, der Gangway tatsächlich verdrahtet (`internal`/`cmd/fileee-mcp-server`,
+`New`/`Server.Run`), zeigte `go doc github.com/strausmann/gangway/serve` und der Quelltext von
+`serve.New`: Gangway baut **unbedingt** einen `identity.NewOIDC`-Verifier auf
+(`s.verifier, err = identity.NewOIDC(ctx, identity.OIDCConfig{...})`, `serve.go`, ohne Verzweigung).
+`identity.Verifier` ist zwar ein Interface, aber `Server` hält seinen `verifier` unexportiert und
+bietet keine Option (`serve.Option`), einen anderen `identity.Verifier` einzuhängen — etwa einen für
+ein statisches Bearer-Token, wie ihn `MCP_AUTH_MODE=token` aus [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md)
+und der Konfiguration (`AuthMode`, `APIToken`) vorsieht.
+
+**Was das bedeutet.** Solange Gangway keinen Weg bietet, den Verifier auszutauschen, kann dieser
+Server `MCP_AUTH_MODE=token` (und `both`, dessen Token-Zweig genauso betroffen ist) **nicht** über
+Gangway bedienen — unabhängig davon, wie gut `LoadConfig` diesen Modus validiert. `New` in
+`cmd/fileee-mcp-server/server.go` lehnt deshalb jeden Config mit `AuthMode != AuthOIDC` explizit und
+mit benannter Ursache ab, statt eine verwirrende Fehlermeldung tief aus `identity.NewOIDC` (leere
+`IssuerURL`) durchsickern zu lassen oder — schlimmer — Gangway zu umgehen und selbst eine
+Auth-Schicht für den Token-Fall zu bauen. Letzteres widerspräche der Entscheidung dieses ADRs direkt:
+der Sinn von Gangway ist, dass Anmeldung, Freigabeliste, Werkzeug-Freigabe und Zugriffsprotokoll
+**nicht** wieder fileee-spezifischer Eigencode werden.
+
+**Was das nicht bedeutet.** Kein Rückzieher von der Entscheidung oben — Gangway bleibt für die
+`oidc`-Betriebsart (die im README als das primäre Szenario beschriebene „Remote-Connector mit
+OAuth-Anmeldung") vollständig tragfähig, und genau das ist das Szenario, für das dieser Server als
+OAuth-2.1-Resource-Server überhaupt entworfen wurde ([ADR-0009](0009-resource-server-statt-eigener-authorization-server.md)).
+Betroffen ist ausschließlich die lokale/Token-Betriebsart aus dem README-Abschnitt „Eine Person, ein
+Fileee-Konto, kein Identity Provider".
+
+**Wie es weitergehen kann.** Zwei nicht sich ausschließende Wege, beide außerhalb dieses ADRs zu
+entscheiden:
+
+1. Gangway bekommt eine Möglichkeit, den `identity.Verifier` zu injizieren (z. B. ein
+   `serve.WithVerifier(v identity.Verifier) Option`, analog zu `WithDecider`) — dann bräuchte dieser
+   Server nur noch einen kleinen `identity.Verifier` für ein statisches Token zu schreiben und
+   weiterhin Gangways Adress-Freigabeliste, Werkzeug-Freigabe und Zugriffsprotokoll zu nutzen. Das ist
+   der naheliegendere Weg, weil er die Struktur dieses ADRs (Gangway als vollständiger Unterbau)
+   unangetastet lässt.
+2. Der Token-Modus bleibt dauerhaft ohne Gangway — ein zweiter, deutlich schlankerer Codepfad in
+   diesem Server, der Gangway für `oidc` nutzt und für `token` selbst eine einfache
+   Bearer-Token-Prüfung vornimmt. Das widerspräche der „ein Weg für alles"-Absicht dieses ADRs und
+   ist deshalb die unattraktivere Option.
+
+Dieser Nachtrag ist ein Fund, kein Fix — die tatsächliche Entscheidung (und ein etwaiges
+Feature-Issue im Gangway-Repo) steht noch aus.
+
 ## Referenzen
 
 - [Gangway](https://github.com/strausmann/gangway), Dokumentation https://gangway.strausmann.cloud
