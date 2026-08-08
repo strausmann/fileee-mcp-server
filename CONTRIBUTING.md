@@ -18,7 +18,7 @@ Danke für dein Interesse an diesem Projekt. `fileee-mcp-server` stellt Fileee-I
    go build ./...
    go vet ./...
    go test ./... -race -coverprofile=cover.out
-   ./scripts/coverage-gate-strict.sh cover.out cmd/fileee-mcp-server/<geänderte-datei>.go:<schwelle>
+   ./scripts/coverage-gate-strict.sh cover.out <pfad-der-geänderten-datei>.go:<schwelle>
    ./scripts/doc-coverage.sh
    gofmt -l .    # muss leer bleiben
    ```
@@ -31,10 +31,15 @@ Die Schwellen pro Datei stehen in [`.github/workflows/test.yml`](.github/workflo
 
 | Kategorie | Schwelle | Dateien |
 |---|---|---|
-| Auth/Permission | 90 | `auth_oidc.go`, `auth_token.go`, `accounts.go`, `capabilities.go`, `config.go` |
+| Auth/Permission | 90 | `auth_oidc.go`, `auth_token.go`, `accounts.go`, `internal/config/capabilities.go`, `internal/config/config.go` |
 | Mutations-Logik | 85 | `clientpool.go`, `tools_destructive.go`, mutierende Tool-Pfade |
-| Business-Logik | 80 | übrige `tools_*.go`, `server.go`, `errors.go` |
-| Adapter/Boot | 60 | `main.go`, `secrets.go` |
+| Business-Logik | 80 | übrige `tools_*.go`, `internal/server/server.go`, `errors.go` |
+| Adapter/Boot | 60 | `cmd/fileee-mcp-server/main.go`, `secrets.go` |
+
+Dateien, die noch nicht existieren (`auth_oidc.go`, `auth_token.go`, `accounts.go`, `clientpool.go`,
+`tools_destructive.go`, `tools_*.go`, `errors.go`, `secrets.go`), sind absichtlich ohne Verzeichnis
+notiert — ihr Paketzuschnitt (u. a. `internal/accounts`, `internal/clientpool`, `internal/tools`)
+entsteht in den Umsetzungsschritten, die sie einführen, und bekommt dort seinen vollen Pfad.
 
 Jede neue Datei bekommt ihre Schwelle **im selben PR**, in dem sie entsteht. Nachträglich nachziehen heißt, das Gate für diese Datei nie scharf zu schalten.
 
