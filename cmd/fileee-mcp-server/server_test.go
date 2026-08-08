@@ -193,6 +193,55 @@ func TestNewFailsWhenIssuerIsUnreachable(t *testing.T) {
 	}
 }
 
+// Fehler-vom-Gegenueber-Pfad (test-coverage-pflicht.md, dritte Pflichtklasse
+// neben Erfolg und Netzwerkfehler; Pruefbefund an #17). "Niemand hoert zu"
+// (TestNewFailsWhenIssuerIsUnreachable) nimmt einen anderen Weg durch
+// go-oidc als "der Dienst antwortet, aber mit einem Fehler" — Letzteres ist
+// der praktisch haeufigere Betriebsfall (Tippfehler in der
+// Aussteller-Adresse, kaputte Discovery, Anmeldedienst im Wartungsmodus).
+// Dieser Test stellt einen erreichbaren Aussteller nach, dessen
+// Discovery-Endpunkt mit 500 antwortet, und belegt, dass New() dabei sauber
+// fehlschlaegt statt zu haengen oder abzustuerzen.
+func TestNewFailsWhenIssuerRespondsWithAnError(t *testing.T) {
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer idp.Close()
+
+	env := map[string]string{
+		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_ISSUER":                idp.URL,
+		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
+		"MCP_ALLOWED_SUBJECTS":           "abc123",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
+		"FILEEE_USERNAME":                "nutzer@example.com",
+		"FILEEE_PASSWORD":                "geheim",
+	}
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	s, err := New(ctx, cfg)
+	if err == nil {
+		t.Fatal("New = nil error, erwartet einen Fehlschlag — der Aussteller antwortet mit einem Serverfehler")
+	}
+	if s != nil {
+		t.Error("New lieferte einen nicht-nil *Server zusammen mit einem Fehler")
+	}
+	if !strings.Contains(err.Error(), "fileee-mcp: gangway:") {
+		t.Errorf("err = %q, erwartet das fileee-mcp: gangway:-Praefix", err)
+	}
+	if strings.Contains(err.Error(), "geheim") {
+		t.Error("Fehlermeldung enthaelt das Fileee-Passwort")
+	}
+}
+
 // Absicherung (Prüfbefund): New() darf bei einer ResourceURL, die nicht auf
 // /mcp endet oder kuerzer als das Suffix ist, nicht aus dem Bereich laufen —
 // auch dann nicht, wenn ein Aufrufer eine *Config von Hand baut oder
