@@ -25,7 +25,10 @@ func main() {
 // Prozess-Exit.
 func run(args []string, env Env, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "version" {
-		fmt.Fprintln(stdout, Version())
+		// Fprintf statt Fprintln: .golangci.yml nimmt errcheck nur fmt.Fprintf
+		// von der Pflicht aus, den Rueckgabewert zu pruefen — ein Schreibfehler
+		// auf stdout ist hier ohnehin nicht sinnvoll behandelbar.
+		fmt.Fprintf(stdout, "%s\n", Version())
 		return 0
 	}
 
