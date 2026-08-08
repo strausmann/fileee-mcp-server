@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -804,5 +805,460 @@ func TestSessionFilePathIsDeterministicUniqueAndFilesystemSafe(t *testing.T) {
 	other := sessionFilePath(dir, "different@example.com")
 	if other == first {
 		t.Error("zwei unterschiedliche Konto-Keys ergaben dieselbe Session-Datei")
+	}
+}
+
+// --- capability gating (Aufgabe 6): getrennte Werkzeugkataloge -----------
+//
+// Aufgabe 5 hat zwei Warnungen fuer diese Aufgabe hinterlassen (siehe Plan,
+// Abschnitt "Aufgabe 6", die beiden Kaesten darueber):
+//
+//  1. tools.ReadToolKinds() bleibt unveraendert richtig: kein neuer
+//     Werkzeugname entsteht hier, RegisterRead wird nur noch bedingt statt
+//     immer aufgerufen. serve.WithToolKinds() ist weiterhin ein einziger,
+//     serverweiter Aufruf in New() (unveraendert) — die Falle waere erst
+//     bei einer kuenftigen Aufgabe faellig, die einen NEUEN Werkzeugnamen
+//     einfuehrt und vergisst, ihn dort einzutragen.
+//  2. Die Berechtigungen je Konto (config.Account.Capabilities/
+//     HasCapabilities) werden jetzt tatsaechlich ausgewertet — siehe
+//     capabilitiesFor, Zweig ueber cfg.AccountBySubject(). Das ist die
+//     erste produktive Verwendung von AccountBySubject/subjectIndex
+//     ueberhaupt (vorher nur definiert, nirgends aufgerufen).
+
+// testCapabilityConfig baut eine multi-Modus-Konfiguration mit zwei Konten
+// fuer die Tests in diesem Abschnitt: "alice" ohne Kapazitaets-Override
+// (erbt die globale Obergrenze read,share vollstaendig) und "bob", auf
+// FILEEE_ACCOUNT_BOB_CAPABILITIES=share eingeschraenkt — eine gueltige
+// Teilmenge der Obergrenze (LoadConfig liesse eine Ueberschreitung nicht
+// durch), die read bewusst ausschliesst. Weil heute nur lesende Werkzeuge
+// existieren, sieht bob damit KEIN Werkzeug — der realistischste Weg, "ein
+// Aufrufer ohne die noetige Berechtigung" ueber echte Konfiguration statt
+// eines Sonderfalls nachzubilden.
+func testCapabilityConfig(t *testing.T) (*config.Config, *testidp.IDP) {
+	t.Helper()
+	idp := testidp.New(t)
+
+	env := map[string]string{
+		"MCP_AUTH_MODE":                   "oidc",
+		"MCP_OIDC_ISSUER":                 idp.URL(),
+		"MCP_OIDC_AUDIENCE":               "fileee-mcp-server",
+		"MCP_RESOURCE_URL":                "https://mcp.example.com/mcp",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES":  "0.0.0.0/0, ::/0",
+		"FILEEE_MODE":                     "multi",
+		"FILEEE_ACCOUNTS":                 "alice,bob",
+		"FILEEE_ACCOUNT_ALICE_USERNAME":   "alice@example.invalid",
+		"FILEEE_ACCOUNT_ALICE_PASSWORD":   "kein-echtes-passwort-alice",
+		"FILEEE_ACCOUNT_ALICE_SUBJECTS":   "alice-subject",
+		"FILEEE_ACCOUNT_BOB_USERNAME":     "bob@example.invalid",
+		"FILEEE_ACCOUNT_BOB_PASSWORD":     "kein-echtes-passwort-bob",
+		"FILEEE_ACCOUNT_BOB_SUBJECTS":     "bob-subject",
+		"FILEEE_ACCOUNT_BOB_CAPABILITIES": "share",
+		"FILEEE_CAPABILITIES":             "read,share",
+	}
+	cfg, err := config.LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("testCapabilityConfig: LoadConfig: %v", err)
+	}
+	return cfg, idp
+}
+
+// startCapabilityServer builds *Server via New() (the real, production
+// path — see the section doc comment on TestNewRegistersReadToolsUsableThroughTheRealWiring
+// for why this matters) against testCapabilityConfig, wired to a local
+// Fileee mock, and serves it.
+func startCapabilityServer(t *testing.T, cfg *config.Config) *httptest.Server {
+	t.Helper()
+	fileeeMock := newFileeeMock(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg, WithPoolOptions(
+		clientpool.WithClientOptions(fileee.WithBaseURL(fileeeMock), fileee.WithRateLimit(1000, 1000)),
+		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
+			return fileee.NewFileSessionStore(filepath.Join(t.TempDir(), accountKey+".json"))
+		}),
+	))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	httpSrv := httptest.NewServer(s.Handler())
+	t.Cleanup(httpSrv.Close)
+	return httpSrv
+}
+
+// connectAs mints a token for subject against idp and connects a real MCP
+// client to httpSrv over it — the streamable-HTTP round trip, not a direct
+// function call, so the assertion is about what a real client actually
+// receives.
+func connectAs(t *testing.T, ctx context.Context, httpSrv *httptest.Server, idp *testidp.IDP, subject string) *mcp.ClientSession {
+	t.Helper()
+	token := idp.Token(map[string]any{
+		"iss": idp.URL(), "aud": "fileee-mcp-server", "sub": subject,
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "capability-gating-test", Version: "0.0.0"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		HTTPClient:           &http.Client{Transport: bearerRoundTripper{token: token}},
+		DisableStandaloneSSE: true,
+	}
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		t.Fatalf("Connect(subject=%q): %v", subject, err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+// listToolNames calls tools/list over session and returns the tool names —
+// the caller's own view of its catalog, exactly what a real MCP client
+// would see.
+func listToolNames(t *testing.T, ctx context.Context, session *mcp.ClientSession) []string {
+	t.Helper()
+	res, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := make([]string, 0, len(res.Tools))
+	for _, tl := range res.Tools {
+		names = append(names, tl.Name)
+	}
+	return names
+}
+
+// TestCallersSeeOnlyTheToolsTheirCapabilitiesAllow is the plan's own test
+// name (Aufgabe 6, Schritt 1) — the visibility half of the two guarantees
+// this task establishes: alice (inherits the full read,share ceiling) sees
+// both reading tools; bob (restricted to share only, via
+// FILEEE_ACCOUNT_BOB_CAPABILITIES) sees NONE, because share alone does not
+// include CapRead and no other tool exists yet to see. See
+// TestRestrictedCallerCannotCallAToolDespiteKnowingItsName immediately
+// below for the second guarantee (cannot CALL what is not listed either) —
+// kept as a separate test on purpose: a selector bug that hides a tool
+// from the catalog without also blocking the call (or vice versa) must
+// not slip past a single, conflated assertion.
+func TestCallersSeeOnlyTheToolsTheirCapabilitiesAllow(t *testing.T) {
+	cfg, idp := testCapabilityConfig(t)
+	httpSrv := startCapabilityServer(t, cfg)
+	ctx := context.Background()
+
+	aliceTools := listToolNames(t, ctx, connectAs(t, ctx, httpSrv, idp, "alice-subject"))
+	if !slices.Contains(aliceTools, tools.ToolListDocuments) || !slices.Contains(aliceTools, tools.ToolSearchDocuments) {
+		t.Errorf("alice (read,share): tools/list = %v, want both %q and %q",
+			aliceTools, tools.ToolListDocuments, tools.ToolSearchDocuments)
+	}
+
+	bobTools := listToolNames(t, ctx, connectAs(t, ctx, httpSrv, idp, "bob-subject"))
+	if len(bobTools) != 0 {
+		t.Errorf("bob (share only): tools/list = %v, want an empty catalog", bobTools)
+	}
+}
+
+// TestRestrictedCallerCannotCallAToolDespiteKnowingItsName is the
+// callability half of the two guarantees — see the doc comment above.
+// Hiding a tool from tools/list is not, by itself, an access control: a
+// caller who already knows (or guesses) a tool's name must still be
+// unable to invoke it. bob's instance never had list_documents registered
+// at all (buildInstances only calls tools.RegisterRead when
+// caps.Has(config.CapRead), and bob's resolved capability is share only),
+// so the call fails the same way it did in
+// TestListDocumentsSurfacesANetworkErrorAsAToolError's counterpart in
+// internal/tools/read_test.go when RegisterRead itself was missing: an
+// "unknown tool" failure at the transport/protocol level, not a tool-level
+// IsError result — there is no tool-level result to have, the tool does
+// not exist on this instance.
+func TestRestrictedCallerCannotCallAToolDespiteKnowingItsName(t *testing.T) {
+	cfg, idp := testCapabilityConfig(t)
+	httpSrv := startCapabilityServer(t, cfg)
+	ctx := context.Background()
+
+	bobSession := connectAs(t, ctx, httpSrv, idp, "bob-subject")
+	_, err := bobSession.CallTool(ctx, &mcp.CallToolParams{Name: tools.ToolListDocuments})
+	if err == nil {
+		t.Fatal("CallTool(list_documents) by bob (share only) succeeded — the tool must not be callable " +
+			"just because its name is known; it was never registered on bob's instance")
+	}
+}
+
+// --- Gegenversuch (Pflicht laut Auftrag): Auswahlfunktion liefert immer
+// die vollstaendige Instanz --------------------------------------------
+//
+// Nicht als automatisierter Test im Repo (er wuerde absichtlich die
+// Absicherung ausser Kraft setzen) — von Hand gefahren, Ergebnis siehe
+// Bericht: server.go's AttachMCPSelector-Aufruf durch
+// `return instances[reachableCapabilitySets(cfg.Capabilities)[len(...)-1]]`
+// (die Menge mit allen Bits, quasi "immer voll") ersetzt, beide Tests oben
+// einzeln laufen lassen. Danach zurueckgesetzt.
+
+// --- reachableCapabilitySets / buildInstances: die feste Instanzmenge ---
+
+// TestReachableCapabilitySetsIsExhaustiveAndBounded belegt reachableCapabilitySets
+// direkt: fuer eine Obergrenze mit allen vier Gruppen muessen alle 2^4 = 16
+// Teilmengen auftauchen, jede davon tatsaechlich eine Teilmenge der
+// Obergrenze sein (kein Wert ausserhalb — config.Resolve koennte so etwas
+// nie liefern, siehe dessen Doc-Kommentar), und keine doppelt.
+func TestReachableCapabilitySetsIsExhaustiveAndBounded(t *testing.T) {
+	global := mustCaps(t, "read,write,share,destructive")
+
+	sets := reachableCapabilitySets(global)
+	if len(sets) != 16 {
+		t.Fatalf("len(sets) = %d, want 16 (jede Teilmenge von vier Gruppen)", len(sets))
+	}
+
+	seen := make(map[config.Set]bool, len(sets))
+	for _, s := range sets {
+		if seen[s] {
+			t.Errorf("Menge %v mehrfach in reachableCapabilitySets", s)
+		}
+		seen[s] = true
+		if s.Intersect(global) != s {
+			t.Errorf("Menge %v ist keine Teilmenge der Obergrenze %v", s, global)
+		}
+	}
+
+	for _, want := range []config.Set{{}, mustCaps(t, "read"), global} {
+		if !seen[want] {
+			t.Errorf("erwartete Menge %v fehlt in reachableCapabilitySets", want)
+		}
+	}
+}
+
+// TestReachableCapabilitySetsShrinksWithTheCeiling belegt, dass die Anzahl
+// tatsaechlich von der Obergrenze abhaengt (2^Anzahl-gesetzter-Gruppen),
+// nicht immer 16 ist — sonst wuerde TestReachableCapabilitySetsIsExhaustiveAndBounded
+// allein nicht zeigen, dass die Funktion die Obergrenze ueberhaupt liest.
+func TestReachableCapabilitySetsShrinksWithTheCeiling(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"", 1},           // nur die leere Menge
+		{"read", 2},       // {}, {read}
+		{"read,share", 4}, // {}, {read}, {share}, {read,share}
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			global := mustCaps(t, tc.raw)
+			if got := len(reachableCapabilitySets(global)); got != tc.want {
+				t.Errorf("len(reachableCapabilitySets(%q)) = %d, want %d", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEveryReachableCapabilitySetHasAnInstance ist die vom Auftrag
+// verlangte Vollstaendigkeits-Pruefung: "pruef, dass jede erreichbare
+// Stufe eine Instanz hat, sonst sperrst du berechtigte Anrufer aus". Direkt
+// gegen buildInstances statt End-zu-Ende, weil das die Eigenschaft ist, die
+// geprueft werden soll — fuer jede von reachableCapabilitySets gelieferte
+// Menge muss instances[...] einen echten Eintrag liefern, nie das
+// Nullwert-nil, das AttachMCPSelector als "Anfrage ablehnen" liest.
+func TestEveryReachableCapabilitySetHasAnInstance(t *testing.T) {
+	global := mustCaps(t, "read,write,share,destructive")
+	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
+	instances := buildInstances(pool, global)
+
+	for _, s := range reachableCapabilitySets(global) {
+		if instances[s] == nil {
+			t.Errorf("keine Instanz fuer erreichbare Menge %v — ein Aufrufer, der genau darauf aufloest, "+
+				"bekaeme Gangways 400 statt seines (moeglicherweise leeren, aber gueltigen) Werkzeugkatalogs", s)
+		}
+	}
+}
+
+// TestBuildInstancesRegistersReadToolsOnlyWhenCapRead belegt buildInstances'
+// eigentliche Entscheidung direkt: eine Instanz traegt die lesenden
+// Werkzeuge genau dann, wenn ihre Menge config.CapRead enthaelt — ueber
+// einen echten (In-Memory-)MCP-Client gegen den rohen *mcp.Server, nicht
+// durch Nachzaehlen der Registrierungsaufrufe.
+func TestBuildInstancesRegistersReadToolsOnlyWhenCapRead(t *testing.T) {
+	global := mustCaps(t, "read,share")
+	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
+	instances := buildInstances(pool, global)
+
+	cases := []struct {
+		name     string
+		set      config.Set
+		wantRead bool
+	}{
+		{"read only", mustCaps(t, "read"), true},
+		{"share only", mustCaps(t, "share"), false},
+		{"read und share", mustCaps(t, "read,share"), true},
+		{"weder noch", config.Set{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mcpServer, ok := instances[tc.set]
+			if !ok {
+				t.Fatalf("keine Instanz fuer %v", tc.set)
+			}
+			names := toolNamesOf(t, mcpServer)
+			hasRead := slices.Contains(names, tools.ToolListDocuments) && slices.Contains(names, tools.ToolSearchDocuments)
+			if hasRead != tc.wantRead {
+				t.Errorf("Werkzeuge = %v, wantRead = %v", names, tc.wantRead)
+			}
+		})
+	}
+}
+
+// toolNamesOf verbindet einen echten MCP-Client ueber eine
+// In-Memory-Transportstrecke direkt mit mcpServer (kein HTTP, kein
+// Gangway noetig — buildInstances liefert einen rohen *mcp.Server, keine
+// HTTP-Verdrahtung) und liest tools/list.
+func toolNamesOf(t *testing.T, mcpServer *mcp.Server) []string {
+	t.Helper()
+	ctx := context.Background()
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	if _, err := mcpServer.Connect(ctx, serverTransport, nil); err != nil {
+		t.Fatalf("Server.Connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "instance-probe", Version: "0.0.0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("Client.Connect: %v", err)
+	}
+	defer session.Close()
+
+	res, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := make([]string, 0, len(res.Tools))
+	for _, tl := range res.Tools {
+		names = append(names, tl.Name)
+	}
+	return names
+}
+
+func mustCaps(t *testing.T, raw string) config.Set {
+	t.Helper()
+	s, err := config.ParseCapabilities(raw)
+	if err != nil {
+		t.Fatalf("ParseCapabilities(%q): %v", raw, err)
+	}
+	return s
+}
+
+// --- capabilitiesFor: die Rangfolge aus ADR-0011 -------------------------
+
+// TestCapabilitiesForClaimBranchTakesOnlyKnownValuesFromTheToken belegt den
+// ersten, hoechstpriorisierten Zweig: ist der Claim konfiguriert, zaehlt
+// ausschliesslich der Tokeninhalt — unbekannte Werte (hier "unrelated",
+// typischerweise andere IdP-Rollen ohne Bezug zu diesem Server) werden
+// uebergangen, nicht als Fehler behandelt.
+func TestCapabilitiesForClaimBranchTakesOnlyKnownValuesFromTheToken(t *testing.T) {
+	cfg := &config.Config{Capabilities: mustCaps(t, "read,write"), OIDCCapabilityClaim: "roles"}
+	id := &identity.Identity{Subject: "x", Claims: map[string]any{"roles": []any{"write", "unrelated"}}}
+
+	got := capabilitiesFor(cfg, nil, id)
+	if want := mustCaps(t, "write"); got != want {
+		t.Errorf("capabilitiesFor = %v, want %v", got, want)
+	}
+}
+
+// TestCapabilitiesForClaimBranchFailsClosedOnAnUnknownValue ist ADR-0011
+// Punkt 5: ein konfigurierter Claim ohne bekannten Wert ergibt "read", nie
+// die Kontoeinstellung oder die volle Obergrenze — eine vergessene
+// Rollenzuweisung im IdP darf keine stille Rechteausweitung sein.
+func TestCapabilitiesForClaimBranchFailsClosedOnAnUnknownValue(t *testing.T) {
+	cfg := &config.Config{Capabilities: mustCaps(t, "read,write"), OIDCCapabilityClaim: "roles"}
+	id := &identity.Identity{Subject: "x", Claims: map[string]any{"roles": []any{"something-else"}}}
+
+	got := capabilitiesFor(cfg, nil, id)
+	if want := mustCaps(t, "read"); got != want {
+		t.Errorf("capabilitiesFor = %v, want %v (fail-closed auf read)", got, want)
+	}
+}
+
+// TestCapabilitiesForAccountBranchReadsThePreviouslyUnusedSetting ist die
+// erste tatsaechliche Verwendung von cfg.AccountBySubject (Pruefbefund
+// Aufgabe 5) — ueber einen echten config.LoadConfig-Weg, weil
+// cfg.subjectIndex unexportiert ist und sich ausserhalb von package config
+// nicht von Hand setzen laesst.
+func TestCapabilitiesForAccountBranchReadsThePreviouslyUnusedSetting(t *testing.T) {
+	env := map[string]string{
+		"MCP_AUTH_MODE":                   "oidc",
+		"MCP_OIDC_ISSUER":                 "https://issuer.example.invalid",
+		"MCP_OIDC_AUDIENCE":               "aud",
+		"MCP_RESOURCE_URL":                "https://mcp.example.com/mcp",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES":  "0.0.0.0/0",
+		"FILEEE_MODE":                     "multi",
+		"FILEEE_ACCOUNTS":                 "bob",
+		"FILEEE_ACCOUNT_BOB_USERNAME":     "bob@example.invalid",
+		"FILEEE_ACCOUNT_BOB_PASSWORD":     "kein-echtes-passwort-bob",
+		"FILEEE_ACCOUNT_BOB_SUBJECTS":     "bob-subject",
+		"FILEEE_ACCOUNT_BOB_CAPABILITIES": "share",
+		"FILEEE_CAPABILITIES":             "read,share",
+	}
+	cfg, err := config.LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	accountsByKey := map[string]config.Account{"bob": cfg.Accounts[0]}
+
+	got := capabilitiesFor(cfg, accountsByKey, &identity.Identity{Subject: "bob-subject"})
+	if want := mustCaps(t, "share"); got != want {
+		t.Errorf("capabilitiesFor = %v, want %v", got, want)
+	}
+}
+
+// TestCapabilitiesForFallsBackToTheGlobalCeilingWithoutClaimOrAccount
+// deckt den dritten Zweig ab: kein Claim konfiguriert, kein Konto zu diesem
+// Subject gefunden — die einzige uebrig bleibende Quelle ist die globale
+// Obergrenze selbst (config.Resolve, dritter Zweig).
+func TestCapabilitiesForFallsBackToTheGlobalCeilingWithoutClaimOrAccount(t *testing.T) {
+	cfg := &config.Config{Capabilities: mustCaps(t, "read,share")}
+
+	got := capabilitiesFor(cfg, nil, &identity.Identity{Subject: "unbekannt"})
+	if got != cfg.Capabilities {
+		t.Errorf("capabilitiesFor = %v, want die Obergrenze %v", got, cfg.Capabilities)
+	}
+}
+
+// TestCapabilitiesForNilIdentityIsEmpty deckt Gangways defensiven Fall ab
+// (AttachMCPSelector reicht id, _ := IdentityFrom(ctx) durch — ein
+// theoretisch moegliches nil, falls der Aufruf je ohne verifizierte
+// Identitaet den Selector erreicht): keine Berechtigung statt eines
+// Nil-Pointer-Zugriffs auf id.Subject/id.Claims.
+func TestCapabilitiesForNilIdentityIsEmpty(t *testing.T) {
+	cfg := &config.Config{Capabilities: mustCaps(t, "read")}
+
+	got := capabilitiesFor(cfg, nil, nil)
+	if !got.IsEmpty() {
+		t.Errorf("capabilitiesFor(nil) = %v, want die leere Menge", got)
+	}
+}
+
+// --- claimStrings: die drei Wire-Formen eines Claim-Werts -----------------
+
+// TestClaimStrings deckt claimStrings direkt ab: JSON-dekodierte Token-Claims
+// (id.Claims) liefern einen Listenwert immer als []any, nie als []string —
+// encoding/json kennt beim Dekodieren nach map[string]any keinen praeziseren
+// Slice-Typ. Der []string-Zweig ist trotzdem kein toter Code: id.Claims kann
+// auch von Hand gebaut sein, wie es die uebrigen capabilitiesFor-Tests in
+// dieser Datei tun.
+func TestClaimStrings(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want []string
+	}{
+		{"einzelner String (Entra-App-Rollen)", "write", []string{"write"}},
+		{"Liste ueber JSON dekodiert ([]any, Authentik-Gruppen)", []any{"read", "share"}, []string{"read", "share"}},
+		{"Liste-Eintrag, der kein String ist, wird uebersprungen", []any{"read", 42}, []string{"read"}},
+		{"von Hand gebaute []string", []string{"read"}, []string{"read"}},
+		{"unbekannter Typ liefert nil", 42, nil},
+		{"nil liefert nil", nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := claimStrings(tc.in)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("claimStrings(%#v) = %#v, want %#v", tc.in, got, tc.want)
+			}
+		})
 	}
 }
