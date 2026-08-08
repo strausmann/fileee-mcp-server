@@ -4,10 +4,16 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/gangway/serve"
 )
+
+// mcpSuffix ist der Pfad, unter dem Gangway den MCP-Endpunkt fest mountet
+// (serve.go, dortige unexportierte Konstante mcpPath). ResourceURL muss genau
+// darauf enden, damit PublicBaseURL korrekt abgeleitet werden kann.
+const mcpSuffix = "/mcp"
 
 // Server ist der MCP-Server, aufgesetzt auf Gangway (ADR-0015). Gangway
 // uebernimmt Anmeldung, Adress-Freigabeliste, Freigabe je Werkzeug und
@@ -45,7 +51,19 @@ func New(ctx context.Context, cfg *Config) (*Server, error) {
 	// WWW-Authenticate-Header von der tatsaechlichen /mcp-Route auseinander,
 	// ohne dass ein Test, der nur auf "resource_metadata" prueft, das je
 	// bemerken wuerde.
-	publicBaseURL := cfg.ResourceURL[:len(cfg.ResourceURL)-len("/mcp")]
+	//
+	// New() ist exportiert und nimmt jede *Config entgegen — LoadConfig
+	// erzwingt das Suffix nur auf dem eigenen Weg, ein Aufrufer kann eine
+	// *Config auch von Hand bauen oder nachtraeglich aendern (in diesem Repo
+	// tun das bereits mehrere Tests). Deshalb wird das Suffix hier erneut
+	// geprueft, statt sich auf LoadConfig zu verlassen: ohne diese Prüfung
+	// liefe die folgende Ableitung bei einer zu kurzen oder falsch endenden
+	// ResourceURL aus dem gueltigen Bereich (Absturz statt Fehlermeldung).
+	if !strings.HasSuffix(cfg.ResourceURL, mcpSuffix) {
+		return nil, fmt.Errorf("fileee-mcp: MCP_RESOURCE_URL = %q muss auf %q enden — Gangway mountet "+
+			"den MCP-Endpunkt fest unter diesem Pfad (ADR-0015)", cfg.ResourceURL, mcpSuffix)
+	}
+	publicBaseURL := strings.TrimSuffix(cfg.ResourceURL, mcpSuffix)
 
 	gwCfg := &serve.Config{
 		Addr:            cfg.ListenAddr,

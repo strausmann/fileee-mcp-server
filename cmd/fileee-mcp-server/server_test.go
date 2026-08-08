@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/strausmann/gangway/identity/testidp"
 )
@@ -120,9 +121,12 @@ func TestRequestFromDisallowedOriginIsRejectedBeforeAuth(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 
-	if w.Code == http.StatusUnauthorized {
-		t.Fatalf("status = 401 — der Origin-Gate haette vorher greifen und die Anfrage nie bis zur "+
-			"Authentifizierung durchlassen sollen (Adresse %s ist nicht in der Freigabeliste)", r.RemoteAddr)
+	// Genauer als "nicht 401": der Origin-Gate antwortet mit 403 (siehe
+	// origin.Gate), nicht mit irgendeinem anderen Nicht-401-Code.
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — der Origin-Gate haette vorher greifen und die Anfrage nie bis "+
+			"zur Authentifizierung durchlassen sollen (Adresse %s ist nicht in der Freigabeliste)",
+			w.Code, http.StatusForbidden, r.RemoteAddr)
 	}
 }
 
@@ -145,6 +149,79 @@ func TestHealthzIsReachableWithoutAuthOrAllowlist(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d fuer /healthz", w.Code, http.StatusOK)
+	}
+}
+
+// Netzwerkfehler-Pfad (test-coverage-pflicht.md: Happy-Path/Error-Path/
+// Netzwerkfehler fuer jede Mutations-/Netzwerk-Funktion). New() kontaktiert
+// ueber serve.New den Identity Provider — ein externer Aufruf, der
+// fehlschlagen kann, ohne dass die Konfiguration selbst falsch ist.
+func TestNewFailsWhenIssuerIsUnreachable(t *testing.T) {
+	env := map[string]string{
+		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_ISSUER":                "http://127.0.0.1:1", // Port 1: sofort verweigert, kein Timeout-Warten
+		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
+		"MCP_ALLOWED_SUBJECTS":           "abc123",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
+		"FILEEE_USERNAME":                "nutzer@example.com",
+		"FILEEE_PASSWORD":                "geheim",
+	}
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	s, err := New(ctx, cfg)
+	if err == nil {
+		t.Fatal("New = nil error, erwartet einen Fehlschlag — der Issuer ist nicht erreichbar")
+	}
+	if s != nil {
+		t.Error("New lieferte einen nicht-nil *Server zusammen mit einem Fehler")
+	}
+	if !strings.Contains(err.Error(), "fileee-mcp: gangway:") {
+		t.Errorf("err = %q, erwartet das fileee-mcp: gangway:-Praefix", err)
+	}
+	// Zugangsdaten duerfen auch in diesem fruehen, mit ihnen inhaltlich
+	// unverwandten Fehlerpfad nicht auftauchen.
+	if strings.Contains(err.Error(), "geheim") {
+		t.Error("Fehlermeldung enthaelt das Fileee-Passwort")
+	}
+}
+
+// Absicherung (Prüfbefund): New() darf bei einer ResourceURL, die nicht auf
+// /mcp endet oder kuerzer als das Suffix ist, nicht aus dem Bereich laufen —
+// auch dann nicht, wenn ein Aufrufer eine *Config von Hand baut oder
+// veraendert, statt sie ueber LoadConfig zu beziehen (LoadConfig erzwingt das
+// Suffix nur auf dem eigenen Weg, New() ist trotzdem exportiert und nimmt
+// jede *Config entgegen).
+func TestNewRejectsResourceURLWithoutMCPSuffix(t *testing.T) {
+	cases := []string{
+		"https://mcp.example.com/", // falsches Suffix
+		"mcp",                      // kuerzer als "/mcp" selbst
+		"",                         // leer
+	}
+
+	for _, resourceURL := range cases {
+		t.Run(resourceURL, func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.ResourceURL = resourceURL
+
+			s, err := New(context.Background(), cfg)
+			if err == nil {
+				t.Fatalf("New(%q) = nil error, erwartet einen Fehlschlag statt eines Panics", resourceURL)
+			}
+			if s != nil {
+				t.Error("New lieferte einen nicht-nil *Server zusammen mit einem Fehler")
+			}
+			if !strings.Contains(err.Error(), "/mcp") {
+				t.Errorf("err = %q, erwartet einen Hinweis auf das erwartete /mcp-Suffix", err)
+			}
+		})
 	}
 }
 
