@@ -272,6 +272,70 @@ func TestNewRegistersSearchDocumentsToo(t *testing.T) {
 	}
 }
 
+// TestNewRefusesASubjectNotOnTheAllowlistDespiteAValidToken is the
+// end-to-end proof of the buildResolver fix above (Pruefbefund: a caller
+// whose subject is not in MCP_ALLOWED_SUBJECTS previously got full access
+// in single mode anyway, because accounts.NewSingle never looked at the
+// subject at all). "not-on-the-allowlist" passes gangway's own checks
+// completely — a validly signed token, from an allowed origin, for the
+// configured issuer/audience — the only thing wrong with it is that this
+// subject was never added to MCP_ALLOWED_SUBJECTS (testConfig only lists
+// "abc123"). It must reach the tool (an ordinary, allowed call at the
+// gangway/tool-authorization layer — this is not what ReadToolKinds
+// guards) and then be refused there, by clientFor/accounts.ErrNoAccount —
+// the same "access denied" tool-level result an unmapped multi-mode
+// subject gets (TestUnknownCallerGetsAToolErrorNotAServerError, in
+// internal/tools/read_test.go), not a protocol-level failure.
+func TestNewRefusesASubjectNotOnTheAllowlistDespiteAValidToken(t *testing.T) {
+	fileeeMock := newFileeeMock(t)
+	cfg, idp := testConfigWithIDP(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg, WithPoolOptions(
+		clientpool.WithClientOptions(fileee.WithBaseURL(fileeeMock), fileee.WithRateLimit(1000, 1000)),
+		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
+			return fileee.NewFileSessionStore(filepath.Join(t.TempDir(), accountKey+".json"))
+		}),
+	))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	httpSrv := httptest.NewServer(s.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	// A validly signed token for the configured issuer/audience — but for
+	// a subject that is NOT in testConfig's MCP_ALLOWED_SUBJECTS ("abc123").
+	token := idp.Token(map[string]any{
+		"iss": idp.URL(), "aud": "fileee-mcp-server", "sub": "not-on-the-allowlist",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "server-wiring-test", Version: "0.0.0"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		HTTPClient:           &http.Client{Transport: bearerRoundTripper{token: token}},
+		DisableStandaloneSSE: true,
+	}
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tools.ToolListDocuments})
+	if err != nil {
+		t.Fatalf("CallTool returned a transport/protocol-level error (%v) — a caller with a valid token but "+
+			"an unlisted subject must get an ordinary tool result, not something that looks like this "+
+			"server broke", err)
+	}
+	if !res.IsError {
+		t.Fatal("res.IsError = false — a valid token for a subject NOT in MCP_ALLOWED_SUBJECTS got access to " +
+			"the single configured Fileee account anyway (the exact bug this test guards against)")
+	}
+}
+
 func TestUnauthenticatedRequestIsRefusedWithAChallenge(t *testing.T) {
 	cfg := testConfig(t)
 
@@ -565,22 +629,54 @@ func TestRunStopsCleanlyWhenContextIsCancelled(t *testing.T) {
 
 // --- buildResolver (Aufgabe 5: Registrierung der lesenden Werkzeuge) ------
 
-// TestBuildResolverSingleModeMapsEverySubjectToTheOneAccount belegt den
-// single-Zweig von buildResolver ueber den echten Startpfad (testConfig
-// nutzt FILEEE_USERNAME/_PASSWORD, FILEEE_MODE bleibt beim Default single).
-func TestBuildResolverSingleModeMapsEverySubjectToTheOneAccount(t *testing.T) {
+// TestBuildResolverSingleModeMapsAllowedSubjectsToTheOneAccount belegt den
+// korrigierten single-Zweig von buildResolver ueber den echten Startpfad
+// (testConfig setzt MCP_ALLOWED_SUBJECTS=abc123, FILEEE_MODE bleibt beim
+// Default single). "irgendjemand" stand hier fruehen einer aelteren
+// Fassung dieses Tests Pate (Pruefbefund, seither korrigiert): jedes
+// beliebige Subject bekam Zugriff, weil buildResolver im Modus single
+// accounts.NewSingle nutzte — subject-blind per eigenem Doc-Kommentar.
+// MCP_ALLOWED_SUBJECTS war damit erzwungen, aber wirkungslos, obwohl
+// config.go selbst das Gegenteil verspricht ("Ohne sie duerfte jeder
+// Account des IdP auf die Dokumente zugreifen" — mit ihr eben nicht mehr
+// jeder). Dieser Test belegt jetzt genau das Gegenteil des alten Namens:
+// nur das erlaubte Subject bekommt Zugriff, ein beliebiges anderes nicht
+// — siehe TestBuildResolverSingleModeRefusesASubjectNotOnTheAllowlist
+// direkt darunter fuer die Ablehnung.
+func TestBuildResolverSingleModeMapsAllowedSubjectsToTheOneAccount(t *testing.T) {
 	cfg := testConfig(t)
 
 	r, err := buildResolver(cfg)
 	if err != nil {
 		t.Fatalf("buildResolver: %v", err)
 	}
-	got, err := r.Credentials(context.Background(), &identity.Identity{Subject: "irgendjemand"})
+	// "abc123" ist testConfigs MCP_ALLOWED_SUBJECTS-Eintrag.
+	got, err := r.Credentials(context.Background(), &identity.Identity{Subject: "abc123"})
 	if err != nil {
 		t.Fatalf("Credentials: %v", err)
 	}
 	if got.Username != "nutzer@example.com" {
 		t.Errorf("Username = %q, want %q", got.Username, "nutzer@example.com")
+	}
+}
+
+// TestBuildResolverSingleModeRefusesASubjectNotOnTheAllowlist ist die
+// Kernaussage des Fixes: ein Subject, das NICHT in MCP_ALLOWED_SUBJECTS
+// steht, bekommt im Modus single keinen Zugriff — trotz eines ansonsten
+// gueltigen, vom konfigurierten IdP signierten Tokens. Vor der Korrektur
+// waere hier accounts.ErrNoAccount NIE aufgetreten, weil accounts.NewSingle
+// jedes Subject akzeptiert. Siehe
+// TestNewRefusesASubjectNotOnTheAllowlistDespiteAValidToken fuer denselben
+// Beleg ueber den vollen, echten New()-Weg mit einem real signierten Token.
+func TestBuildResolverSingleModeRefusesASubjectNotOnTheAllowlist(t *testing.T) {
+	cfg := testConfig(t)
+
+	r, err := buildResolver(cfg)
+	if err != nil {
+		t.Fatalf("buildResolver: %v", err)
+	}
+	if _, err := r.Credentials(context.Background(), &identity.Identity{Subject: "nicht-auf-der-liste"}); !errors.Is(err, accounts.ErrNoAccount) {
+		t.Errorf("Credentials(nicht-auf-der-liste): err = %v, want ErrNoAccount", err)
 	}
 }
 

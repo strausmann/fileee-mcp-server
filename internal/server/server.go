@@ -158,35 +158,44 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 }
 
 // buildResolver uebersetzt cfg.Accounts (siehe config.LoadConfig, ladeKonten)
-// in einen accounts.Resolver. Im Modus single existiert genau ein Konto und
-// jedes von Gangway durchgelassene Subject zeigt darauf (accounts.NewSingle);
-// im Modus multi wird je Konto dessen konfigurierte Subjects-Liste zu einem
-// Subject->Credentials-Mapping expandiert (accounts.NewMulti) — ein nicht
-// zugeordnetes Subject faellt dann direkt auf accounts.ErrNoAccount, ohne
+// in einen accounts.Resolver — fuer BEIDE Kontomodi ueber denselben Weg,
+// accounts.NewMulti: jedes Konto expandiert seine konfigurierte
+// Subjects-Liste zu einem Subject->Credentials-Mapping, ein nicht
+// zugeordnetes Subject faellt direkt auf accounts.ErrNoAccount, ohne
 // Fallback (ADR-0012, Punkt 4/5).
+//
+// Im Modus single ist cfg.Accounts[0].Subjects identisch mit
+// cfg.AllowedSubjects (config.go, ladeKonten) — LoadConfig erzwingt dort
+// bereits, dass diese Liste im Modus single nicht leer sein darf, mit der
+// Begruendung "leer hiesse: jeder authentifizierte Benutzer des IdP darf
+// zugreifen" (config.go, ladeAuth). accounts.NewSingle wuerde genau diese
+// Zusicherung unterlaufen: es ist per eigenem Doc-Kommentar bewusst
+// subject-blind gebaut ("every caller gangway lets through shares one
+// Fileee account") — mit ihm haette die erzwungene Liste keinerlei
+// Wirkung, ein Aufrufer mit GUELTIGEM Token, aber einem Subject AUSSERHALB
+// der Liste, haette trotzdem Zugriff auf das eine konfigurierte Konto
+// bekommen (Pruefbefund: eine erzwungene Konfiguration ohne Wirkung ist
+// keine Design-Frage, sondern ein Widerspruch im selben Quelltext — die
+// Startmeldung benennt den Zweck der Liste, buildResolver ignorierte ihn).
+// accounts.NewSingle selbst bleibt unveraendert (siehe sein eigener
+// Doc-Kommentar) — fuer diesen Server ist es seit dieser Korrektur schlicht
+// unbenutzt; ein Aufrufer, der die Funktion direkt nutzt (ausserhalb dieses
+// Servers), bekommt weiterhin genau das dokumentierte Verhalten.
 //
 // New() ist exportiert und nimmt jede *config.Config entgegen (siehe die
 // Anmerkung oben bei der ResourceURL-Pruefung) — deshalb hier eine echte
 // Fehlermeldung statt eines Panics, falls eine von Hand gebaute *Config im
 // Modus single kein oder mehr als ein Konto traegt, obwohl LoadConfig selbst
-// das nie zuliesse. Aus demselben Grund wird im Modus multi ein Subject, das
-// ueber zwei Konten hinweg auftaucht, hier noch einmal abgelehnt (Pruefbefund):
+// das nie zuliesse. Aus demselben Grund wird ein Subject, das ueber zwei
+// Konten hinweg auftaucht, hier noch einmal abgelehnt (Pruefbefund):
 // LoadConfigs eigene ladeKonten haelt dieselbe Regel bereits ueber
 // cfg.subjectIndex ein, aber New() erhaelt eine *config.Config und keine rohe
 // Env — eine von Hand gebaute Config mit einem doppelten Subject wuerde ohne
 // diese Pruefung hier still das letzte Konto gewinnen lassen und einen
 // Aufrufer damit unter Umstaenden auf ein fremdes Konto abbilden.
 func buildResolver(cfg *config.Config) (accounts.Resolver, error) {
-	if cfg.AccountMode == config.ModeSingle {
-		if len(cfg.Accounts) != 1 {
-			return nil, fmt.Errorf("FILEEE_MODE=single erwartet genau ein konfiguriertes Konto, hat %d", len(cfg.Accounts))
-		}
-		acc := cfg.Accounts[0]
-		return accounts.NewSingle(fileee.Credentials{
-			Username: acc.Username,
-			Password: acc.Password,
-			TOTPSeed: acc.TOTPSeed,
-		}), nil
+	if cfg.AccountMode == config.ModeSingle && len(cfg.Accounts) != 1 {
+		return nil, fmt.Errorf("FILEEE_MODE=single erwartet genau ein konfiguriertes Konto, hat %d", len(cfg.Accounts))
 	}
 
 	bySubject := make(map[string]fileee.Credentials, len(cfg.Accounts))
