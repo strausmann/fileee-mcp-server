@@ -66,3 +66,56 @@ func TestRunFailsFastForUnsupportedAuthMode(t *testing.T) {
 		t.Errorf("stderr = %q, erwartet einen Hinweis auf MCP_AUTH_MODE", stderr.String())
 	}
 }
+
+// Netzwerkfehler-Pfad auf run()-Ebene: eine gueltige, aber zur Laufzeit nicht
+// aufbaubare Konfiguration (Issuer unerreichbar) muss ebenso fehlschlagen wie
+// eine unvollstaendige — New() ist der zweite Ort, an dem der Start scheitern
+// kann, nicht nur LoadConfig().
+func TestRunFailsWhenServerCannotBeBuilt(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_ISSUER":                "http://127.0.0.1:1", // sofort verweigert, siehe server_test.go
+		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
+		"MCP_ALLOWED_SUBJECTS":           "abc123",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
+		"FILEEE_USERNAME":                "nutzer@example.com",
+		"FILEEE_PASSWORD":                "geheim",
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run(nil, envOf(env), &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("run() = Exit-Code 0, erwartet einen Fehlschlag — der Identity Provider ist "+
+			"nicht erreichbar (stdout=%q)", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "hoert auf") {
+		t.Errorf("stdout = %q, enthaelt eine \"hoert auf\"-Meldung, obwohl der Start fehlgeschlagen ist",
+			stdout.String())
+	}
+	// Zugangsdaten duerfen auch auf diesem Weg nie in der Ausgabe landen.
+	if strings.Contains(stdout.String()+stderr.String(), "geheim") {
+		t.Error("Ausgabe enthaelt das Fileee-Passwort aus der Konfiguration")
+	}
+}
+
+// Absicherung (Prüfbefund): warnungenMelden darf bei cfg == nil nicht
+// abstuerzen. LoadConfig liefert heute nie (nil, nil) — run() ruft
+// warnungenMelden ausschliesslich nach einer erfolgreichen Fehlerpruefung
+// auf —, aber die Funktion ist eigenstaendig aufrufbar und soll ihre eigene
+// Nachbedingung nicht stillschweigend vom Aufrufer voraussetzen: ein
+// kuenftiger Refactor, der die Reihenfolge in run() aendert oder eine zweite
+// Aufrufstelle hinzufuegt, darf nicht mit einem Nil-Pointer-Absturz bezahlen.
+func TestWarnungenMeldenIstNilSicher(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	warnungenMelden(&stderr, nil)
+
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, erwartet leer bei cfg == nil", stderr.String())
+	}
+}
