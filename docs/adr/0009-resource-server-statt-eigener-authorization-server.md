@@ -4,7 +4,9 @@
 **Datum:** 2026-08-06
 **Ersetzt:** —
 **Ersetzt durch:** —
-**Verwandt:** [ADR-0010](0010-idp-agnostische-konfiguration.md), [fileee-server ADR-0008](https://github.com/strausmann/fileee-server/blob/main/docs/adr/0008-fileee-server.md)
+**Überarbeitet:** —
+**Überarbeitet durch:** —
+**Verwandt:** [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0012](0012-multi-account-mapping.md), [ADR-0015](0015-gangway-als-unterbau.md), [fileee-server ADR-0008](https://github.com/strausmann/fileee-server/blob/main/docs/adr/0008-fileee-server.md)
 
 ## Kontext
 
