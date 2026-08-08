@@ -68,6 +68,14 @@ func NewMulti(bySubject map[string]fileee.Credentials) Resolver {
 func (m multi) Credentials(_ context.Context, id *identity.Identity) (fileee.Credentials, error) {
 	creds, ok := m.bySubject[id.Subject]
 	if !ok {
+		// This error carries the caller's subject in the clear. That is
+		// fine for the value returned here: it goes back to the caller
+		// itself, who already knows their own subject. Anyone who logs
+		// this error, or writes it into a 403 response, MUST shorten the
+		// subject first (first 8 characters of a SHA-256 hash) — see
+		// ADR-0012, point 10. With MCP_OIDC_SUBJECT_CLAIM=email, an
+		// unshortened subject would otherwise put a plaintext email
+		// address into a log file or an HTTP response.
 		return fileee.Credentials{}, fmt.Errorf("%w: subject %q", ErrNoAccount, id.Subject)
 	}
 	return creds, nil
