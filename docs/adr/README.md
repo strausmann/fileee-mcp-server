@@ -36,6 +36,7 @@ Besonders relevant für dieses Repo sind [ADR-0005 (schonender Betrieb / Rate-Li
 | [0011](0011-capability-gating.md) | Funktionsumfang über nicht registrierte Tools statt Laufzeit-Ablehnung | accepted | 2026-08-06 |
 | [0012](0012-multi-account-mapping.md) | Konto-Auflösung über den signierten Claim des aktuellen Requests | accepted | 2026-08-06 |
 | [0013](0013-prompt-injection-schutz.md) | Dokumentinhalte sind fremdbestimmte Daten | accepted | 2026-08-06 |
+| [0015](0015-gangway-als-unterbau.md) | Gangway v0.2.0 als Unterbau für Anmeldung, Freigabeliste und Zugriffsprotokoll | accepted | 2026-08-08 |
 
 ## Status-Werte
 

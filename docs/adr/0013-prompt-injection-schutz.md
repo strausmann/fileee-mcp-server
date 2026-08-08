@@ -4,6 +4,8 @@
 **Datum:** 2026-08-06
 **Ersetzt:** —
 **Ersetzt durch:** —
+**Überarbeitet:** —
+**Überarbeitet durch:** [ADR-0015](0015-gangway-als-unterbau.md)
 **Verwandt:** [ADR-0011](0011-capability-gating.md), [go-fileee ADR-0007](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0007-ausschluss-destruktiver-operationen.md)
 
 ## Kontext
@@ -24,7 +26,7 @@ Die Vorbild-Lösung aus vergleichbaren Projekten — ein Backend-Token mit Leser
 
 2. **Alle Tools führen `mcp.ToolAnnotations`** mit `ReadOnlyHint` beziehungsweise `DestructiveHint`. Clients können damit selbst entscheiden, ob sie vor einem Aufruf rückfragen.
 
-3. **Destruktive Operationen brauchen eine ID aus einer vorangegangenen Leseantwort derselben Sitzung.** Der Server führt dafür eine Liste der in dieser Sitzung ausgelieferten Dokument-, Kontakt- und Reminder-IDs. Eine ID, die nur im Text eines Dokuments stand, ist damit kein gültiges Ziel — genau der Weg, über den eine eingebettete Anweisung sonst wirken könnte.
+3. **Destruktive Operationen brauchen eine ID aus einer vorangegangenen Leseantwort — gebunden an die geprüfte Identität, nicht an die MCP-Sitzung.** Mit [ADR-0015](0015-gangway-als-unterbau.md) öffnet und schließt Gangways erzwungene Statelessness pro Anfrage eine neue, temporäre Sitzung; eine sitzungsgebundene Merkliste könnte damit nie über den einzelnen Request hinaus etwas merken. Der Server führt die Liste der ausgelieferten Dokument-, Kontakt- und Reminder-IDs deshalb je über `serve.IdentityFrom(ctx)` geprüfter Identität, mit eigener Verfallsregelung. Eine ID, die nur im Text eines Dokuments stand, bleibt damit kein gültiges Ziel — genau der Weg, über den eine eingebettete Anweisung sonst wirken könnte. **Wer diesen Server ohne Gangway baut**, bleibt bei der ursprünglichen, session-gebundenen Fassung: eine Liste der in derselben MCP-Sitzung ausgelieferten IDs.
 
 4. **Der Funktionsumfang bleibt die primäre Absicherung.** Nicht registrierte Tools sind auch durch die überzeugendste eingebettete Anweisung nicht erreichbar. Deshalb Default `read` und `destructive` hinter zwei bewussten Schaltern — siehe [ADR-0011](0011-capability-gating.md).
 

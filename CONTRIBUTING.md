@@ -42,8 +42,8 @@ Jede neue Datei bekommt ihre Schwelle **im selben PR**, in dem sie entsteht. Nac
 
 Drei Bereiche sind sicherheitskritisch und brauchen im PR eine ausdrückliche Begründung:
 
-- **Konto-Auflösung.** Die Benutzeridentität wird ausschließlich aus `req.GetExtra().TokenInfo` gelesen, das pro Request neu gesetzt wird — **nie** aus dem Handler-Kontext. `auth.TokenInfoFromContext` liefert im Tool-Handler das Token des `initialize`-Requests und würde bei mehreren Benutzern pro Sitzung auf das falsche Fileee-Konto auflösen.
-- **`TokenInfo.UserID`.** Der Token-Verifier muss dieses Feld setzen, sonst greift der Session-Hijacking-Schutz des SDK nicht.
+- **Konto-Auflösung.** Die Benutzeridentität wird ausschließlich über `serve.IdentityFrom(ctx)` gelesen (Gangway, siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)) — **nie** selbst zwischengespeichert, **nie** über einen eigenen Zugriff auf den Handler-Kontext. Wer diesen Server ohne Gangway baut, gilt die ursprüngliche Regel aus [ADR-0012](docs/adr/0012-multi-account-mapping.md): ausschließlich `req.GetExtra().TokenInfo`, **nie** `auth.TokenInfoFromContext` — Letzteres liefert im Tool-Handler das Token des `initialize`-Requests und würde bei mehreren Benutzern pro Sitzung auf das falsche Fileee-Konto auflösen.
+- **Destruktive Whitelist.** Die Liste ausgelieferter IDs, die eine destruktive Operation erst gültig macht ([ADR-0013](docs/adr/0013-prompt-injection-schutz.md)), ist an die über `serve.IdentityFrom(ctx)` geprüfte Identität gebunden, nicht an die MCP-Sitzung — Gangways erzwungene Statelessness öffnet und schließt pro Anfrage eine neue Sitzung, eine sitzungsgebundene Merkliste könnte also nie etwas über den einzelnen Request hinaus merken.
 - **Tool-Ausgaben.** Dokumentinhalte und OCR-Text sind fremdbestimmte Daten und können an das Modell gerichtete Anweisungen enthalten. Sie werden als nicht vertrauenswürdig gekennzeichnet zurückgegeben.
 
 ## Commit-Konvention
