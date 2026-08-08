@@ -4,7 +4,9 @@
 **Datum:** 2026-08-06
 **Ersetzt:** —
 **Ersetzt durch:** —
-**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0012](0012-multi-account-mapping.md)
+**Überarbeitet:** —
+**Überarbeitet durch:** —
+**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0012](0012-multi-account-mapping.md), [ADR-0015](0015-gangway-als-unterbau.md)
 
 ## Kontext
 
