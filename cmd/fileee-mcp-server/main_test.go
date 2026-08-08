@@ -102,18 +102,18 @@ func TestRunFailsWhenServerCannotBeBuilt(t *testing.T) {
 	}
 }
 
-// Absicherung (Prüfbefund): warnungenMelden darf bei cfg == nil nicht
+// Absicherung (Prüfbefund): reportWarnings darf bei cfg == nil nicht
 // abstuerzen. LoadConfig liefert heute nie (nil, nil) — run() ruft
-// warnungenMelden ausschliesslich nach einer erfolgreichen Fehlerpruefung
+// reportWarnings ausschliesslich nach einer erfolgreichen Fehlerpruefung
 // auf —, aber die Funktion ist eigenstaendig aufrufbar und soll ihre eigene
 // Nachbedingung nicht stillschweigend vom Aufrufer voraussetzen: ein
 // kuenftiger Refactor, der die Reihenfolge in run() aendert oder eine zweite
 // Aufrufstelle hinzufuegt, darf nicht mit einem Nil-Pointer-Absturz bezahlen.
-func TestWarnungenMeldenIstNilSicher(t *testing.T) {
+func TestReportWarningsIsNilSafe(t *testing.T) {
 	t.Parallel()
 
 	var stderr bytes.Buffer
-	warnungenMelden(&stderr, nil)
+	reportWarnings(&stderr, nil)
 
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, erwartet leer bei cfg == nil", stderr.String())

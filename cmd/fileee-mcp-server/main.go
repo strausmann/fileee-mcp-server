@@ -37,7 +37,7 @@ func run(args []string, env Env, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "fileee-mcp-server: Konfiguration ungueltig: %v\n", err)
 		return 1
 	}
-	warnungenMelden(stderr, cfg)
+	reportWarnings(stderr, cfg)
 
 	// signal.NotifyContext liefert den Kontext, der sowohl New (Lebensdauer
 	// des OIDC-Key-Refresh, siehe serve.New) als auch Run (geordneter
@@ -60,7 +60,7 @@ func run(args []string, env Env, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// warnungenMelden schreibt die beim Laden gesammelten Warnungen nach stderr.
+// reportWarnings schreibt die beim Laden gesammelten Warnungen nach stderr.
 //
 // cfg == nil wird abgefangen statt vorausgesetzt: LoadConfig liefert bei
 // einem Fehler nie ein *Config zurueck (run() prueft err vorher und kehrt bei
@@ -68,8 +68,8 @@ func run(args []string, env Env, stdout, stderr io.Writer) int {
 // diese Funktion soll ihre eigene Nachbedingung nicht stillschweigend vom
 // Aufrufer voraussetzen — ein kuenftiger Refactor, der die Reihenfolge in
 // run() aendert oder eine zweite Aufrufstelle hinzufuegt, darf nicht mit
-// einem Nil-Pointer-Absturz bezahlen (siehe TestWarnungenMeldenIstNilSicher).
-func warnungenMelden(stderr io.Writer, cfg *Config) {
+// einem Nil-Pointer-Absturz bezahlen (siehe TestReportWarningsIsNilSafe).
+func reportWarnings(stderr io.Writer, cfg *Config) {
 	if cfg == nil {
 		return
 	}
