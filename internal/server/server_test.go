@@ -2,15 +2,23 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/strausmann/fileee-mcp-server/internal/accounts"
+	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 	"github.com/strausmann/fileee-mcp-server/internal/config"
+	"github.com/strausmann/fileee-mcp-server/internal/tools"
+	"github.com/strausmann/gangway/identity"
 	"github.com/strausmann/gangway/identity/testidp"
+	"github.com/strausmann/go-fileee/fileee"
 )
 
 // envOf baut ein config.Env aus einer Map — dieselbe kleine Hilfsfunktion wie
@@ -42,7 +50,23 @@ func mustPrefix(t *testing.T, cidrs ...string) []netip.Prefix {
 // LoadConfig statt eines von Hand gebauten *config.Config, weil sonst die
 // unexportierte subjectIndex-Aufloesung uebergangen wuerde und der Test etwas
 // pruefte, das mit dem echten Startpfad nicht mehr uebereinstimmt.
+//
+// Baut auf testConfigWithIDP auf: die meisten Tests hier brauchen den
+// *testidp.IDP selbst nie (sie pruefen nie einen authentifizierten Aufruf),
+// aber ein paar — allen voran
+// TestNewRegistersReadToolsUsableThroughTheRealWiring — muessen selbst ein
+// Token gegen genau diesen Aussteller ausstellen.
 func testConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, _ := testConfigWithIDP(t)
+	return cfg
+}
+
+// testConfigWithIDP ist testConfig, gibt aber zusaetzlich den
+// *testidp.IDP zurueck, gegen den MCP_OIDC_ISSUER zeigt — fuer Tests, die
+// selbst ein Token ausstellen muessen (testConfig allein verwirft den
+// Aussteller nach dem Bau der Config).
+func testConfigWithIDP(t *testing.T) (*config.Config, *testidp.IDP) {
 	t.Helper()
 	idp := testidp.New(t)
 
@@ -59,9 +83,193 @@ func testConfig(t *testing.T) *config.Config {
 
 	cfg, err := config.LoadConfig(envOf(env))
 	if err != nil {
-		t.Fatalf("testConfig: LoadConfig = %v", err)
+		t.Fatalf("testConfigWithIDP: LoadConfig = %v", err)
 	}
-	return cfg
+	return cfg, idp
+}
+
+// --- end-to-end: New()'s OWN wiring, not a parallel reimplementation ----
+//
+// Every test above (and every test in internal/tools/read_test.go) builds
+// the tool-serving stack it exercises by hand: internal/tools/read_test.go
+// has its own newGangwayServer, which registers RegisterRead and
+// serve.WithToolKinds itself. That proves the TOOLS behave correctly given
+// correct wiring — it says nothing about whether New() actually wires them
+// that way. A review of this task's PR found exactly that gap by removing
+// tools.RegisterRead(mcpServer, pool) from New(): the entire test suite,
+// including every test in this file, stayed green, because nothing here
+// ever called a tool through a *Server built by New() itself.
+//
+// The tests below close that gap: they build the server via New(), the
+// only production entry point, and drive it exactly like a real client
+// would — mint a token against the config's own issuer, call a tool over
+// the streamable HTTP transport, and check the outcome. Remove
+// tools.RegisterRead or serve.WithToolKinds(tools.ReadToolKinds()) from
+// New() now, and TestNewRegistersReadToolsUsableThroughTheRealWiring fails.
+
+// newFileeeMock starts a minimal stand-in for my.fileee.com: the login
+// handshake always succeeds and POST /api/documents/rest/query always
+// returns an empty result. It exists only so
+// TestNewRegistersReadToolsUsableThroughTheRealWiring can point New()'s
+// account pool at something other than the real, external
+// https://my.fileee.com — see WithPoolOptions.
+func newFileeeMock(t *testing.T) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/f/start", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /api/f/existent", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"existent":true,"twoFactorAuthEnabled":false}`))
+	})
+	mux.HandleFunc("POST /api/f/login", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "sess"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"loggedIn":true}`))
+	})
+	mux.HandleFunc("GET /api/f/user-session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"authorized":true,"secondsBlocked":0}`))
+	})
+	mux.HandleFunc("POST /api/documents/rest/query", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"rows":[],"totalRows":0}`))
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// bearerRoundTripper injects a fixed bearer token into every outgoing
+// request — the same pattern gangway's own tests use
+// (serve/serve_test.go, bearerRoundTripper) and internal/tools/read_test.go
+// duplicates for the same reason: a test-only http.RoundTripper is small
+// enough that sharing it across packages isn't worth an import.
+type bearerRoundTripper struct{ token string }
+
+func (t bearerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+t.token)
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// TestNewRegistersReadToolsUsableThroughTheRealWiring is the review's
+// central finding, turned into a guard — see the section doc comment
+// above. It builds *Server via New() (WithPoolOptions only redirects the
+// account pool to newFileeeMock; every production call to New() passes no
+// options at all), serves it, authenticates as the one subject testConfig
+// allows, and calls list_documents for real.
+func TestNewRegistersReadToolsUsableThroughTheRealWiring(t *testing.T) {
+	fileeeMock := newFileeeMock(t)
+	cfg, idp := testConfigWithIDP(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg, WithPoolOptions(
+		clientpool.WithClientOptions(fileee.WithBaseURL(fileeeMock), fileee.WithRateLimit(1000, 1000)),
+		// cfg.SessionDir defaults to /home/nonroot/sessions (the container's
+		// path, see config.go) — unwritable here, so this test needs its own
+		// directory the same way internal/tools/read_test.go's testPool does.
+		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
+			return fileee.NewFileSessionStore(filepath.Join(t.TempDir(), accountKey+".json"))
+		}),
+	))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	httpSrv := httptest.NewServer(s.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	// "abc123" is testConfig's MCP_ALLOWED_SUBJECTS entry.
+	token := idp.Token(map[string]any{
+		"iss": idp.URL(), "aud": "fileee-mcp-server", "sub": "abc123",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "server-wiring-test", Version: "0.0.0"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		HTTPClient:           &http.Client{Transport: bearerRoundTripper{token: token}},
+		DisableStandaloneSSE: true,
+	}
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tools.ToolListDocuments})
+	if err != nil {
+		t.Fatalf("CallTool(list_documents) through New()'s own wiring: %v — this is exactly what silently "+
+			"broke when tools.RegisterRead or serve.WithToolKinds(tools.ReadToolKinds()) was removed from "+
+			"New(), and every other test in this package stayed green", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool(list_documents): IsError = true, content = %+v", res.Content)
+	}
+}
+
+// TestNewRegistersSearchDocumentsToo is the same guard for the second
+// tool, kept separate rather than folded into the test above: the review
+// finding was that NO tool was reachable through New()'s real wiring, not
+// specifically list_documents, and a shared registration bug that
+// happened to spare one tool but not the other would otherwise go
+// unnoticed.
+func TestNewRegistersSearchDocumentsToo(t *testing.T) {
+	fileeeMock := newFileeeMock(t)
+	cfg, idp := testConfigWithIDP(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	s, err := New(ctx, cfg, WithPoolOptions(
+		clientpool.WithClientOptions(fileee.WithBaseURL(fileeeMock), fileee.WithRateLimit(1000, 1000)),
+		// cfg.SessionDir defaults to /home/nonroot/sessions (the container's
+		// path, see config.go) — unwritable here, so this test needs its own
+		// directory the same way internal/tools/read_test.go's testPool does.
+		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
+			return fileee.NewFileSessionStore(filepath.Join(t.TempDir(), accountKey+".json"))
+		}),
+	))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	httpSrv := httptest.NewServer(s.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	token := idp.Token(map[string]any{
+		"iss": idp.URL(), "aud": "fileee-mcp-server", "sub": "abc123",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "server-wiring-test", Version: "0.0.0"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             httpSrv.URL + "/mcp",
+		HTTPClient:           &http.Client{Transport: bearerRoundTripper{token: token}},
+		DisableStandaloneSSE: true,
+	}
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: tools.ToolSearchDocuments, Arguments: map[string]any{"term": "irrelevant"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(search_documents) through New()'s own wiring: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool(search_documents): IsError = true, content = %+v", res.Content)
+	}
 }
 
 func TestUnauthenticatedRequestIsRefusedWithAChallenge(t *testing.T) {
@@ -352,5 +560,153 @@ func TestRunStopsCleanlyWhenContextIsCancelled(t *testing.T) {
 	cancel()
 	if err := <-errc; err != nil {
 		t.Fatalf("Run = %v, erwartet nil nach geordnetem Shutdown", err)
+	}
+}
+
+// --- buildResolver (Aufgabe 5: Registrierung der lesenden Werkzeuge) ------
+
+// TestBuildResolverSingleModeMapsEverySubjectToTheOneAccount belegt den
+// single-Zweig von buildResolver ueber den echten Startpfad (testConfig
+// nutzt FILEEE_USERNAME/_PASSWORD, FILEEE_MODE bleibt beim Default single).
+func TestBuildResolverSingleModeMapsEverySubjectToTheOneAccount(t *testing.T) {
+	cfg := testConfig(t)
+
+	r, err := buildResolver(cfg)
+	if err != nil {
+		t.Fatalf("buildResolver: %v", err)
+	}
+	got, err := r.Credentials(context.Background(), &identity.Identity{Subject: "irgendjemand"})
+	if err != nil {
+		t.Fatalf("Credentials: %v", err)
+	}
+	if got.Username != "nutzer@example.com" {
+		t.Errorf("Username = %q, want %q", got.Username, "nutzer@example.com")
+	}
+}
+
+// TestBuildResolverMultiModeMapsSubjectsAcrossAccounts belegt den multi-Zweig:
+// zwei Konten, je eigenes Subject, plus die Ablehnung eines dritten,
+// unbekannten Subjects ohne Fallback (ADR-0012, Punkt 4/5) — ueber denselben
+// echten Startpfad wie testConfig, nur mit FILEEE_MODE=multi.
+func TestBuildResolverMultiModeMapsSubjectsAcrossAccounts(t *testing.T) {
+	idp := testidp.New(t)
+	env := map[string]string{
+		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_ISSUER":                idp.URL(),
+		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0, ::/0",
+		"FILEEE_MODE":                    "multi",
+		"FILEEE_ACCOUNTS":                "alice,bob",
+		"FILEEE_ACCOUNT_ALICE_USERNAME":  "alice@example.com",
+		"FILEEE_ACCOUNT_ALICE_PASSWORD":  "kein-echtes-passwort-alice",
+		"FILEEE_ACCOUNT_ALICE_SUBJECTS":  "sub-alice",
+		"FILEEE_ACCOUNT_BOB_USERNAME":    "bob@example.com",
+		"FILEEE_ACCOUNT_BOB_PASSWORD":    "kein-echtes-passwort-bob",
+		"FILEEE_ACCOUNT_BOB_SUBJECTS":    "sub-bob",
+	}
+	cfg, err := config.LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	r, err := buildResolver(cfg)
+	if err != nil {
+		t.Fatalf("buildResolver: %v", err)
+	}
+
+	got, err := r.Credentials(context.Background(), &identity.Identity{Subject: "sub-bob"})
+	if err != nil {
+		t.Fatalf("Credentials(sub-bob): %v", err)
+	}
+	if got.Username != "bob@example.com" {
+		t.Errorf("Username = %q, want %q", got.Username, "bob@example.com")
+	}
+
+	if _, err := r.Credentials(context.Background(), &identity.Identity{Subject: "unbekannt"}); !errors.Is(err, accounts.ErrNoAccount) {
+		t.Errorf("Credentials(unbekannt): err = %v, want ErrNoAccount", err)
+	}
+}
+
+// TestBuildResolverRefusesASubjectMappedToTwoAccounts ist der Gegenversuch
+// zum Pruefbefund: LoadConfig selbst laesst ein doppeltes Subject nie durch
+// (config.go, ladeKonten, cfg.subjectIndex-Kollisionspruefung), aber
+// buildResolver() ist exportiert-in-diesem-Paket und nimmt jede *config.Config
+// entgegen — eine von Hand gebaute Config mit demselben Subject in zwei
+// Konten muss deshalb selbst hier noch abgelehnt werden, statt still das
+// zuletzt gesehene Konto gewinnen zu lassen (das haette einen Aufrufer auf
+// ein fremdes Konto abgebildet — genau der first-match-wins-Fehler, den
+// ADR-0012 Punkt 4 ausschliesst).
+func TestBuildResolverRefusesASubjectMappedToTwoAccounts(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AccountMode = config.ModeMulti
+	cfg.Accounts = []config.Account{
+		{Key: "alice", Username: "alice@example.com", Password: "pw-a", Subjects: []string{"geteiltes-subject"}},
+		{Key: "bob", Username: "bob@example.com", Password: "pw-b", Subjects: []string{"geteiltes-subject"}},
+	}
+
+	r, err := buildResolver(cfg)
+	if err == nil {
+		t.Fatal("buildResolver: want an error for a subject mapped to two accounts, got nil")
+	}
+	if r != nil {
+		t.Error("buildResolver lieferte einen nicht-nil Resolver zusammen mit einem Fehler")
+	}
+	if !strings.Contains(err.Error(), "geteiltes-subject") {
+		t.Errorf("err = %q, erwartet einen Hinweis auf das betroffene Subject", err)
+	}
+}
+
+// TestNewFailsWhenSingleModeHasNoConfiguredAccount deckt buildResolvers
+// eigene Absicherung ab: LoadConfig selbst laesst den Modus single nie ohne
+// genau ein Konto durch, aber New() ist exportiert und nimmt jede *Config
+// entgegen (siehe die Anmerkung bei der ResourceURL-Pruefung weiter oben) —
+// eine von Hand veraenderte *Config muss deshalb eine benannte Fehlermeldung
+// statt eines Index-Out-of-Range-Panics ausloesen.
+func TestNewFailsWhenSingleModeHasNoConfiguredAccount(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Accounts = nil
+
+	s, err := New(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("New: want an error, got nil")
+	}
+	if s != nil {
+		t.Error("New lieferte einen nicht-nil *Server zusammen mit einem Fehler")
+	}
+	if !strings.Contains(err.Error(), "genau ein konfiguriertes Konto") {
+		t.Errorf("err = %q, erwartet einen Hinweis auf die single-Konto-Pflicht", err)
+	}
+}
+
+// --- sessionFilePath -------------------------------------------------------
+
+// TestSessionFilePathIsDeterministicUniqueAndFilesystemSafe deckt
+// sessionFilePath direkt ab: dieselbe Eingabe muss denselben Pfad liefern
+// (Wiederverwendung der Session ueber Neustarts hinweg), unterschiedliche
+// Konten muessen unterschiedliche Dateien treffen, und der Klartext-Konto-Key
+// (der bei clientpool ein beliebiger Fileee-Benutzername sein kann, siehe
+// sessionFilePaths Doc-Kommentar) darf nicht im Dateinamen auftauchen.
+func TestSessionFilePathIsDeterministicUniqueAndFilesystemSafe(t *testing.T) {
+	dir := t.TempDir()
+
+	first := sessionFilePath(dir, "user@example.com")
+	second := sessionFilePath(dir, "user@example.com")
+	if first != second {
+		t.Errorf("sessionFilePath ist nicht deterministisch: %q != %q", first, second)
+	}
+	if filepath.Dir(first) != dir {
+		t.Errorf("sessionFilePath(%q, ...) = %q, erwartet einen Pfad innerhalb von %q", dir, first, dir)
+	}
+	if filepath.Ext(first) != ".json" {
+		t.Errorf("sessionFilePath = %q, erwartet die Endung .json", first)
+	}
+	if strings.Contains(first, "user@example.com") {
+		t.Errorf("sessionFilePath = %q enthaelt den Konto-Key im Klartext", first)
+	}
+
+	other := sessionFilePath(dir, "different@example.com")
+	if other == first {
+		t.Error("zwei unterschiedliche Konto-Keys ergaben dieselbe Session-Datei")
 	}
 }

@@ -70,6 +70,7 @@ jobs:
             internal/config/version.go:90 \
             internal/server/server.go:80 \
             internal/clientpool/pool.go:85 \
+            internal/tools/read.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
