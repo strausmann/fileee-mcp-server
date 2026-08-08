@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/strausmann/gangway/origin"
 )
 
 // Env liest eine Umgebungsvariable. Der Umweg ueber diesen Typ statt ueber
@@ -96,9 +99,27 @@ type Config struct {
 	RateBurst         int
 	RateGlobalRPS     float64
 	RateGlobalBurst   int
-	TrustedProxies    []string
-	ClientIPHeaders   []string
-	LogLevel          string
+
+	// TrustedProxies sind die Netze, deren Weiterleitungs-Header (siehe
+	// ClientIPHeaderMode) als tatsaechliche Client-Adresse geglaubt werden.
+	// Leer bedeutet: kein Proxy davor, es zaehlt nur die Peer-Adresse.
+	TrustedProxies []netip.Prefix
+	// AllowedOriginPrefixes ist die Adress-Freigabeliste, die Gangway vor
+	// jeden Zugriff auf /mcp schaltet (siehe ADR-0015) — ohne sie startet
+	// New im Modus oidc gar nicht erst, ein Server ohne Filter darf nicht
+	// hochkommen.
+	AllowedOriginPrefixes []netip.Prefix
+	// ClientIPHeaderMode waehlt den EINEN Weiterleitungs-Header, der als
+	// Quelle der Client-Adresse gilt (github.com/strausmann/gangway/origin).
+	// Gangway wertet bewusst nicht mehrere Header der Reihe nach aus — das
+	// wuerde einem Aufrufer erlauben, sich den Header auszusuchen, der dem
+	// Server gerade passt. Default cf-connecting-ip folgt der bisherigen
+	// Priorisierung dieses Servers; er MUSS gegen die tatsaechliche
+	// Proxy-Kette (Pangolin/Traefik vs. direktes Cloudflare-Terminieren)
+	// geprueft werden, bevor TrustedProxies produktiv gesetzt wird.
+	ClientIPHeaderMode origin.HeaderMode
+
+	LogLevel string
 
 	// Warnings sind Hinweise, die den Start nicht verhindern, aber beim Boot
 	// protokolliert werden sollen.
@@ -133,9 +154,15 @@ func LoadConfig(env Env) (*Config, error) {
 		AccountMode:         AccountMode(orDefault(env("FILEEE_MODE"), string(ModeSingle))),
 		ListenAddr:          orDefault(env("MCP_LISTEN_ADDR"), ":8080"),
 		SessionDir:          orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
-		TrustedProxies:      splitListe(env("FILEEE_TRUSTED_PROXIES")),
-		ClientIPHeaders:     splitListe(orDefault(env("FILEEE_CLIENT_IP_HEADERS"), "CF-Connecting-IP,X-Real-IP,X-Forwarded-For")),
+		ClientIPHeaderMode:  origin.HeaderMode(orDefault(env("FILEEE_CLIENT_IP_HEADER_MODE"), string(origin.ModeCFConnectingIP))),
 		LogLevel:            orDefault(env("FILEEE_LOG_LEVEL"), "info"),
+	}
+
+	switch cfg.ClientIPHeaderMode {
+	case origin.ModeXForwardedFor, origin.ModeXRealIP, origin.ModeCFConnectingIP:
+	default:
+		return nil, fmt.Errorf("FILEEE_CLIENT_IP_HEADER_MODE = %q — erlaubt sind %s, %s, %s",
+			cfg.ClientIPHeaderMode, origin.ModeXForwardedFor, origin.ModeXRealIP, origin.ModeCFConnectingIP)
 	}
 
 	switch cfg.AuthMode {
@@ -162,6 +189,9 @@ func LoadConfig(env Env) (*Config, error) {
 	if err := ladeZahlenwerte(cfg, env); err != nil {
 		return nil, err
 	}
+	if err := ladeNetzwerk(cfg, env); err != nil {
+		return nil, err
+	}
 	if err := ladeAuth(cfg); err != nil {
 		return nil, err
 	}
@@ -169,6 +199,42 @@ func LoadConfig(env Env) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// ladeNetzwerk liest die beiden IP-Praefixlisten. Beide werden hier und nicht
+// erst beim Bau des Gangway-Unterbaus geparst — ein unbrauchbares Praefix
+// soll den Start mit einer benannten Variable abbrechen, nicht irgendwo tief
+// in einer fremden Bibliothek.
+func ladeNetzwerk(cfg *Config, env Env) error {
+	var err error
+	if cfg.TrustedProxies, err = praefixListe(env, "FILEEE_TRUSTED_PROXIES"); err != nil {
+		return err
+	}
+	if cfg.AllowedOriginPrefixes, err = praefixListe(env, "FILEEE_ALLOWED_ORIGIN_PREFIXES"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// praefixListe liest eine kommaseparierte Liste aus CIDR-Praefixen oder
+// einzelnen IP-Adressen. Eine einzelne Adresse wird als Praefix mit voller
+// Bitlaenge behandelt (/32 bei IPv4, /128 bei IPv6) — wer eine einzelne
+// Maschine meint, tippt selten eine Maske dazu, und TestLoadConfigListenUndZahlenwerte
+// aus Aufgabe 1 verlangt genau das bereits fuer FILEEE_TRUSTED_PROXIES.
+func praefixListe(env Env, key string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, teil := range splitListe(env(key)) {
+		if p, err := netip.ParsePrefix(teil); err == nil {
+			out = append(out, p)
+			continue
+		}
+		addr, err := netip.ParseAddr(teil)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %q ist weder eine IP-Adresse noch ein CIDR-Praefix", key, teil)
+		}
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return out, nil
 }
 
 func ladeZahlenwerte(cfg *Config, env Env) error {
@@ -221,15 +287,39 @@ func ladeAuth(cfg *Config) error {
 		if cfg.OIDCIssuer == "" {
 			return fmt.Errorf("MCP_OIDC_ISSUER ist im Modus %q Pflicht", cfg.AuthMode)
 		}
+		// Gangways identity.OIDCConfig verlangt Issuer, Audience und
+		// SubjectClaim (Letzterer hat bereits einen Default). Ohne Audience
+		// wuerde jedes fuer den Issuer gueltige Token akzeptiert, egal fuer
+		// welchen Client es ausgestellt wurde.
+		if cfg.OIDCAudience == "" {
+			return fmt.Errorf("MCP_OIDC_AUDIENCE ist im Modus %q Pflicht", cfg.AuthMode)
+		}
 		if cfg.ResourceURL == "" {
 			return fmt.Errorf("MCP_RESOURCE_URL ist im Modus %q Pflicht — der Wert muss exakt der "+
 				"URL entsprechen, die im Client eingetragen wird", cfg.AuthMode)
+		}
+		// Gangway (siehe internal/server, ADR-0015) mountet den MCP-Endpunkt
+		// fest unter /mcp. PublicBaseURL wird aus ResourceURL abgeleitet,
+		// indem genau dieses Suffix wieder abgeschnitten wird — passt
+		// ResourceURL nicht dazu, driften die RFC-9728-Metadaten
+		// (Resource-URI, WWW-Authenticate-Pointer) von der tatsaechlichen
+		// Route auseinander, ohne dass ein Client das laut meldet.
+		if !strings.HasSuffix(cfg.ResourceURL, "/mcp") {
+			return fmt.Errorf("MCP_RESOURCE_URL = %q muss auf /mcp enden — Gangway mountet den "+
+				"MCP-Endpunkt fest unter diesem Pfad (ADR-0015)", cfg.ResourceURL)
 		}
 		// Im single-Modus ist die Allowlist die einzige Autorisierungsstufe.
 		// Ohne sie duerfte jeder Account des IdP auf die Dokumente zugreifen.
 		if cfg.AccountMode == ModeSingle && len(cfg.AllowedSubjects) == 0 {
 			return fmt.Errorf("MCP_ALLOWED_SUBJECTS ist im Modus %q zusammen mit FILEEE_MODE=single "+
 				"Pflicht — leer hiesse: jeder authentifizierte Benutzer des IdP darf zugreifen", cfg.AuthMode)
+		}
+		// Gangways Server.New verweigert den Start ganz ohne Adress-Freigabeliste
+		// (buildAllowList: "no allowlist configured") — ein Server, der niemanden
+		// filtern kann, darf nicht hochkommen.
+		if len(cfg.AllowedOriginPrefixes) == 0 {
+			return fmt.Errorf("FILEEE_ALLOWED_ORIGIN_PREFIXES ist im Modus %q Pflicht — ohne "+
+				"Adress-Freigabeliste verweigert Gangway den Start (ADR-0015)", cfg.AuthMode)
 		}
 	}
 	if brauchtToken && cfg.APIToken == "" {

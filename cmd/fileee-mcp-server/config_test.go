@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/strausmann/gangway/origin"
 )
 
 // minimalToken ist die kleinstmoegliche gueltige Konfiguration: ein Konto, ein
@@ -19,12 +21,14 @@ func minimalToken() map[string]string {
 // minimalOIDC ist die kleinstmoegliche gueltige Konfiguration mit Identity Provider.
 func minimalOIDC() map[string]string {
 	return map[string]string{
-		"MCP_AUTH_MODE":        "oidc",
-		"MCP_OIDC_ISSUER":      "https://idp.example.com/application/o/mcp/",
-		"MCP_RESOURCE_URL":     "https://mcp.example.com/mcp",
-		"MCP_ALLOWED_SUBJECTS": "abc123",
-		"FILEEE_USERNAME":      "nutzer@example.com",
-		"FILEEE_PASSWORD":      "geheim",
+		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_ISSUER":                "https://idp.example.com/application/o/mcp/",
+		"MCP_OIDC_AUDIENCE":              "mcp-client",
+		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
+		"MCP_ALLOWED_SUBJECTS":           "abc123",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
+		"FILEEE_USERNAME":                "nutzer@example.com",
+		"FILEEE_PASSWORD":                "geheim",
 	}
 }
 
@@ -127,6 +131,60 @@ func TestLoadConfigFailFast(t *testing.T) {
 				return e
 			},
 			erwartet: "MCP_ALLOWED_SUBJECTS",
+		},
+		{
+			name: "oidc ohne audience",
+			env: func() map[string]string {
+				e := minimalOIDC()
+				delete(e, "MCP_OIDC_AUDIENCE")
+				return e
+			},
+			erwartet: "MCP_OIDC_AUDIENCE",
+		},
+		{
+			name: "oidc mit resource-url ohne /mcp-suffix",
+			env: func() map[string]string {
+				e := minimalOIDC()
+				e["MCP_RESOURCE_URL"] = "https://mcp.example.com/"
+				return e
+			},
+			erwartet: "/mcp",
+		},
+		{
+			name: "oidc ohne herkunfts-allowlist",
+			env: func() map[string]string {
+				e := minimalOIDC()
+				delete(e, "FILEEE_ALLOWED_ORIGIN_PREFIXES")
+				return e
+			},
+			erwartet: "FILEEE_ALLOWED_ORIGIN_PREFIXES",
+		},
+		{
+			name: "unbrauchbares praefix in der herkunfts-allowlist",
+			env: func() map[string]string {
+				e := minimalOIDC()
+				e["FILEEE_ALLOWED_ORIGIN_PREFIXES"] = "nicht-eine-adresse"
+				return e
+			},
+			erwartet: "FILEEE_ALLOWED_ORIGIN_PREFIXES",
+		},
+		{
+			name: "unbrauchbares praefix bei trusted proxies",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_TRUSTED_PROXIES"] = "nicht-eine-adresse"
+				return e
+			},
+			erwartet: "FILEEE_TRUSTED_PROXIES",
+		},
+		{
+			name: "unbekannter client-ip-header-modus",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_CLIENT_IP_HEADER_MODE"] = "x-forwarded-host"
+				return e
+			},
+			erwartet: "FILEEE_CLIENT_IP_HEADER_MODE",
 		},
 		{
 			name: "token-modus ohne token",
@@ -449,10 +507,50 @@ func TestLoadConfigListenUndZahlenwerte(t *testing.T) {
 	if len(cfg.TrustedProxies) != 2 {
 		t.Errorf("TrustedProxies = %v, erwartet zwei Eintraege", cfg.TrustedProxies)
 	}
+	// Der zweite Eintrag ist eine nackte Adresse ohne Maske — sie muss als
+	// Praefix mit voller Bitlaenge ankommen, nicht verworfen oder als /0
+	// interpretiert werden (das waere "jede Adresse", das Gegenteil der Absicht).
+	if bits := cfg.TrustedProxies[1].Bits(); bits != 32 {
+		t.Errorf("TrustedProxies[1].Bits() = %d, erwartet 32 (nackte IPv4-Adresse als /32)", bits)
+	}
 	if cfg.MaxInflight != 3 {
 		t.Errorf("MaxInflight = %d, erwartet 3", cfg.MaxInflight)
 	}
 	if cfg.RateRPS != 2 || cfg.RateGlobalRPS != 5 {
 		t.Errorf("RateRPS/RateGlobalRPS = %v/%v, erwartet 2/5", cfg.RateRPS, cfg.RateGlobalRPS)
+	}
+}
+
+func TestLoadConfigClientIPHeaderModeDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadConfig(envOf(minimalToken()))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	if cfg.ClientIPHeaderMode != origin.ModeCFConnectingIP {
+		t.Errorf("ClientIPHeaderMode = %q, erwartet Default %q", cfg.ClientIPHeaderMode, origin.ModeCFConnectingIP)
+	}
+}
+
+func TestLoadConfigNetzwerkPraefixe(t *testing.T) {
+	t.Parallel()
+
+	env := minimalOIDC()
+	env["FILEEE_CLIENT_IP_HEADER_MODE"] = "x-forwarded-for"
+	env["FILEEE_ALLOWED_ORIGIN_PREFIXES"] = "10.0.0.0/8, ::1"
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	if cfg.ClientIPHeaderMode != origin.ModeXForwardedFor {
+		t.Errorf("ClientIPHeaderMode = %q, erwartet %q", cfg.ClientIPHeaderMode, origin.ModeXForwardedFor)
+	}
+	if len(cfg.AllowedOriginPrefixes) != 2 {
+		t.Fatalf("AllowedOriginPrefixes = %v, erwartet zwei Eintraege", cfg.AllowedOriginPrefixes)
+	}
+	if bits := cfg.AllowedOriginPrefixes[1].Bits(); bits != 128 {
+		t.Errorf("AllowedOriginPrefixes[1].Bits() = %d, erwartet 128 (nackte IPv6-Adresse als /128)", bits)
 	}
 }
