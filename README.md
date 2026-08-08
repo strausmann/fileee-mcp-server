@@ -44,10 +44,21 @@ MCP_OIDC_ISSUER=https://<idp-host>/…
 MCP_OIDC_AUDIENCE=<client-id>
 MCP_RESOURCE_URL=https://<mcp-host>/mcp
 MCP_ALLOWED_SUBJECTS=<sub des berechtigten Benutzers>
+FILEEE_ALLOWED_ORIGIN_PREFIXES=<CIDR-Liste der zulässigen Herkunftsadressen>
 FILEEE_MODE=single
 ```
 
 Einrichtung des Identity Providers: [`docs/idp/authentik.md`](docs/idp/authentik.md), [`docs/idp/entra-id.md`](docs/idp/entra-id.md), danach [`docs/idp/claude-connector.md`](docs/idp/claude-connector.md).
+
+> **Aktuell nur `oidc`.** Der Server läuft auf [Gangway](https://gangway.strausmann.cloud) (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)) auf, und Gangway v0.2.0 baut intern ausschließlich einen OIDC-Verifier — es gibt (noch) keinen Weg, stattdessen ein statisches Bearer-Token zu verifizieren. `MCP_AUTH_MODE=token`/`both` werden von `LoadConfig` weiterhin akzeptiert, der Server verweigert den Start mit diesem Modus aber explizit. Details und der Ausblick auf eine Lösung stehen im Nachtrag zu ADR-0015.
+
+Weitere netzwerkbezogene Variablen, die im Modus `oidc` Pflicht bzw. relevant sind:
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `FILEEE_ALLOWED_ORIGIN_PREFIXES` | CIDR-Liste (oder einzelne Adressen) der Herkunftsadressen, die `/mcp` überhaupt erreichen dürfen — Pflicht im Modus `oidc`, ohne sie verweigert Gangway den Start | — |
+| `FILEEE_TRUSTED_PROXIES` | CIDR-Liste der Proxys, deren Weiterleitungs-Header (siehe `FILEEE_CLIENT_IP_HEADER_MODE`) geglaubt werden | leer — es zählt nur die Peer-Adresse |
+| `FILEEE_CLIENT_IP_HEADER_MODE` | genau ein Weiterleitungs-Header als Quelle der Client-Adresse: `x-forwarded-for`, `x-real-ip` oder `cf-connecting-ip` | `cf-connecting-ip` — vor dem Produktivbetrieb gegen die tatsächliche Proxy-Kette (z. B. Pangolin/Traefik) prüfen |
 
 ### Mehrere Benutzer, je eigenes Fileee-Konto
 

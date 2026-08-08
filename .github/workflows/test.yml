@@ -57,7 +57,9 @@ jobs:
           ./scripts/coverage-gate-strict.sh cover.out \
             cmd/fileee-mcp-server/config.go:90 \
             cmd/fileee-mcp-server/capabilities.go:90 \
-            cmd/fileee-mcp-server/version.go:90
+            cmd/fileee-mcp-server/version.go:90 \
+            cmd/fileee-mcp-server/server.go:80 \
+            cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
           chmod +x scripts/doc-coverage.sh
