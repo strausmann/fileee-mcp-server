@@ -263,6 +263,39 @@ func TestNewFailsWhenIssuerRespondsWithAnError(t *testing.T) {
 	}
 }
 
+// Ablehnung eines nicht unterstuetzten Auth-Modus (Pruefbefund zu PR #18).
+// Vor dem Umzug lag dieser Zweig im selben Paket wie sein einziger direkter
+// Beleg (main_test.go, TestRunFailsFastForUnsupportedAuthMode) — der Test
+// deckte damals also sowohl run() als auch diesen Zweig in New() ab. Nach dem
+// Umzug liegt New() in diesem Paket, der bisherige Test aber weiterhin im
+// fremden cmd/fileee-mcp-server und prueft die Ablehnung nur als Nebeneffekt
+// eines Ende-zu-Ende-Wegs durch run() — bei einem Gegenversuch (Ablehnung
+// entfernt) schlaegt er sogar aus dem falschen Grund fehl, weil run() dann
+// bei der naechsten Pruefung (Issuer unerreichbar) haengen bliebe statt am
+// erwarteten MCP_AUTH_MODE-Hinweis. Dieser direkte Test verankert die
+// Absicherung wieder dort, wo der Code liegt.
+func TestNewRejectsUnsupportedAuthMode(t *testing.T) {
+	for _, mode := range []config.AuthMode{config.AuthToken, config.AuthBoth} {
+		t.Run(string(mode), func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.AuthMode = mode
+
+			s, err := New(context.Background(), cfg)
+			if err == nil {
+				t.Fatalf("New() mit AuthMode=%q = nil error, erwartet einen Fehlschlag — Gangway v0.2.0 "+
+					"baut intern immer einen OIDC-Verifier auf und bietet keinen Weg, einen anderen "+
+					"identity.Verifier einzuhaengen (siehe ADR-0015-Nachtrag)", mode)
+			}
+			if s != nil {
+				t.Error("New lieferte einen nicht-nil *Server zusammen mit einem Fehler")
+			}
+			if !strings.Contains(err.Error(), "MCP_AUTH_MODE") {
+				t.Errorf("err = %q, erwartet einen Hinweis auf MCP_AUTH_MODE", err)
+			}
+		})
+	}
+}
+
 // Absicherung (Prüfbefund): New() darf bei einer ResourceURL, die nicht auf
 // /mcp endet oder kuerzer als das Suffix ist, nicht aus dem Bereich laufen —
 // auch dann nicht, wenn ein Aufrufer eine *config.Config von Hand baut oder
