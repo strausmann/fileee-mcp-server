@@ -119,6 +119,18 @@ eingebautes Backend, siehe oben) — das übernimmt der Einstiegspunkt
 `infisical run -- /usr/local/bin/fileee-mcp-server`. Das Werkzeug braucht
 dafür eine eigene Maschinen-Identität.
 
+### Einstiegspunkt: Environment und Ordnerpfad
+
+Der gebackene Einstiegspunkt kennt weder `--env` noch `--path` — er läuft
+mit den Vorgaben `env=dev`/`path=/`. Das GitOps-Repo
+(`infrastructure/docker/fileee-mcp-server`) überschreibt den Einstiegspunkt
+deshalb per Compose auf `infisical run --env=dev --path=/authentik --
+/usr/local/bin/fileee-mcp-server` (für die Entra-ID-Instanz entsprechend
+`--path=/entra-id`). Die Machine-Identity-Umgebungsvariablen
+(`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`_SECRET`) reichen dafür aus — sobald
+sie gesetzt sind, authentifiziert sich `infisical run` selbstständig gegen
+die Instanz und injiziert die Geheimnisse aus dem angegebenen Ordner.
+
 ### Eine Identität für beide Instanzen — bewusst ohne Trennung
 
 Es gibt zwei Container-Instanzen dieses Dienstes — eine hinter Authentik
