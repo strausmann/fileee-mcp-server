@@ -1,3 +1,13 @@
+## [0.4.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.3.0...v0.4.0) (2026-08-09)
+
+### Features
+
+* **config:** ein variablen-namensraum je identity provider ([9c05414](https://github.com/strausmann/fileee-mcp-server/commit/9c05414b9e36a54d4905eb36f68e8f9e516efe0f)), closes [#286](https://github.com/strausmann/fileee-mcp-server/issues/286)
+
+### Bug Fixes
+
+* **deploy:** start ohne infisical ermoeglichen, halbes zugangsdaten-paar abweisen ([4cba291](https://github.com/strausmann/fileee-mcp-server/commit/4cba2918ac2a4086f85f85b8d88bf101ced6fc76)), closes [#286](https://github.com/strausmann/fileee-mcp-server/issues/286)
+
 ## [0.3.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.2.0...v0.3.0) (2026-08-09)
 
 ### Features
