@@ -73,10 +73,17 @@ type Account struct {
 // vermischt, damit jede Anleitung nur ihre eigenen Variablen nennt.
 type OIDCProvider string
 
+// Die drei unterstuetzten Anbieter-Zweige.
 const (
-	ProviderEntra     OIDCProvider = "entra"
+	// ProviderEntra leitet den Aussteller aus der Entra-Verzeichnis-ID ab.
+	ProviderEntra OIDCProvider = "entra"
+	// ProviderAuthentik leitet den Aussteller aus Authentik-Host und
+	// Anwendungs-Kuerzel ab.
 	ProviderAuthentik OIDCProvider = "authentik"
-	ProviderGeneric   OIDCProvider = "generic"
+	// ProviderGeneric nimmt Aussteller und Client-ID direkt entgegen und
+	// bedient damit jeden standardkonformen OpenID-Connect-Anbieter ohne
+	// eigenen Zweig — etwa GitLab oder Keycloak.
+	ProviderGeneric OIDCProvider = "generic"
 )
 
 // Config buendelt die gesamte Laufzeitkonfiguration. Sie entsteht ausschliesslich
