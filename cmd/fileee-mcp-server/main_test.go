@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -129,5 +131,41 @@ func TestReportWarningsIsNilSafe(t *testing.T) {
 
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, erwartet leer bei cfg == nil", stderr.String())
+	}
+}
+
+// Der Unterbefehl "healthcheck" treibt sowohl die Dockerfile-HEALTHCHECK-Anweisung
+// (kein curl/wget im Abbild) als auch einen manuellen Lebendigkeits-Check. Er darf
+// NICHT ueber LoadConfig laufen — eine fehlende Pflichtvariable soll die
+// Lebendpruefung nicht zum Scheitern bringen (siehe Schritt 4 im Aufbau-Auftrag).
+func TestHealthcheckSubcommandReturnsZeroWhenServerAnswers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	env := func(k string) string {
+		if k == "MCP_HEALTHCHECK_URL" {
+			return srv.URL
+		}
+		return ""
+	}
+	var out, errOut bytes.Buffer
+	if code := run([]string{"healthcheck"}, env, &out, &errOut); code != 0 {
+		t.Fatalf("healthcheck: Rückgabe %d, erwartet 0 (Fehlerausgabe: %s)", code, errOut.String())
+	}
+}
+
+func TestHealthcheckSubcommandReturnsNonZeroWhenServerIsDown(t *testing.T) {
+	env := func(k string) string {
+		if k == "MCP_HEALTHCHECK_URL" {
+			return "http://127.0.0.1:1" // nichts lauscht dort
+		}
+		return ""
+	}
+	var out, errOut bytes.Buffer
+	if code := run([]string{"healthcheck"}, env, &out, &errOut); code == 0 {
+		t.Fatal("healthcheck: Rückgabe 0 bei totem Server, erwartet ungleich 0")
 	}
 }
