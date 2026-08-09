@@ -17,6 +17,7 @@
 1. Entra muss aus dem Egress-Bereich des MCP-Clients erreichbar sein — bei Claude `160.79.104.0/21`. Für die öffentlichen Microsoft-Endpunkte ist das normalerweise gegeben.
 2. Entra unterstützt PKCE mit `S256`.
 3. Discovery und Token-Endpunkt müssen innerhalb von 10 s antworten, Refresh innerhalb von 30 s.
+4. **Entra unterstützt keine automatische Client-Registrierung** — weder Dynamic Client Registration (RFC 7591) noch Client ID Metadata Documents. claude.ai meldet das nach dem Verbindungsversuch als eigene Fehlermeldung: „Automatische Client-Registrierung wird von `<APP_SLUG>` nicht unterstützt. Bearbeite den Connector und füge eine OAuth-Client-ID hinzu." (live beobachtet 09.08.2026). Nachprüfbar am Discovery-Dokument: Das Feld `registration_endpoint` fehlt darin, und der bei manchen Anbietern zusätzlich angebotene Pfad `/.well-known/oauth-authorization-server` liefert bei Entra **404** — `/.well-known/openid-configuration` ist der einzige gültige Discovery-Pfad. Es gibt keinen Weg darum herum: Client-ID (und ggf. Secret) müssen vorregistriert und im Connector-Dialog eingetragen werden (Schritte 1–2 unten, Eintragen in claude.ai siehe [`claude-connector.md`](claude-connector.md)).
 
 ## 1. App-Registrierung anlegen
 
@@ -31,6 +32,15 @@
 Nach dem Anlegen notieren: **Application (client) ID** = `<CLIENT_ID>`, **Directory (tenant) ID** = `<TENANT_ID>`.
 
 Für lokale Tests mit Claude Code zusätzlich unter *Authentication → Add a platform → Mobile and desktop applications* die Loopback-URIs eintragen. Entra prüft Redirect-URIs exakt, **inklusive Port** — für jeden zu testenden Port ist ein eigener Eintrag nötig. Wer darauf verzichten kann, testet nur über die gehosteten Claude-Oberflächen.
+
+> **Nicht verwechseln: zwei verschiedene Felder wollen am Ende eine Adresse desselben Hosts.** Sowohl hier unter *Authentication* als auch weiter unten unter *Expose an API* (Abschnitt 3) trägst du eine URL mit dem MCP-Host ein — es ist aber nicht dieselbe Adresse und nicht dasselbe Feld:
+>
+> | Feld | Menü | Gehört dorthin | Fehler bei fehlendem/falschem Eintrag |
+> |---|---|---|---|
+> | Redirect URI | *Authentication → Web* | die **Rückrufadresse von claude.ai**: `https://claude.ai/api/mcp/auth_callback` | `AADSTS500113` |
+> | Application ID URI | *Expose an API* | die **eigene MCP-Server-Adresse** `<MCP_URL>` | `AADSTS9010010` (Abschnitt 3) |
+>
+> Live beobachtet am 09.08.2026: Unter *Authentication* stand versehentlich `<MCP_URL>` eingetragen — dort gehört sie nicht hin, das Anmelden bricht dann mit `AADSTS500113` (keine Weiterleitungsadresse registriert) ab. Wegen der Namensähnlichkeit beider Felder ist die Verwechslung naheliegend.
 
 ## 2. Client-Secret erzeugen
 
@@ -48,7 +58,7 @@ Entra schlägt standardmäßig `api://<CLIENT_ID>` vor. **Das reicht nicht.** De
 
 `<MCP_URL>` deshalb **zusätzlich** als Application ID URI eintragen.
 
-Für ein `https://`-Schema verlangt Entra eine im Tenant verifizierte Domain. Ist die Domain nicht verifizierbar, bleibt nur, den MCP-Server unter einem Host zu betreiben, dessen Domain verifiziert ist.
+Microsofts eigene Dokumentation verlangt für ein `https://`-Schema eine im Tenant verifizierte Domain. **Live beobachtet am 09.08.2026:** Eine `https://`-Application-ID-URI wurde dennoch anstandslos akzeptiert, obwohl die Domain im betroffenen Tenant **nicht** als verifiziert geführt wird — die verbreitete Annahme „geht nur mit verifizierter Domain" hat sich in diesem Fall nicht bestätigt. Es ist deshalb kein verlässliches Vorab-Ausschlusskriterium mehr; einfach eintragen und ausprobieren. Wird der Wert dennoch abgelehnt, ist eine verifizierte Domain (oder der Umzug des MCP-Servers auf einen Host mit verifizierter Domain) der nächste Versuch.
 
 ### Scope hinzufügen
 
@@ -64,6 +74,19 @@ Für ein `https://`-Schema verlangt Entra eine im Tenant verifizierte Domain. Is
 Voller Scope-Wert: `<MCP_URL>/mcp.access` bzw. `api://<CLIENT_ID>/mcp.access`. Dieser Server veröffentlicht ihn **nicht** im eigenen Protected-Resource-Metadata-Dokument (siehe Abschnitt "Zu den Scopes" unten) — der Client (bzw. der Connector-Dialog) muss ihn deshalb von hier oder aus der Connector-Konfiguration kennen.
 
 > **Alternative `.default`:** Statt eines benannten Scopes lässt sich auch der Entra-eigene Sammel-Scope `api://<CLIENT_ID>/.default` anfordern, der alle statisch konfigurierten Berechtigungen der App auflöst. Er funktioniert nur, wenn mindestens ein Scope existiert — ein leeres „Expose an API" lässt `.default` ins Leere laufen. Wer diesen Weg geht, legt trotzdem einen Scope an (üblich: `user_impersonation`) und fordert dann `.default` an.
+
+### Eigene Berechtigung für den Scope erteilen (Pflicht)
+
+*API permissions → Add a permission → My APIs → `<APP_SLUG>`*
+
+Diese App-Registrierung steckt hier in einer Doppelrolle: Sie ist zugleich die **Ressource** (der gerade angelegte Scope) und der **Client** — dieselbe Client-ID trägst du gleich in claude.ai ein ([`claude-connector.md`](claude-connector.md)). Ohne diesen Schritt hat der Client keine Berechtigung, seinen eigenen Scope anzufordern, auch wenn der Scope selbst schon existiert.
+
+- Unter *My APIs* die eigene App auswählen, den delegierten Scope `mcp.access` markieren, hinzufügen.
+- **Grant admin consent** klicken — ohne Administratorzustimmung bleibt die Berechtigung im Status „Not granted". Meldet Entra beim Token-Request stattdessen `AADSTS650053` (Scope unbekannt), ist meist dieser Schritt vergessen worden oder der Scope-Name weicht ab.
+
+**Abkürzung (optional):** Unter *Expose an API → Authorized client applications* dieselbe Client-ID mit dem Scope `mcp.access` eintragen. Das erspart eine zweite Zustimmungsabfrage beim ersten Login — sinnvoll gerade weil App und Client hier identisch sind.
+
+**Funktionierende Reihenfolge (live geprüft, 09.08.2026):** zuerst Application ID URI, dann Scope `mcp.access` anlegen, dann diesen Abschnitt.
 
 ## 3a. App-Rollen für den Funktionsumfang (optional, empfohlen)
 
@@ -152,6 +175,8 @@ Entra liefert den **kurzen** Namen im `scp`-Claim (`mcp.access`). `MCP_OIDC_REQU
 
 Das Protected-Resource-Metadata-Dokument (`/.well-known/oauth-protected-resource`) veröffentlicht **keinen** Scope — das Feld `scopes_supported` fehlt in der Antwort dieses Servers vollständig, es wird von Gangway derzeit nicht befüllt. Ein Client kann den anzufordernden Scope also nicht aus diesem Dokument ablesen; er muss ihn kennen (z. B. aus dieser Anleitung oder der Connector-Konfiguration).
 
+> **Bekannte Einschränkung (Stand 09.08.2026, voraussichtlich befristet):** Nach der [MCP Authorization Specification](https://modelcontextprotocol.io/specification/draft/basic/authorization) liest ein Client den anzufordernden Scope primär aus dem `scope`-Parameter der `WWW-Authenticate`-Kopfzeile der 401-Antwort, ersatzweise aus `scopes_supported` im Protected-Resource-Metadata-Dokument. Dieser Server liefert **keins von beidem**: Die Kopfzeile enthält nur `resource_metadata=`, das Metadata-Dokument nur `resource`, `authorization_servers` und `bearer_methods_supported`. Live beobachtet: Der Consent-Dialog von claude.ai listete deshalb nur `openid`, `profile`, `offline_access` auf — nicht `mcp.access`. Eine Behebung ist als Gangway-Änderung in Arbeit; sobald sie ausgeliefert ist, entfällt dieser Absatz.
+
 ## 8. Verifikation
 
 ```bash
@@ -167,11 +192,25 @@ echo "<ACCESS_TOKEN>" | cut -d. -f2 | base64 -d 2>/dev/null | jq '{iss, aud, sub
 
 Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.access`. Bei Verwendung von App-Rollen enthält `roles` die zugewiesenen Werte — fehlt der Claim, ist die Rollenzuweisung aus Abschnitt 6 nicht erfolgt.
 
+## 8a. Fehlersuche, wenn der Server nur „unauthorized" antwortet
+
+Jede vom Server abgelehnte Anfrage beantwortet er mit **`401`** und dem immer gleichen Text `unauthorized` — unabhängig davon, ob kein Token mitgeschickt wurde, die Audience nicht passt, der Scope fehlt oder das Token abgelaufen ist. Es gibt keine serverseitige Protokollzeile, die zwischen diesen Ursachen unterscheidet; am Server selbst ist hier nichts zu debuggen.
+
+Der belastbare Weg führt über das **Entra-Anmeldeprotokoll**: *Microsoft Entra Admin Center → Identity → Monitoring & health → Sign-in logs*, gefiltert auf die Correlation-ID aus der Fehlermeldung von claude.ai. Dabei **beide** Reiter prüfen:
+
+- **User sign-ins** — der interaktive Login-Teil des Flows.
+- **Service principal sign-ins** — der anschließende Token-Austausch läuft **ohne** Benutzerkontext und erscheint ausschließlich hier. Wer nur den ersten Reiter ansieht, sieht scheinbar einen erfolgreichen Login und findet den eigentlichen Fehler nicht.
+
+Der dort sichtbare `AADSTS`-Fehlercode führt in die Tabelle in Abschnitt 9.
+
 ## 9. Bekannte Stolpersteine
 
 | Symptom | Ursache | Behebung |
 |---|---|---|
+| `AADSTS500113` (keine Weiterleitungsadresse registriert) | Redirect URI fehlt unter *Authentication*, oder dort steht versehentlich die Server-Adresse `<MCP_URL>` statt der claude.ai-Rückrufadresse | *Authentication → Web*: `https://claude.ai/api/mcp/auth_callback` eintragen (Schritt 1) |
 | `AADSTS9010010` beim Token-Request | `<MCP_URL>` ist nicht als Application ID URI registriert | Schritt 3 nachholen |
+| `AADSTS650053` (angeforderter Scope existiert nicht) | Scope `mcp.access` fehlt unter „Expose an API", oder die eigene App-Berechtigung dafür wurde nicht erteilt | Schritt 3 (Scope) und den Abschnitt „Eigene Berechtigung für den Scope erteilen" nachholen, inklusive Admin-Consent |
+| `AADSTS7000218` (Client-Secret verlangt) | die Anfrage kommt von einem Confidential Client, aber claude.ai hat kein Secret mitgeschickt | Secret im Connector-Dialog nachtragen (Schritt 2), oder App bewusst als Public Client ohne Secret-Pflicht führen |
 | `iss` endet nicht auf `/v2.0` | `accessTokenAcceptedVersion` steht nicht auf `2` | Manifest korrigieren |
 | `AADSTS50011` (Redirect-URI-Mismatch) | Redirect-URI weicht ab, bei Claude Code der Port | exakte URI eintragen; Entra ignoriert den Port **nicht** |
 | Connector funktioniert plötzlich nicht mehr | Client-Secret abgelaufen | neues Secret erzeugen und im Connector aktualisieren |
@@ -181,4 +220,5 @@ Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.ac
 | Jeder Tenant-Benutzer kommt durch | „Assignment required" steht auf `No` | Schritt 6 nachholen |
 | Start bricht ab: „ist keine Verzeichnis-ID" | in `MCP_ENTRA_TENANT_ID` steht eine Domain oder `common`/`organizations` | die GUID aus der Portal-Übersicht eintragen (Abschnitt 7) |
 | Start bricht ab: „gesetzt sind auch Variablen anderer Anbieter" | neben den `MCP_ENTRA_*`-Werten stehen noch `MCP_AUTHENTIK_*`- oder `MCP_OIDC_ISSUER`-Reste aus einer früheren Konfiguration | entfernen — bei `MCP_OIDC_PROVIDER=entra` werden sie nicht gelesen |
-| Kein DCR möglich | Entra unterstützt weder Dynamic Client Registration noch Client ID Metadata Documents | vorregistrierte Client-ID/Secret im Connector-Dialog eintragen — der vorgesehene Weg |
+| claude.ai: „Automatische Client-Registrierung wird von … nicht unterstützt" | Entra unterstützt weder Dynamic Client Registration noch Client ID Metadata Documents (Voraussetzungen, Punkt 4) | vorregistrierte Client-ID/Secret im Connector-Dialog eintragen — der vorgesehene Weg |
+| Server antwortet nur mit `401 unauthorized`, keine weitere Auskunft | der Server unterscheidet die Ablehnungsgründe nicht in seiner Antwort | Entra-Anmeldeprotokolle prüfen, **beide** Reiter (Abschnitt 8a) |
