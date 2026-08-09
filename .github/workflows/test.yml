@@ -84,3 +84,7 @@ jobs:
         run: |
           chmod +x scripts/adr-registry-check.sh
           ./scripts/adr-registry-check.sh
+      - name: Entrypoint-Entscheidung (Start mit und ohne Infisical)
+        run: |
+          chmod +x deploy/entrypoint.sh deploy/entrypoint_test.sh
+          ./deploy/entrypoint_test.sh
