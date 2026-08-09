@@ -1,3 +1,19 @@
+## [1.0.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.3.0...v1.0.0) (2026-08-09)
+
+### ⚠ BREAKING CHANGES
+
+* **config:** MCP_OIDC_AUDIENCE entfaellt ersatzlos, MCP_OIDC_PROVIDER
+ist neu und im Modus oidc Pflicht. Bestehende Konfigurationen muessen auf
+den Namensraum ihres Anbieters umgestellt werden.
+
+### Features
+
+* **config:** ein variablen-namensraum je identity provider ([66c4115](https://github.com/strausmann/fileee-mcp-server/commit/66c411547024e38c2e32f8b0d8da3fb1e7fdf5dd)), closes [#286](https://github.com/strausmann/fileee-mcp-server/issues/286)
+
+### Bug Fixes
+
+* **deploy:** start ohne infisical ermoeglichen, halbes zugangsdaten-paar abweisen ([1f6d5f2](https://github.com/strausmann/fileee-mcp-server/commit/1f6d5f203bd5525dcbc45feee12c697c58581dcd)), closes [#286](https://github.com/strausmann/fileee-mcp-server/issues/286)
+
 ## [0.3.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.2.0...v0.3.0) (2026-08-09)
 
 ### Features
