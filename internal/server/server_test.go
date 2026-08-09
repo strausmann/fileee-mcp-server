@@ -73,8 +73,9 @@ func testConfigWithIDP(t *testing.T) (*config.Config, *testidp.IDP) {
 
 	env := map[string]string{
 		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
 		"MCP_OIDC_ISSUER":                idp.URL(),
-		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_OIDC_CLIENT_ID":             "fileee-mcp-server",
 		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
 		"MCP_ALLOWED_SUBJECTS":           "abc123",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0, ::/0",
@@ -453,8 +454,9 @@ func TestHealthzIsReachableWithoutAuthOrAllowlist(t *testing.T) {
 func TestNewFailsWhenIssuerIsUnreachable(t *testing.T) {
 	env := map[string]string{
 		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
 		"MCP_OIDC_ISSUER":                "http://127.0.0.1:1", // Port 1: sofort verweigert, kein Timeout-Warten
-		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_OIDC_CLIENT_ID":             "fileee-mcp-server",
 		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
 		"MCP_ALLOWED_SUBJECTS":           "abc123",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
@@ -504,8 +506,9 @@ func TestNewFailsWhenIssuerRespondsWithAnError(t *testing.T) {
 
 	env := map[string]string{
 		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
 		"MCP_OIDC_ISSUER":                idp.URL,
-		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_OIDC_CLIENT_ID":             "fileee-mcp-server",
 		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
 		"MCP_ALLOWED_SUBJECTS":           "abc123",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
@@ -689,8 +692,9 @@ func TestBuildResolverMultiModeMapsSubjectsAcrossAccounts(t *testing.T) {
 	idp := testidp.New(t)
 	env := map[string]string{
 		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
 		"MCP_OIDC_ISSUER":                idp.URL(),
-		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_OIDC_CLIENT_ID":             "fileee-mcp-server",
 		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0, ::/0",
 		"FILEEE_MODE":                    "multi",
@@ -840,8 +844,9 @@ func testCapabilityConfig(t *testing.T) (*config.Config, *testidp.IDP) {
 
 	env := map[string]string{
 		"MCP_AUTH_MODE":                   "oidc",
+		"MCP_OIDC_PROVIDER":               "generic",
 		"MCP_OIDC_ISSUER":                 idp.URL(),
-		"MCP_OIDC_AUDIENCE":               "fileee-mcp-server",
+		"MCP_OIDC_CLIENT_ID":              "fileee-mcp-server",
 		"MCP_RESOURCE_URL":                "https://mcp.example.com/mcp",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES":  "0.0.0.0/0, ::/0",
 		"FILEEE_MODE":                     "multi",
@@ -1181,8 +1186,9 @@ func TestCapabilitiesForClaimBranchFailsClosedOnAnUnknownValue(t *testing.T) {
 func TestCapabilitiesForAccountBranchReadsThePreviouslyUnusedSetting(t *testing.T) {
 	env := map[string]string{
 		"MCP_AUTH_MODE":                   "oidc",
+		"MCP_OIDC_PROVIDER":               "generic",
 		"MCP_OIDC_ISSUER":                 "https://issuer.example.invalid",
-		"MCP_OIDC_AUDIENCE":               "aud",
+		"MCP_OIDC_CLIENT_ID":              "aud",
 		"MCP_RESOURCE_URL":                "https://mcp.example.com/mcp",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES":  "0.0.0.0/0",
 		"FILEEE_MODE":                     "multi",

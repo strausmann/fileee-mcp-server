@@ -114,7 +114,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		Addr:            cfg.ListenAddr,
 		PublicBaseURL:   publicBaseURL,
 		IssuerURL:       cfg.OIDCIssuer,
-		Audience:        cfg.OIDCAudience,
+		Audience:        cfg.OIDCClientID,
 		SubjectClaim:    cfg.OIDCSubjectClaim,
 		HeaderMode:      cfg.ClientIPHeaderMode,
 		TrustedProxies:  cfg.TrustedProxies,

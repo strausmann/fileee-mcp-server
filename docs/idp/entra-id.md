@@ -1,6 +1,6 @@
 # Microsoft Entra ID als Authorization Server
 
-`fileee-mcp-server` ist ein reiner OAuth-2.1-Resource-Server. Er stellt selbst keine Tokens aus, sondern verweist Clients über [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) auf einen externen Identity Provider und prüft die dort ausgestellten Tokens gegen dessen JWKS. Für Authentik siehe [`authentik.md`](authentik.md).
+`fileee-mcp-server` ist ein reiner OAuth-2.1-Resource-Server. Er stellt selbst keine Tokens aus, sondern verweist Clients über [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) auf einen externen Identity Provider und prüft die dort ausgestellten Tokens gegen dessen JWKS. Für Authentik siehe [`authentik.md`](authentik.md), für jeden anderen standardkonformen Anbieter [`generic.md`](generic.md).
 
 ## Platzhalter
 
@@ -120,23 +120,31 @@ Ohne diese Einstellung kann jeder Benutzer des Tenants den Connector verbinden.
 | JWKS | aus dem Discovery-Dokument (`jwks_uri`) |
 | `aud` im v2-Token | `<CLIENT_ID>` |
 
-Der Server akzeptiert **genau einen** Audience-Wert: `MCP_OIDC_AUDIENCE`. Gangways OIDC-Verifier (`github.com/coreos/go-oidc`) prüft, ob dieser eine konfigurierte Wert im `aud`-Claim des Tokens enthalten ist — es gibt **keine** zusätzliche Prüfung gegen `MCP_RESOURCE_URL` oder `api://<CLIENT_ID>`. `MCP_OIDC_AUDIENCE` muss deshalb exakt dem `aud`-Wert entsprechen, den Entra für das tatsächlich angeforderte Token ausstellt — bei einem v2.0-Token für den in Abschnitt 3 angelegten Scope ist das die reine `<CLIENT_ID>` (kein `api://`-Präfix, siehe Beispiel unten). Fordert ein Client stattdessen den Application-ID-URI-Scope an und Entra setzt dafür `api://<CLIENT_ID>` als `aud`, scheitert die Prüfung — sichtbar nur als 401-Schleife, die im Client als „Authorization failed" ankommt. In diesem Fall `MCP_OIDC_AUDIENCE` auf den tatsächlich ausgestellten Wert anpassen; Abschnitt 8 zeigt, wie man `aud` im ausgestellten Token nachsieht.
+Du trägst **drei Werte aus dem Portal** ein — die Aussteller-URL baut der Server daraus selbst:
 
 ```dotenv
 MCP_AUTH_MODE=oidc
-MCP_OIDC_ISSUER=https://login.microsoftonline.com/<TENANT_ID>/v2.0
-MCP_OIDC_AUDIENCE=<CLIENT_ID>
-MCP_OIDC_SUBJECT_CLAIM=sub
+MCP_OIDC_PROVIDER=entra
+MCP_ENTRA_TENANT_ID=<TENANT_ID>
+MCP_ENTRA_CLIENT_ID=<CLIENT_ID>
 MCP_OIDC_REQUIRED_SCOPES=mcp.access
 MCP_RESOURCE_URL=<MCP_URL>
-MCP_ALLOWED_SUBJECTS=<sub- oder oid-Wert des berechtigten Benutzers>
+MCP_ALLOWED_SUBJECTS=<OBJECT_ID des berechtigten Benutzers>
 ```
+
+`MCP_ENTRA_TENANT_ID` muss die **Verzeichnis-ID als GUID** sein. Eine verifizierte Domain oder `common`/`organizations` funktioniert hier nicht und wird beim Start abgewiesen: Der Aussteller im ausgestellten Token trägt immer die GUID; `common` liefert im Discovery-Dokument nur die Vorlage `{tenantid}`, und eine Domain liefert die GUID zurück statt sich selbst. Eine daraus gebaute URL passt also nie zum Token. Ohne diese Prüfung wäre das Symptom eine 401-Schleife, die im Client nur als „Authorization failed" ankommt.
+
+`MCP_ENTRA_CLIENT_ID` ist zugleich die erwartete Audience. Gangways OIDC-Verifier (`github.com/coreos/go-oidc`) prüft, ob dieser Wert im `aud`-Claim steht — es gibt **keine** zusätzliche Prüfung gegen `MCP_RESOURCE_URL` oder `api://<CLIENT_ID>`. Bei einem v2.0-Token für den in Abschnitt 3 angelegten Scope ist `aud` die reine `<CLIENT_ID>` ohne `api://`-Präfix. Fordert ein Client stattdessen den Application-ID-URI-Scope an, setzt Entra `api://<CLIENT_ID>` als `aud` und die Prüfung scheitert — dann fordert der **Client** den falschen Scope an, nicht der Server den falschen Wert. Abschnitt 8 zeigt, wie man `aud` im ausgestellten Token nachsieht.
 
 ### Zum Subject-Claim
 
-`sub` ist bei Entra **paarweise pseudonymisiert**: derselbe Benutzer hat in einer anderen App-Registrierung einen anderen `sub`. Für die Konto-Zuordnung ist das unproblematisch, solange nur diese Anwendung genutzt wird.
+**Du musst hier nichts eintragen.** Bei `MCP_OIDC_PROVIDER=entra` verwendet der Server automatisch `oid` — aus einem praktischen Grund: Die **Objekt-ID steht im Portal** (Microsoft Entra ID → Benutzer → der Benutzer → Objekt-ID) und lässt sich damit vorab in `MCP_ALLOWED_SUBJECTS` eintragen.
 
-Soll die Zuordnung über mehrere Anwendungen hinweg stabil sein, `MCP_OIDC_SUBJECT_CLAIM=oid` verwenden — die Objekt-ID ist tenant-weit eindeutig. `email` ist die schlechteste Wahl: der Wert ist änderbar und steht je nach Konfiguration gar nicht im Token.
+Wer es dennoch anders will, setzt `MCP_OIDC_SUBJECT_CLAIM` ausdrücklich — eine Angabe schlägt den Vorgabewert immer.
+
+`sub` ist bei Entra dagegen **paarweise pseudonymisiert**: derselbe Benutzer hat in einer anderen App-Registrierung einen anderen `sub`, und der Wert steht **nirgends im Portal**. Wer `sub` verwendet, muss sich erst anmelden, das ausgestellte Token dekodieren (Abschnitt 8), den Wert ablesen, eintragen und neu starten. Für die Konto-Zuordnung ist `sub` unproblematisch, solange nur diese eine Anwendung genutzt wird — es ist nur umständlicher einzurichten.
+
+`email` ist die schlechteste Wahl: der Wert ist änderbar und steht je nach Konfiguration gar nicht im Token.
 
 ### Zu den Scopes
 
@@ -168,7 +176,9 @@ Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.ac
 | `AADSTS50011` (Redirect-URI-Mismatch) | Redirect-URI weicht ab, bei Claude Code der Port | exakte URI eintragen; Entra ignoriert den Port **nicht** |
 | Connector funktioniert plötzlich nicht mehr | Client-Secret abgelaufen | neues Secret erzeugen und im Connector aktualisieren |
 | Verbindung bricht nach der ersten Token-Laufzeit ab | `offline_access` fehlt, kein Refresh-Token | Schritt 5 nachholen, inklusive Admin-Consent |
-| 401-Schleife, „audience mismatch" | `aud` im ausgestellten Token entspricht nicht `MCP_OIDC_AUDIENCE` (der Server prüft nur diesen einen Wert, siehe Abschnitt 7) | `accessTokenAcceptedVersion: 2` prüfen; `aud` im Token nachsehen (Abschnitt 8) und `MCP_OIDC_AUDIENCE` exakt darauf setzen |
+| 401-Schleife, „audience mismatch" | `aud` im ausgestellten Token entspricht nicht `MCP_ENTRA_CLIENT_ID` (der Server prüft nur diesen einen Wert, siehe Abschnitt 7) | `accessTokenAcceptedVersion: 2` prüfen; `aud` im Token nachsehen (Abschnitt 8). Steht dort `api://<CLIENT_ID>`, fordert der **Client** den falschen Scope an — im Connector den Scope aus Abschnitt 3 verwenden |
 | Write-Tools erscheinen nicht | App-Rolle nicht zugewiesen oder `MCP_OIDC_CAPABILITY_CLAIM` nicht gesetzt | Abschnitte 3a und 6 prüfen; `roles`-Claim im Token gegenprüfen |
 | Jeder Tenant-Benutzer kommt durch | „Assignment required" steht auf `No` | Schritt 6 nachholen |
+| Start bricht ab: „ist keine Verzeichnis-ID" | in `MCP_ENTRA_TENANT_ID` steht eine Domain oder `common`/`organizations` | die GUID aus der Portal-Übersicht eintragen (Abschnitt 7) |
+| Start bricht ab: „gesetzt sind auch Variablen anderer Anbieter" | neben den `MCP_ENTRA_*`-Werten stehen noch `MCP_AUTHENTIK_*`- oder `MCP_OIDC_ISSUER`-Reste aus einer früheren Konfiguration | entfernen — bei `MCP_OIDC_PROVIDER=entra` werden sie nicht gelesen |
 | Kein DCR möglich | Entra unterstützt weder Dynamic Client Registration noch Client ID Metadata Documents | vorregistrierte Client-ID/Secret im Connector-Dialog eintragen — der vorgesehene Weg |

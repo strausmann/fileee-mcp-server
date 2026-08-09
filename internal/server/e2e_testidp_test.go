@@ -123,8 +123,9 @@ func TestEndToEndAgainstGangwaysTestIssuer(t *testing.T) {
 	// Paket verwendet. config.LoadConfig(os.Getenv) ist exakt der Weg, den
 	// cmd/fileee-mcp-server/main.go's run() nimmt.
 	t.Setenv("MCP_AUTH_MODE", "oidc")
+	t.Setenv("MCP_OIDC_PROVIDER", "generic")
 	t.Setenv("MCP_OIDC_ISSUER", idp.URL())
-	t.Setenv("MCP_OIDC_AUDIENCE", "fileee-mcp-server")
+	t.Setenv("MCP_OIDC_CLIENT_ID", "fileee-mcp-server")
 	t.Setenv("MCP_RESOURCE_URL", resourceURL)
 	t.Setenv("MCP_ALLOWED_SUBJECTS", "e2e-subject")
 	t.Setenv("MCP_LISTEN_ADDR", listenAddr)

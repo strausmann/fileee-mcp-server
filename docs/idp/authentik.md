@@ -1,6 +1,8 @@
 # Authentik als Authorization Server
 
-`fileee-mcp-server` ist ein reiner OAuth-2.1-Resource-Server. Er stellt selbst keine Tokens aus, sondern verweist Clients über [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) auf einen externen Identity Provider und prüft die dort ausgestellten Tokens gegen dessen JWKS. Im Code steckt nichts Authentik-Spezifisches — diese Anleitung ist eine von mehreren möglichen Umsetzungen. Für Microsoft Entra ID siehe [`entra-id.md`](entra-id.md).
+`fileee-mcp-server` ist ein reiner OAuth-2.1-Resource-Server. Er stellt selbst keine Tokens aus, sondern verweist Clients über [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) auf einen externen Identity Provider und prüft die dort ausgestellten Tokens gegen dessen JWKS. Für Microsoft Entra ID siehe [`entra-id.md`](entra-id.md), für jeden anderen standardkonformen Anbieter [`generic.md`](generic.md).
+
+Authentik hat im Server einen eigenen Konfigurations-Zweig (`MCP_OIDC_PROVIDER=authentik`): Er baut die Aussteller-URL aus Host und Anwendungs-Kürzel, damit du sie nicht selbst zusammensetzen musst. Die **Token-Prüfung** ist davon unberührt und für alle Anbieter dieselbe — anbieterspezifisch ist nur die Konfigurations-Oberfläche (siehe [ADR-0016](../adr/0016-anbieter-namensraeume-statt-roher-oidc-parameter.md)).
 
 Die Angaben unten sind gegen **Authentik 2026.2** verifiziert, teils über die API, teils am Quelltext der Version.
 
@@ -69,8 +71,11 @@ Authentik trennt Provider und Application: Ein Provider ohne verknüpfte Applica
 |---|---|
 | Discovery | `https://<IDP_HOST>/application/o/<APP_SLUG>/.well-known/openid-configuration` |
 | JWKS | `https://<IDP_HOST>/application/o/<APP_SLUG>/jwks/` |
-| `MCP_OIDC_ISSUER` | der `issuer`-Wert aus dem Discovery-Dokument |
-| `MCP_OIDC_AUDIENCE` | die Client-ID des Providers |
+| `MCP_AUTHENTIK_BASE_URL` | `https://<IDP_HOST>` — nur Schema und Host, ohne Pfad |
+| `MCP_AUTHENTIK_APP_SLUG` | `<APP_SLUG>` — das Kürzel aus der Anwendungs-URL |
+| `MCP_AUTHENTIK_CLIENT_ID` | die Client-ID des Providers |
+
+Die Aussteller-URL trägst du **nicht** selbst ein — der Server baut sie aus Host und Kürzel zu `https://<IDP_HOST>/application/o/<APP_SLUG>/` zusammen.
 
 ## 4. Audience-Verhalten
 
@@ -82,7 +87,7 @@ Authentik trennt Provider und Application: Ein Provider ohne verknüpfte Applica
 | Wie reagiert Authentik auf `resource` ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707))? | Es **ignoriert** den Parameter — weder Verarbeitung noch Fehler. Ein bewusst ungültiger Wert wie `resource=not-a-uri` müsste nach RFC 8707 §2 zu `invalid_target` führen; Authentik antwortet stattdessen mit dem normalen Redirect. In `views/token.py` und `views/authorize.py` kommen `resource` und `audience` nicht vor. |
 | Ändert sich das absehbar? | Nein. Im noch nicht veröffentlichten `main`-Branch taucht der Parameter erstmals auf — und zwar als ausdrückliche **Ablehnung** mit `invalid_target` im RFC-8693-Token-Exchange. |
 
-**Konsequenz:** Der MCP-Server funktioniert ohne weitere Maßnahme, weil er `MCP_OIDC_AUDIENCE` als gültige Audience akzeptiert. Eine Resource-Bindung im Sinne von RFC 8707 gibt es damit aber nicht.
+**Konsequenz:** Der MCP-Server funktioniert ohne weitere Maßnahme, weil er `MCP_AUTHENTIK_CLIENT_ID` als gültige Audience akzeptiert. Eine Resource-Bindung im Sinne von RFC 8707 gibt es damit aber nicht.
 
 ### Resource-Bindung nachrüsten (empfohlen)
 
@@ -104,8 +109,10 @@ Das Mapping anschließend im Provider unter *Scopes* auswählen. Beide Werte in 
 
 ```dotenv
 MCP_AUTH_MODE=oidc
-MCP_OIDC_ISSUER=https://<IDP_HOST>/application/o/<APP_SLUG>/
-MCP_OIDC_AUDIENCE=<CLIENT_ID>
+MCP_OIDC_PROVIDER=authentik
+MCP_AUTHENTIK_BASE_URL=https://<IDP_HOST>
+MCP_AUTHENTIK_APP_SLUG=<APP_SLUG>
+MCP_AUTHENTIK_CLIENT_ID=<CLIENT_ID>
 MCP_OIDC_SUBJECT_CLAIM=sub
 MCP_RESOURCE_URL=<MCP_URL>
 MCP_ALLOWED_SUBJECTS=<sub-Wert des berechtigten Benutzers>
