@@ -1058,7 +1058,7 @@ func TestReachableCapabilitySetsShrinksWithTheCeiling(t *testing.T) {
 func TestEveryReachableCapabilitySetHasAnInstance(t *testing.T) {
 	global := mustCaps(t, "read,write,share,destructive")
 	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
-	instances := buildInstances(pool, global)
+	instances := buildInstances(pool, global, testUnlimitedLimiter())
 
 	for _, s := range reachableCapabilitySets(global) {
 		if instances[s] == nil {
@@ -1076,7 +1076,7 @@ func TestEveryReachableCapabilitySetHasAnInstance(t *testing.T) {
 func TestBuildInstancesRegistersReadToolsOnlyWhenCapRead(t *testing.T) {
 	global := mustCaps(t, "read,share")
 	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
-	instances := buildInstances(pool, global)
+	instances := buildInstances(pool, global, testUnlimitedLimiter())
 
 	cases := []struct {
 		name     string
