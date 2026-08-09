@@ -68,7 +68,7 @@ Commit-Messages folgen [Conventional Commits](https://www.conventionalcommits.or
   | `docs`, `test`, `chore`, `ci` | kein Release |
   | Footer `BREAKING CHANGE:` | Major-Release, unabhängig vom Typ |
 - **Subject in Kleinbuchstaben** (`subject-case`-Regel) — kein großgeschriebener Satzanfang.
-- **Scope** aus der festen Liste in `.commitlintrc.json` (`server`, `config`, `secrets`, `auth`, `accounts`, `tools`, `capabilities`, `deploy`, `adr`, `ci`, `deps`, `docs`, `release`) — kein neuer Scope ohne Anpassung der Datei.
+- **Scope** aus der festen Liste in `.commitlintrc.json` (`server`, `config`, `secrets`, `auth`, `accounts`, `clientpool`, `tools`, `capabilities`, `deploy`, `adr`, `ci`, `deps`, `docs`, `release`) — kein neuer Scope ohne Anpassung der Datei, auch nicht einer, der zum Verzeichnis passt (z. B. `betrieb` für `docs/betrieb/`): die Liste ist abschließend, nicht frei aus dem Pfad ableitbar.
 - **Issue-Referenz:** `Refs #N` oder `Closes #N` in Commit oder PR-Beschreibung.
 
 Der `commit-msg`-Hook läuft nach `npm install` (Husky via `"prepare": "husky"`). **Nie `git commit --no-verify` verwenden.**
