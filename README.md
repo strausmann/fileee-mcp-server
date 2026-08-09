@@ -4,7 +4,7 @@
 
 Ein **inoffizieller** MCP-Server für [Fileee](https://www.fileee.com), der die eigenen Dokumente für AI-Clients zugänglich macht — als lokaler Server über einen statischen Token oder als **Remote-Connector mit OAuth-Anmeldung**, etwa in der Claude.ai-Web-UI.
 
-> **Status:** Gerüst. Konfiguration, Auth, Konto-Auflösung und Tools entstehen in den folgenden Umsetzungsschritten. Dieses README beschreibt das Zielbild und wird schrittweise konkretisiert.
+> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto und die ersten lesenden Werkzeuge sind eingerichtet. Weitere Werkzeuge und Capability-Gruppen (`write`, `share`, `destructive`) entstehen in den folgenden Umsetzungsschritten.
 
 Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/strausmann/go-fileee) und ist damit Geschwisterprojekt von [`strausmann/fileee-server`](https://github.com/strausmann/fileee-server) (REST-API für n8n/CI). Der Unterschied: `fileee-server` kennt genau ein Fileee-Konto und ein statisches Token; dieser Server bindet die **Identität des anfragenden Benutzers** an ein Fileee-Konto.
 
