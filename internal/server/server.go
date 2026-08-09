@@ -119,6 +119,23 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		HeaderMode:      cfg.ClientIPHeaderMode,
 		TrustedProxies:  cfg.TrustedProxies,
 		AllowedPrefixes: cfg.AllowedOriginPrefixes,
+		// RequiredScopes (gangway >= v0.4.0) ist die einzige Stelle, die
+		// cfg.OIDCRequiredScopes VOR einem Token-Austausch ankuendigt --
+		// als "scope"-Parameter der WWW-Authenticate-Challenge (RFC 6750
+		// §3) und als scopes_supported im RFC-9728-Metadatendokument
+		// (siehe gangway/serve, Server.challenge und Handler). Ohne diese
+		// Zeile kennt scopesSatisfied (scopes.go) zwar den geforderten
+		// Scope und weist einen Aufrufer OHNE ihn ab -- ein Connector ohne
+		// vorhandenes Token (etwa claude.ai beim allerersten
+		// Verbindungsaufbau) erfaehrt den Scope aber gar nicht erst und
+		// fordert beim IdP einen falschen Standard-Scope an (z. B. "openid
+		// profile offline_access"). Bei Entra scheitert der
+		// Token-Austausch dann mit AADSTS9010010 ("resource parameter
+		// provided in the request doesn't match with the requested
+		// scopes"), bevor dieser Server je erreicht wird -- ausserhalb
+		// jeder Kontrolle von scopesSatisfied, das nur ein bereits
+		// ausgestelltes Token prueft.
+		RequiredScopes: cfg.OIDCRequiredScopes,
 	}
 
 	gw, err := serve.New(ctx, gwCfg, serve.WithToolKinds(tools.ReadToolKinds()))
