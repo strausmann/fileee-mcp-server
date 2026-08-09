@@ -760,3 +760,98 @@ func TestLoadConfigProviderSelection(t *testing.T) {
 		}
 	})
 }
+
+// Authentik laesst sich unter einem Unterpfad betreiben. Die Aussteller-URL
+// muss diesen Pfad behalten, sonst zeigt sie ins Leere.
+func TestLoadConfigAuthentikUnterpfad(t *testing.T) {
+	t.Parallel()
+
+	e := minimalAuthentik()
+	e["MCP_AUTHENTIK_BASE_URL"] = "https://host.example.com/authentik"
+
+	cfg, err := LoadConfig(envOf(e))
+	if err != nil {
+		t.Fatalf("unerwarteter Fehler: %v", err)
+	}
+	want := "https://host.example.com/authentik/application/o/fileee-mcp/"
+	if cfg.OIDCIssuer != want {
+		t.Errorf("Aussteller = %q, erwartet %q", cfg.OIDCIssuer, want)
+	}
+}
+
+// Im Modus token wertet der Server keine Anbieter-Einstellung aus. Sie still
+// zu ignorieren waere derselbe Fehler, den rejectForeignProviderVariables
+// bereits verhindert: Der Betreiber sucht an einer Stelle, die nicht gelesen
+// wird.
+func TestLoadConfigProviderImTokenModus(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"MCP_OIDC_PROVIDER", "MCP_ENTRA_TENANT_ID", "MCP_AUTHENTIK_APP_SLUG", "MCP_OIDC_ISSUER"} {
+		t.Run(key+" wird abgewiesen", func(t *testing.T) {
+			t.Parallel()
+			e := minimalToken()
+			e[key] = "irgendwas"
+
+			_, err := LoadConfig(envOf(e))
+			if err == nil {
+				t.Fatalf("erwartet: Fehler, weil %s im Modus token nicht gelesen wird", key)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("Meldung nennt %s nicht: %v", key, err)
+			}
+		})
+	}
+
+	t.Run("saubere token-Konfiguration bleibt gueltig", func(t *testing.T) {
+		t.Parallel()
+		if _, err := LoadConfig(envOf(minimalToken())); err != nil {
+			t.Fatalf("unerwarteter Fehler: %v", err)
+		}
+	})
+}
+
+// Der sinnvolle Subject-Claim folgt aus dem Anbieter: Bei Entra ist `sub`
+// paarweise pseudonymisiert und im Portal nirgends ablesbar, `oid` dagegen
+// schon. Wer entra waehlt, soll das nicht zusaetzlich eintragen muessen.
+func TestLoadConfigSubjectClaimDefaultProProvider(t *testing.T) {
+	t.Parallel()
+
+	faelle := []struct {
+		name string
+		env  func() map[string]string
+		want string
+	}{
+		{"entra ohne Angabe nutzt oid", minimalEntra, "oid"},
+		{"authentik ohne Angabe nutzt sub", minimalAuthentik, "sub"},
+		{"generic ohne Angabe nutzt sub", minimalOIDC, "sub"},
+	}
+	for _, f := range faelle {
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+			e := f.env()
+			delete(e, "MCP_OIDC_SUBJECT_CLAIM")
+
+			cfg, err := LoadConfig(envOf(e))
+			if err != nil {
+				t.Fatalf("unerwarteter Fehler: %v", err)
+			}
+			if cfg.OIDCSubjectClaim != f.want {
+				t.Errorf("Subject-Claim = %q, erwartet %q", cfg.OIDCSubjectClaim, f.want)
+			}
+		})
+	}
+
+	t.Run("ausdrueckliche Angabe schlaegt den Vorgabewert", func(t *testing.T) {
+		t.Parallel()
+		e := minimalEntra()
+		e["MCP_OIDC_SUBJECT_CLAIM"] = "sub"
+
+		cfg, err := LoadConfig(envOf(e))
+		if err != nil {
+			t.Fatalf("unerwarteter Fehler: %v", err)
+		}
+		if cfg.OIDCSubjectClaim != "sub" {
+			t.Errorf("Subject-Claim = %q, erwartet sub", cfg.OIDCSubjectClaim)
+		}
+	})
+}

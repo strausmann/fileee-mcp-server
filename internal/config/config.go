@@ -214,7 +214,9 @@ func LoadConfig(env Env) (*Config, error) {
 	cfg := &Config{
 		AuthMode:            AuthMode(orDefault(env("MCP_AUTH_MODE"), string(AuthToken))),
 		OIDCProvider:        OIDCProvider(strings.TrimSpace(env("MCP_OIDC_PROVIDER"))),
-		OIDCSubjectClaim:    orDefault(env("MCP_OIDC_SUBJECT_CLAIM"), "sub"),
+		// Der Vorgabewert haengt vom Anbieter ab und wird deshalb erst in
+		// resolveProvider gesetzt — hier steht nur die ausdrueckliche Angabe.
+		OIDCSubjectClaim:    strings.TrimSpace(env("MCP_OIDC_SUBJECT_CLAIM")),
 		OIDCCapabilityClaim: strings.TrimSpace(env("MCP_OIDC_CAPABILITY_CLAIM")),
 		OIDCRequiredScopes:  splitListe(env("MCP_OIDC_REQUIRED_SCOPES")),
 		ResourceURL:         strings.TrimSpace(env("MCP_RESOURCE_URL")),
@@ -378,6 +380,15 @@ func resolveProvider(cfg *Config, env Env) error {
 		return err
 	}
 
+	// Der sinnvolle Subject-Claim folgt aus dem Anbieter, deshalb setzt ihn der
+	// Anbieter — nicht der Betreiber. Bei Entra ist `sub` paarweise
+	// pseudonymisiert und im Portal nirgends ablesbar; ablesbar (und
+	// mandantenweit stabil) ist `oid`. Eine ausdrueckliche Angabe schlaegt den
+	// Vorgabewert immer.
+	if cfg.OIDCSubjectClaim == "" {
+		cfg.OIDCSubjectClaim = defaultSubjectClaim(cfg.OIDCProvider)
+	}
+
 	switch cfg.OIDCProvider {
 	case ProviderEntra:
 		return resolveEntra(cfg, env)
@@ -386,6 +397,15 @@ func resolveProvider(cfg *Config, env Env) error {
 	default:
 		return resolveGeneric(cfg, env)
 	}
+}
+
+// defaultSubjectClaim liefert den Claim, der beim jeweiligen Anbieter die
+// brauchbare Identitaet traegt.
+func defaultSubjectClaim(provider OIDCProvider) string {
+	if provider == ProviderEntra {
+		return "oid"
+	}
+	return "sub"
 }
 
 // rejectForeignProviderVariables bricht ab, wenn Variablen eines anderen
@@ -411,6 +431,30 @@ func rejectForeignProviderVariables(active OIDCProvider, env Env) error {
 	return fmt.Errorf("MCP_OIDC_PROVIDER = %q, aber gesetzt sind auch Variablen anderer "+
 		"Anbieter: %s — diese werden nicht gelesen. Entweder entfernen oder den "+
 		"passenden Anbieter waehlen", active, strings.Join(stray, ", "))
+}
+
+// rejectOIDCVariables bricht ab, wenn im reinen token-Modus Anbieter-Variablen
+// gesetzt sind — das Gegenstueck zu rejectForeignProviderVariables, eine Ebene
+// hoeher.
+func rejectOIDCVariables(mode AuthMode, env Env) error {
+	names := []string{"MCP_OIDC_PROVIDER"}
+	for _, group := range providerVariables {
+		names = append(names, group...)
+	}
+
+	var set []string
+	for _, name := range names {
+		if strings.TrimSpace(env(name)) != "" {
+			set = append(set, name)
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	sort.Strings(set)
+	return fmt.Errorf("MCP_AUTH_MODE=%q wertet keine Anbieter-Einstellung aus, gesetzt sind "+
+		"aber: %s — diese werden nicht gelesen. Entweder entfernen oder MCP_AUTH_MODE auf "+
+		"%q bzw. %q setzen", mode, strings.Join(set, ", "), AuthOIDC, AuthBoth)
 }
 
 // resolveEntra baut die Aussteller-URL aus der Verzeichnis-ID.
@@ -461,10 +505,14 @@ func resolveAuthentik(cfg *Config, env Env) error {
 		return fmt.Errorf("MCP_AUTHENTIK_BASE_URL ist bei MCP_OIDC_PROVIDER=%q Pflicht — die "+
 			"Adresse der Authentik-Instanz, z. B. https://auth.example.com", ProviderAuthentik)
 	}
+	// Ein Pfad ist ausdruecklich erlaubt: Authentik laesst sich unter einem
+	// Unterpfad betreiben (https://host/authentik), und der muss in der
+	// Aussteller-URL erhalten bleiben.
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		return fmt.Errorf("MCP_AUTHENTIK_BASE_URL = %q ist keine https-Adresse — erwartet wird "+
-			"Schema und Host ohne Pfad, z. B. https://auth.example.com", baseURL)
+			"mindestens Schema und Host, z. B. https://auth.example.com. Laeuft Authentik unter "+
+			"einem Unterpfad, gehoert dieser dazu: https://auth.example.com/authentik", baseURL)
 	}
 	if slug == "" {
 		return fmt.Errorf("MCP_AUTHENTIK_APP_SLUG ist bei MCP_OIDC_PROVIDER=%q Pflicht — das "+
@@ -546,6 +594,20 @@ func ladeAuth(cfg *Config, env Env) error {
 		if len(cfg.AllowedOriginPrefixes) == 0 {
 			return fmt.Errorf("FILEEE_ALLOWED_ORIGIN_PREFIXES ist im Modus %q Pflicht — ohne "+
 				"Adress-Freigabeliste verweigert Gangway den Start (ADR-0015)", cfg.AuthMode)
+		}
+	}
+	if !brauchtOIDC {
+		// Im reinen token-Modus wird keine Anbieter-Einstellung gelesen. Sie
+		// still zu ignorieren waere derselbe Fehler, den
+		// rejectForeignProviderVariables verhindert: Der Betreiber sucht an
+		// einer Stelle, die gar nicht ausgewertet wird.
+		if err := rejectOIDCVariables(cfg.AuthMode, env); err != nil {
+			return err
+		}
+		// Ohne Anbieter-Zweig kommt hier niemand vorbei, der den Vorgabewert
+		// setzt — ein leeres Feld waere eine stille Falle fuer spaetere Leser.
+		if cfg.OIDCSubjectClaim == "" {
+			cfg.OIDCSubjectClaim = defaultSubjectClaim(cfg.OIDCProvider)
 		}
 	}
 	if brauchtToken && cfg.APIToken == "" {

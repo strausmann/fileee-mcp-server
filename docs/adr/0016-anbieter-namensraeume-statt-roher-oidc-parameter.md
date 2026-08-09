@@ -40,9 +40,11 @@ Dazu kam die Gefahr des Vermischens: Solange alle Anbieter dieselben Variablen b
 
 4. **Die Aussteller-URL wird abgeleitet, nicht eingetragen** — bei `entra` aus der Verzeichnis-ID, bei `authentik` aus Host und Kürzel. Nur `generic` nimmt sie direkt entgegen, weil es dort nichts abzuleiten gibt.
 
-5. **Anbieterfremde Variablen sind ein Startfehler**, kein stilles Ignorieren. Wer bei `MCP_OIDC_PROVIDER=entra` noch `MCP_AUTHENTIK_APP_SLUG` gesetzt hat, bekommt eine Meldung mit dem Namen der überflüssigen Variablen. Ohne diese Prüfung sucht ein Betreiber den Fehler an einer Einstellung, die gar nicht gelesen wird.
+5. **Was aus der Anbieterwahl folgt, setzt der Anbieter — nicht der Betreiber.** Neben der Aussteller-URL gilt das auch für den Subject-Claim: `entra` verwendet `oid`, alle anderen `sub`. Grund ist derselbe wie beim Aussteller — bei Entra ist `sub` paarweise pseudonymisiert und im Portal nirgends ablesbar, die Objekt-ID dagegen schon. Eine ausdrückliche Angabe schlägt den Vorgabewert immer.
 
-6. **`MCP_ENTRA_TENANT_ID` akzeptiert nur die GUID.** Domain, `common` und `organizations` werden beim Start abgewiesen, mit Begründung im Fehlertext. Belegt am 09.08.2026 gegen die echten Discovery-Dokumente.
+6. **Anbieterfremde Variablen sind ein Startfehler**, kein stilles Ignorieren. Wer bei `MCP_OIDC_PROVIDER=entra` noch `MCP_AUTHENTIK_APP_SLUG` gesetzt hat, bekommt eine Meldung mit dem Namen der überflüssigen Variablen. Dasselbe gilt eine Ebene höher: Im reinen `token`-Modus wird gar keine Anbieter-Einstellung gelesen — sind dort welche gesetzt, bricht der Start ebenfalls ab. Ohne diese Prüfungen sucht ein Betreiber den Fehler an einer Einstellung, die nie ausgewertet wird.
+
+7. **`MCP_ENTRA_TENANT_ID` akzeptiert nur die GUID.** Domain, `common` und `organizations` werden beim Start abgewiesen, mit Begründung im Fehlertext. Belegt am 09.08.2026 gegen die echten Discovery-Dokumente.
 
 **Was von ADR-0010 unberührt bleibt:** die drei orthogonalen Achsen, die konfigurierbaren Claims, eine Anleitung je IdP, der `token`-Modus als vollwertige Betriebsart. Und der Kern von Punkt 2 gilt weiter — die **Token-Prüfung** ist anbieterneutral.
 

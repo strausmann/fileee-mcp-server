@@ -127,7 +127,6 @@ MCP_AUTH_MODE=oidc
 MCP_OIDC_PROVIDER=entra
 MCP_ENTRA_TENANT_ID=<TENANT_ID>
 MCP_ENTRA_CLIENT_ID=<CLIENT_ID>
-MCP_OIDC_SUBJECT_CLAIM=oid
 MCP_OIDC_REQUIRED_SCOPES=mcp.access
 MCP_RESOURCE_URL=<MCP_URL>
 MCP_ALLOWED_SUBJECTS=<OBJECT_ID des berechtigten Benutzers>
@@ -139,7 +138,9 @@ MCP_ALLOWED_SUBJECTS=<OBJECT_ID des berechtigten Benutzers>
 
 ### Zum Subject-Claim
 
-Die Beispiel-Konfiguration oben setzt `oid` — aus einem praktischen Grund: Die **Objekt-ID steht im Portal** (Microsoft Entra ID → Benutzer → der Benutzer → Objekt-ID) und lässt sich damit vorab eintragen.
+**Du musst hier nichts eintragen.** Bei `MCP_OIDC_PROVIDER=entra` verwendet der Server automatisch `oid` — aus einem praktischen Grund: Die **Objekt-ID steht im Portal** (Microsoft Entra ID → Benutzer → der Benutzer → Objekt-ID) und lässt sich damit vorab in `MCP_ALLOWED_SUBJECTS` eintragen.
+
+Wer es dennoch anders will, setzt `MCP_OIDC_SUBJECT_CLAIM` ausdrücklich — eine Angabe schlägt den Vorgabewert immer.
 
 `sub` ist bei Entra dagegen **paarweise pseudonymisiert**: derselbe Benutzer hat in einer anderen App-Registrierung einen anderen `sub`, und der Wert steht **nirgends im Portal**. Wer `sub` verwendet, muss sich erst anmelden, das ausgestellte Token dekodieren (Abschnitt 8), den Wert ablesen, eintragen und neu starten. Für die Konto-Zuordnung ist `sub` unproblematisch, solange nur diese eine Anwendung genutzt wird — es ist nur umständlicher einzurichten.
 
