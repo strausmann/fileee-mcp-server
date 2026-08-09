@@ -90,8 +90,9 @@ func TestRunFailsWhenServerCannotBeBuilt(t *testing.T) {
 
 	env := map[string]string{
 		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
 		"MCP_OIDC_ISSUER":                "http://127.0.0.1:1", // sofort verweigert, siehe server_test.go
-		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_OIDC_CLIENT_ID":             "fileee-mcp-server",
 		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
 		"MCP_ALLOWED_SUBJECTS":           "abc123",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
