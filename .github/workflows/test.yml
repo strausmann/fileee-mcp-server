@@ -47,7 +47,8 @@ jobs:
           #   Auth-/Permission-Code ......... 90   auth_oidc.go, auth_token.go,
           #                                        internal/accounts/accounts.go,
           #                                        internal/config/capabilities.go,
-          #                                        internal/config/config.go
+          #                                        internal/config/config.go,
+          #                                        internal/server/scopes.go
           #   Mutations-Logik ............... 85   internal/clientpool/pool.go,
           #                                        tools_destructive.go,
           #                                        alle mutierenden Tool-Pfade
@@ -68,6 +69,7 @@ jobs:
             internal/config/config.go:90 \
             internal/config/capabilities.go:90 \
             internal/config/version.go:90 \
+            internal/server/scopes.go:90 \
             internal/server/server.go:80 \
             internal/clientpool/pool.go:85 \
             internal/tools/read.go:80 \
