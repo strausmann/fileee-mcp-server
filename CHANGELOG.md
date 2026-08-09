@@ -1,3 +1,9 @@
+## [0.4.1](https://github.com/strausmann/fileee-mcp-server/compare/v0.4.0...v0.4.1) (2026-08-09)
+
+### Bug Fixes
+
+* **server:** verlangte scopes an gangway durchreichen ([#40](https://github.com/strausmann/fileee-mcp-server/issues/40)) ([a35123e](https://github.com/strausmann/fileee-mcp-server/commit/a35123ecaf6d3aba8eeb09a7703485726979a4f7))
+
 ## [0.4.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.3.0...v0.4.0) (2026-08-09)
 
 ### Features
