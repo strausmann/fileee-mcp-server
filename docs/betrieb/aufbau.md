@@ -112,6 +112,55 @@ kein `on: push`). Das Ausrollen auf dem Ziel-Knoten selbst ist nicht
 Gegenstand dieser Seite — siehe das GitOps-Repo
 `infrastructure/docker/fileee-mcp-server` auf `git.strausmann.de`.
 
+## Geheimnis-Zustellung
+
+Der Server holt seine Geheimnisse nicht selbst aus Infisical (kein
+eingebautes Backend, siehe oben) — das übernimmt der Einstiegspunkt
+`infisical run -- /usr/local/bin/fileee-mcp-server`. Das Werkzeug braucht
+dafür eine eigene Maschinen-Identität mit **möglichst wenig** Rechten.
+
+### Zwei Identitäten, nicht eine
+
+Es gibt zwei Container-Instanzen dieses Dienstes — eine hinter Authentik
+(`fileee-mcp.strausmann.cloud`), eine hinter Entra ID
+(`fileee-mcp-entra.strausmann.cloud`). Jede bekommt eine **eigene**
+Maschinen-Identität in Infisical:
+
+| Identität | Ordner | Umgebung | Rechte |
+|---|---|---|---|
+| `fileee-mcp-server-authentik` | `/authentik` | `dev` | nur lesend |
+| `fileee-mcp-server-entra-id` | `/entra-id` | `dev` | nur lesend |
+
+Beide Identitäten leben im Infisical-Projekt `fileee-mcp-server`
+(`e626aa2a-c8e5-4cd5-8b81-b90c979edf30`). Eine gemeinsame Identität für
+beide Ordner würde die Trennung der Ordner zur reinen Zierde machen — ein
+kompromittierter Authentik-Container könnte dann auch die
+Entra-ID-Geheimnisse mitlesen. Deshalb zwei Identitäten statt einer.
+
+Geplant ist für jede Identität:
+
+- keine Rechte auf Organisationsebene,
+- Projekt-Mitgliedschaft ohne eigene Rechte,
+- die eigentlichen Rechte ausschließlich über ein auf den jeweiligen
+  Ordner und die Umgebung `dev` eingeschränktes Zusatzprivileg — nur
+  lesend, keine Schreib- oder Löschrechte.
+
+### Startgeheimnisse
+
+Jede Identität authentifiziert sich über Universal-Auth
+(Client-ID + Client-Secret). Diese beiden Werte sind die
+„Startgeheimnisse", die der Container braucht, um überhaupt bei Infisical
+anzuklopfen. Geplanter Ablageort:
+
+- als **Dockhand-Stack-Geheimnisse** beim Ziel-Stack
+  (`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`,
+  `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`), nicht im GitOps-Repo,
+- zusätzlich je Identität ein Vaultwarden-Eintrag, damit die
+  Startgeheimnisse nicht ausschließlich in Dockhand existieren.
+
+*(Dieser Abschnitt ist vor der tatsächlichen Anlage der Identitäten
+geschrieben und wird danach anhand des Ist-Zustands korrigiert.)*
+
 ## Manueller Nachbau (Backfill)
 
 Für den Fall, dass ein bereits getaggter Stand nachträglich gebaut werden
