@@ -93,18 +93,36 @@ type Config struct {
 
 	// MaxDownloadBytes und MaxUploadBytes sind fuer kuenftige Download-/
 	// Upload-Werkzeuge vorgesehen (Capability-Gruppen read/write, siehe
-	// README "Funktionsumfang festlegen") — heute registriert dieser Server
-	// nur lesende Werkzeuge ohne Binaertransfer (list_documents,
-	// search_documents), die beiden Werte haben also noch nichts zu
-	// begrenzen. MaxRequestBodyBytes ist davon abgeleitet (ladeZahlenwerte)
-	// und WUERDE den 4-MiB-Default des MCP-SDK ueberschreiben, sobald ein
-	// Aufrufer sie liest — aber Gangway v0.2.0 baut den Streamable-HTTP-
-	// Handler intern (serve.AttachMCP/AttachMCPSelector) mit einem fest
-	// verdrahteten &mcp.StreamableHTTPOptions{Stateless: true} und bietet
-	// keinen Weg, dessen MaxRequestBodyBytes-Feld zu setzen — ein zweiter,
-	// unabhaengiger Grund, warum diese drei Felder heute nicht durchgesetzt
-	// werden koennen, nicht nur der fehlende Werkzeug-Bedarf. Kandidat fuer
-	// eine Gangway-Erweiterung (siehe Nachtrag zu ADR-0015).
+	// README "Funktionsumfang festlegen"). Die Bibliotheksfaehigkeit dafuer
+	// EXISTIERT bereits in go-fileee — DocumentService.Upload(ctx, r
+	// io.Reader, meta UploadMetadata), DocumentService.DownloadPDF(ctx, id,
+	// mode) io.ReadCloser, DocumentService.DownloadPageImage(...)
+	// io.ReadCloser, dazu die Freigabe-seitigen Gegenstuecke
+	// ShareClient.DownloadSharedPDF/DownloadSharedPage/DownloadPageImage —
+	// ein fruehere Fassung dieses Kommentars behauptete faelschlich das
+	// Gegenteil. Was fehlt, ist ausschliesslich die AUFRUFSTELLE: dieser
+	// Server registriert heute keinerlei Werkzeug, das eine dieser
+	// Methoden je aufruft (nur list_documents/search_documents, beide rein
+	// lesend ueber Documents.Query/Search, kein Binaertransfer) — deshalb
+	// gibt es fuer diese beiden Werte noch keinen Code, um den sie
+	// herumgelegt werden koennten. Ihr natuerlicher Ort ist absehbar: um
+	// den io.Reader/io.ReadCloser herum, den die jeweilige Methode
+	// entgegennimmt bzw. zurueckliefert (io.LimitReader bzw. ein
+	// limitierender io.ReadCloser-Wrapper) — NICHT die HTTP-Ebene dieses
+	// Servers. Das ist die Aufgabe des kuenftigen Werkzeug-Handlers, nicht
+	// dieser Konfiguration.
+	//
+	// MaxRequestBodyBytes ist davon unabhaengig abgeleitet
+	// (ladeZahlenwerte) und WUERDE den 4-MiB-Default des MCP-SDK
+	// ueberschreiben, sobald ein Aufrufer sie liest — aber Gangway v0.2.0
+	// baut den Streamable-HTTP-Handler intern (serve.AttachMCP/
+	// AttachMCPSelector) mit einem fest verdrahteten
+	// &mcp.StreamableHTTPOptions{Stateless: true} und bietet keinen Weg,
+	// dessen MaxRequestBodyBytes-Feld zu setzen. Dieser dritte Wert bleibt
+	// deshalb aus einem GANZ ANDEREN, unabhaengigen Grund unverdrahtet als
+	// die beiden obigen — nicht wegen einer fehlenden Aufrufstelle,
+	// sondern wegen einer fehlenden Erweiterungsmoeglichkeit in Gangway.
+	// Kandidat fuer eine Gangway-Erweiterung (siehe Nachtrag zu ADR-0015).
 	MaxDownloadBytes    int64
 	MaxUploadBytes      int64
 	MaxRequestBodyBytes int64

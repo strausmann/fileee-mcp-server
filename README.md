@@ -129,7 +129,7 @@ Jeder Aufruf eines Werkzeugs (`tools/call`) muss drei unabhängige Kontingente p
 | `FILEEE_RATE_GLOBAL_RPS` / `FILEEE_RATE_GLOBAL_BURST` | Anfragerate **über alle Anrufer hinweg** — das globale Kontingent, das die README bereits vor dieser Einstellung beschrieb, tatsächlich durchgesetzt | `1` RPS, Burst `3` |
 | `FILEEE_MAX_INFLIGHT` | Obergrenze **gleichzeitig laufender** Werkzeugaufrufe, über alle Anrufer hinweg — schützt die eine, je Fileee-Konto geteilte Verbindung ([`internal/clientpool`](internal/clientpool)) vor Überlastung durch Parallelität, unabhängig von der Rate | `8` |
 
-`FILEEE_MAX_DOWNLOAD_BYTES`, `FILEEE_MAX_UPLOAD_BYTES` und die daraus abgeleitete `MaxRequestBodyBytes` werden geladen, aber **noch nicht durchgesetzt** — es gibt bisher keine Upload-/Download-Werkzeuge, die sie bräuchten, und Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
+`FILEEE_MAX_DOWNLOAD_BYTES` und `FILEEE_MAX_UPLOAD_BYTES` werden geladen, aber **noch nicht durchgesetzt** — nicht weil die Fähigkeit fehlt (`go-fileee`s `DocumentService.Upload`/`DownloadPDF`/`DownloadPageImage` sowie die freigabe-seitigen Gegenstücke in `ShareClient` existieren bereits), sondern weil dieser Server noch kein Werkzeug registriert, das sie aufruft — die Grenze bekommt ihren Platz um den `io.Reader`/`io.ReadCloser` dieser Methoden herum, sobald das erste Upload-/Download-Werkzeug entsteht. Die davon unabhängig abgeleitete `MaxRequestBodyBytes` bleibt aus einem anderen Grund offen: Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
 
 ## Entwicklung
 
