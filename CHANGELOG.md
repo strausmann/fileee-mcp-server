@@ -1,3 +1,14 @@
+## [0.2.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.1.0...v0.2.0) (2026-08-09)
+
+### Features
+
+* **accounts:** Zuordnung von Identität auf Fileee-Konto ([#19](https://github.com/strausmann/fileee-mcp-server/issues/19)) ([dee76a8](https://github.com/strausmann/fileee-mcp-server/commit/dee76a8933755359edde7f3b11414c3b698c7013))
+* **clientpool:** verbindungspool je konto mit vereinzeltem login ([#20](https://github.com/strausmann/fileee-mcp-server/issues/20)) ([11e39b2](https://github.com/strausmann/fileee-mcp-server/commit/11e39b292e57053e520a59c609616cb06183f7cb))
+* **config:** env-matrix und capability-aufloesung mit fail-fast-validierung ([#9](https://github.com/strausmann/fileee-mcp-server/issues/9)) ([9b15519](https://github.com/strausmann/fileee-mcp-server/commit/9b15519fe78a0278615b75ce795f2b1062bf9602))
+* **server:** berechtigungsstufen ueber getrennte werkzeugkataloge eingefuehrt ([#23](https://github.com/strausmann/fileee-mcp-server/issues/23)) ([5de95f8](https://github.com/strausmann/fileee-mcp-server/commit/5de95f81b004989c8fb20e627ccd20afa2762374))
+* **server:** Gangway als Unterbau eingebunden, Server startet und weist ab ([#17](https://github.com/strausmann/fileee-mcp-server/issues/17)) ([f708231](https://github.com/strausmann/fileee-mcp-server/commit/f708231417eccadc17e2d7420597ac2f5fbccbd0))
+* **tools:** erste lesende Werkzeuge, je Anrufer getrennt ([#22](https://github.com/strausmann/fileee-mcp-server/issues/22)) ([1609ee8](https://github.com/strausmann/fileee-mcp-server/commit/1609ee8d6a3d33b64c87168e07b6e9ba0af877bc))
+
 ## [0.1.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.0.0...v0.1.0) (2026-08-07)
 
 ### Features
