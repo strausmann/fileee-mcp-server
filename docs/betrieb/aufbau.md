@@ -123,43 +123,89 @@ dafür eine eigene Maschinen-Identität mit **möglichst wenig** Rechten.
 
 Es gibt zwei Container-Instanzen dieses Dienstes — eine hinter Authentik
 (`fileee-mcp.strausmann.cloud`), eine hinter Entra ID
-(`fileee-mcp-entra.strausmann.cloud`). Jede bekommt eine **eigene**
-Maschinen-Identität in Infisical:
+(`fileee-mcp-entra.strausmann.cloud`). Jede hat eine **eigene**
+Maschinen-Identität in Infisical, angelegt im Projekt `fileee-mcp-server`
+(`e626aa2a-c8e5-4cd5-8b81-b90c979edf30`):
 
-| Identität | Ordner | Umgebung | Rechte |
-|---|---|---|---|
-| `fileee-mcp-server-authentik` | `/authentik` | `dev` | nur lesend |
-| `fileee-mcp-server-entra-id` | `/entra-id` | `dev` | nur lesend |
+| Identität | Infisical-Identity-ID | Ordner | Umgebung | Zusatzprivileg |
+|---|---|---|---|---|
+| `fileee-mcp-server-authentik` | `6ad0a0ea-de78-4e03-abcb-0c21bbf19bbd` | `/authentik` | `dev` | `authentik-dev-readonly` |
+| `fileee-mcp-server-entra-id` | `7a1ad0ad-1bd1-4204-8df5-5b5921dbed05` | `/entra-id` | `dev` | `entra-id-dev-readonly` |
 
-Beide Identitäten leben im Infisical-Projekt `fileee-mcp-server`
-(`e626aa2a-c8e5-4cd5-8b81-b90c979edf30`). Eine gemeinsame Identität für
-beide Ordner würde die Trennung der Ordner zur reinen Zierde machen — ein
-kompromittierter Authentik-Container könnte dann auch die
-Entra-ID-Geheimnisse mitlesen. Deshalb zwei Identitäten statt einer.
+Eine gemeinsame Identität für beide Ordner würde die Trennung der Ordner
+zur reinen Zierde machen — ein kompromittierter Authentik-Container könnte
+dann auch die Entra-ID-Geheimnisse mitlesen. Deshalb zwei Identitäten
+statt einer.
 
-Geplant ist für jede Identität:
+Jede Identität hat:
 
-- keine Rechte auf Organisationsebene,
-- Projekt-Mitgliedschaft ohne eigene Rechte,
-- die eigentlichen Rechte ausschließlich über ein auf den jeweiligen
-  Ordner und die Umgebung `dev` eingeschränktes Zusatzprivileg — nur
-  lesend, keine Schreib- oder Löschrechte.
+- **keine** Rechte auf Organisationsebene (Org-Rolle `no-access`),
+- **keine** eigenen Rechte über die Projekt-Mitgliedschaft
+  (Projekt-Rolle `no-access`),
+- ihre einzigen tatsächlichen Rechte über genau **ein** Zusatzprivileg,
+  beschränkt auf `environment=dev` und den jeweils eigenen Ordner, mit
+  den Aktionen `describeSecret` und `readValue` — lesend, ohne Schreib-
+  oder Löschrecht. (Die ältere Aktion `read` wurde bewusst weggelassen:
+  Infisical lässt sie nicht zusammen mit den beiden granularen
+  Nachfolge-Aktionen zu, siehe Fehlermeldung *„The Read permission is a
+  legacy action which has been replaced by Describe Secret and Read
+  Value"*.)
+
+Geprüft (Gegenprobe über die Rechte-Konfiguration, siehe unten) statt
+über einen echten Anmeldeversuch, weil das erste Zugangsmerkmal beim
+Schreiben dieses Abschnitts noch fehlte (nächster Absatz): Jede Identität
+hat **genau ein** Zusatzprivileg — für den eigenen Ordner. Es existiert
+**kein** Privileg, das den jeweils anderen Ordner nennt, und die
+Basisrolle (Projekt wie Organisation) ist `no-access`, also strukturell
+ohne jede Berechtigung. Da Infisical Rechte ausschließlich additiv über
+explizit vergebene Privilegien gewährt, kann `fileee-mcp-server-authentik`
+dadurch **nicht** auf `/entra-id` lesen, und umgekehrt.
 
 ### Startgeheimnisse
 
 Jede Identität authentifiziert sich über Universal-Auth
 (Client-ID + Client-Secret). Diese beiden Werte sind die
 „Startgeheimnisse", die der Container braucht, um überhaupt bei Infisical
-anzuklopfen. Geplanter Ablageort:
+anzuklopfen.
 
-- als **Dockhand-Stack-Geheimnisse** beim Ziel-Stack
-  (`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`,
-  `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`), nicht im GitOps-Repo,
-- zusätzlich je Identität ein Vaultwarden-Eintrag, damit die
-  Startgeheimnisse nicht ausschließlich in Dockhand existieren.
+Der Universal-Auth-Mechanismus ist bei beiden Identitäten bereits
+angehängt, die Client-ID existiert also schon (unkritisch, kein
+Geheimnis):
 
-*(Dieser Abschnitt ist vor der tatsächlichen Anlage der Identitäten
-geschrieben und wird danach anhand des Ist-Zustands korrigiert.)*
+| Identität | Client-ID |
+|---|---|
+| `fileee-mcp-server-authentik` | `a81e7af5-bc07-4589-858e-93fb9905411e` |
+| `fileee-mcp-server-entra-id` | `7777c8e1-2f23-48d2-ad76-7c979803b82d` |
+
+**Abweichung vom ursprünglichen Plan:** Das eigentliche Client-Secret
+konnte nicht automatisiert erzeugt werden. Die dafür genutzte
+Automations-Identität hat auf Organisationsebene bewusst nur die Rolle
+`member` (Least-Privilege-Entscheidung aus einer früheren Aufgabe) — und
+`member` fehlt laut Infisical-Rechte-Schema ausgerechnet die Aktion
+`identity:create-token`, die zum Erzeugen eines Client-Secrets für eine
+andere Identität nötig ist. Eine kurzzeitige Rechte-Anhebung dieser
+geteilten Identität wurde bewusst **nicht** automatisiert durchgeführt,
+weil sie für die Dauer des Vorgangs alle Prozesse betrifft, die dieselbe
+Identität nutzen — das ist keine Ausführungsdetail-Entscheidung. Details
+und Hintergrund: `.claude/skills/infisical/references/troubleshooting.md`
+im `homelab-management`-Repo, Abschnitt „Org-Rolle `member` kann
+Machine-Identities anlegen …".
+
+Bis zur Klärung liegt je Identität ein vorbereiteter Vaultwarden-Eintrag
+(Organisation `homelab-automation`, Sammlung `Automation/Claude-Team`)
+mit Client-ID und Host bereits ausgefüllt und dem Passwort-Feld auf dem
+Platzhalter `CHANGE_ME`:
+
+- `Infisical Machine Identity - fileee-mcp-server-authentik`
+- `Infisical Machine Identity - fileee-mcp-server-entra-id`
+
+Sobald ein Org-Admin-Zugang das jeweilige Client-Secret im
+Infisical-Web-UI erzeugt (Identities → Name → Universal Auth → Create
+Client Secret), ersetzt dieser Wert den Platzhalter im zugehörigen
+Vaultwarden-Eintrag. Von dort werden beide Werte anschließend als
+**Dockhand-Stack-Geheimnisse** beim jeweiligen Ziel-Stack hinterlegt
+(`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`,
+`INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`) — nicht im GitOps-Repo.
 
 ## Manueller Nachbau (Backfill)
 
