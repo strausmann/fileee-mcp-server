@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,12 +68,24 @@ type Account struct {
 	HasCapabilities bool
 }
 
+// OIDCProvider waehlt den Identity Provider. Jeder Wert hat einen eigenen
+// Variablen-Namensraum — die Anforderungen der Anbieter werden bewusst NICHT
+// vermischt, damit jede Anleitung nur ihre eigenen Variablen nennt.
+type OIDCProvider string
+
+const (
+	ProviderEntra     OIDCProvider = "entra"
+	ProviderAuthentik OIDCProvider = "authentik"
+	ProviderGeneric   OIDCProvider = "generic"
+)
+
 // Config buendelt die gesamte Laufzeitkonfiguration. Sie entsteht ausschliesslich
 // in LoadConfig — keine andere Stelle im Server liest Umgebungsvariablen.
 type Config struct {
 	AuthMode            AuthMode
+	OIDCProvider        OIDCProvider
 	OIDCIssuer          string
-	OIDCAudience        string
+	OIDCClientID        string
 	OIDCSubjectClaim    string
 	OIDCCapabilityClaim string
 	OIDCRequiredScopes  []string
@@ -193,8 +206,7 @@ func (c *Config) AccountBySubject(subject string) (string, bool) {
 func LoadConfig(env Env) (*Config, error) {
 	cfg := &Config{
 		AuthMode:            AuthMode(orDefault(env("MCP_AUTH_MODE"), string(AuthToken))),
-		OIDCIssuer:          strings.TrimSpace(env("MCP_OIDC_ISSUER")),
-		OIDCAudience:        strings.TrimSpace(env("MCP_OIDC_AUDIENCE")),
+		OIDCProvider:        OIDCProvider(strings.TrimSpace(env("MCP_OIDC_PROVIDER"))),
 		OIDCSubjectClaim:    orDefault(env("MCP_OIDC_SUBJECT_CLAIM"), "sub"),
 		OIDCCapabilityClaim: strings.TrimSpace(env("MCP_OIDC_CAPABILITY_CLAIM")),
 		OIDCRequiredScopes:  splitListe(env("MCP_OIDC_REQUIRED_SCOPES")),
@@ -242,7 +254,7 @@ func LoadConfig(env Env) (*Config, error) {
 	if err := ladeNetzwerk(cfg, env); err != nil {
 		return nil, err
 	}
-	if err := ladeAuth(cfg); err != nil {
+	if err := ladeAuth(cfg, env); err != nil {
 		return nil, err
 	}
 	if err := ladeKonten(cfg, env); err != nil {
@@ -329,21 +341,178 @@ func ladeZahlenwerte(cfg *Config, env Env) error {
 	return nil
 }
 
-func ladeAuth(cfg *Config) error {
+// guidPattern beschreibt die Mandanten-Kennung, wie Entra sie in der
+// Portal-Uebersicht als „Verzeichnis-ID (Mandant)" anzeigt.
+var guidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// providerVariables listet je Anbieter die Variablen, die ausschliesslich ihm
+// gehoeren. Daraus entstehen sowohl die Pflichtpruefung als auch die Meldung,
+// wenn jemand Variablen zweier Anbieter mischt.
+var providerVariables = map[OIDCProvider][]string{
+	ProviderEntra:     {"MCP_ENTRA_TENANT_ID", "MCP_ENTRA_CLIENT_ID"},
+	ProviderAuthentik: {"MCP_AUTHENTIK_BASE_URL", "MCP_AUTHENTIK_APP_SLUG", "MCP_AUTHENTIK_CLIENT_ID"},
+	ProviderGeneric:   {"MCP_OIDC_ISSUER", "MCP_OIDC_CLIENT_ID"},
+}
+
+// resolveProvider fuellt OIDCIssuer und OIDCClientID aus den Variablen des
+// gewaehlten Anbieters. Jeder Anbieter hat einen eigenen Variablen-Namensraum:
+// Ein Betreiber, der die Entra-Anleitung liest, begegnet nie einer
+// Authentik-Variablen und umgekehrt.
+func resolveProvider(cfg *Config, env Env) error {
+	if cfg.OIDCProvider == "" {
+		return fmt.Errorf("MCP_OIDC_PROVIDER ist im Modus %q Pflicht — erlaubt sind %q, %q, %q",
+			cfg.AuthMode, ProviderEntra, ProviderAuthentik, ProviderGeneric)
+	}
+	if _, ok := providerVariables[cfg.OIDCProvider]; !ok {
+		return fmt.Errorf("MCP_OIDC_PROVIDER = %q — erlaubt sind %q, %q, %q",
+			cfg.OIDCProvider, ProviderEntra, ProviderAuthentik, ProviderGeneric)
+	}
+	if err := rejectForeignProviderVariables(cfg.OIDCProvider, env); err != nil {
+		return err
+	}
+
+	switch cfg.OIDCProvider {
+	case ProviderEntra:
+		return resolveEntra(cfg, env)
+	case ProviderAuthentik:
+		return resolveAuthentik(cfg, env)
+	default:
+		return resolveGeneric(cfg, env)
+	}
+}
+
+// rejectForeignProviderVariables bricht ab, wenn Variablen eines anderen
+// Anbieters gesetzt sind. Ohne diese Pruefung wuerden sie stillschweigend
+// ignoriert — der Betreiber sucht dann den Fehler an einer Einstellung, die
+// gar nicht gelesen wird.
+func rejectForeignProviderVariables(active OIDCProvider, env Env) error {
+	var stray []string
+	for provider, names := range providerVariables {
+		if provider == active {
+			continue
+		}
+		for _, name := range names {
+			if strings.TrimSpace(env(name)) != "" {
+				stray = append(stray, name)
+			}
+		}
+	}
+	if len(stray) == 0 {
+		return nil
+	}
+	sort.Strings(stray)
+	return fmt.Errorf("MCP_OIDC_PROVIDER = %q, aber gesetzt sind auch Variablen anderer "+
+		"Anbieter: %s — diese werden nicht gelesen. Entweder entfernen oder den "+
+		"passenden Anbieter waehlen", active, strings.Join(stray, ", "))
+}
+
+// resolveEntra baut die Aussteller-URL aus der Verzeichnis-ID.
+//
+// Warum nur eine GUID zulaessig ist: Der Aussteller im ausgestellten Token
+// traegt immer die Verzeichnis-GUID. Eine verifizierte Domain liefert im
+// Discovery-Dokument zwar eine Antwort, der darin genannte Aussteller ist aber
+// wieder die GUID — die aus der Domain gebaute URL passt also nie zum Token.
+// `common`/`organizations` liefern als Aussteller die Vorlage „{tenantid}", die
+// sich gegen kein Token pruefen laesst. Beides scheitert sonst erst zur Laufzeit
+// als 401-Schleife, die im Client nur als „Authorization failed" ankommt (am
+// 09.08.2026 gegen die echten Discovery-Dokumente nachgemessen).
+func resolveEntra(cfg *Config, env Env) error {
+	tenant := strings.TrimSpace(env("MCP_ENTRA_TENANT_ID"))
+	clientID := strings.TrimSpace(env("MCP_ENTRA_CLIENT_ID"))
+
+	if tenant == "" {
+		return fmt.Errorf("MCP_ENTRA_TENANT_ID ist bei MCP_OIDC_PROVIDER=%q Pflicht — die "+
+			"Verzeichnis-ID (Mandant) aus der Uebersicht der App-Registrierung", ProviderEntra)
+	}
+	if !guidPattern.MatchString(tenant) {
+		return fmt.Errorf("MCP_ENTRA_TENANT_ID = %q ist keine Verzeichnis-ID — erwartet wird "+
+			"die GUID aus der Entra-Portal-Uebersicht (Form "+
+			"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx). Eine Domain oder "+
+			"`common`/`organizations` funktioniert hier NICHT: der Aussteller im Token "+
+			"traegt immer die GUID, `common` liefert nur die Vorlage `{tenantid}`. Die "+
+			"Verzeichnis-ID steht im Entra-Portal unter Uebersicht der App-Registrierung", tenant)
+	}
+	if clientID == "" {
+		return fmt.Errorf("MCP_ENTRA_CLIENT_ID ist bei MCP_OIDC_PROVIDER=%q Pflicht — die "+
+			"Anwendungs-ID (Client) aus derselben Uebersicht", ProviderEntra)
+	}
+
+	cfg.OIDCIssuer = "https://login.microsoftonline.com/" + tenant + "/v2.0"
+	cfg.OIDCClientID = clientID
+	return nil
+}
+
+// resolveAuthentik baut die Aussteller-URL aus Host und Anwendungs-Kuerzel.
+// Das Format `https://<host>/application/o/<slug>/` inklusive abschliessendem
+// Schraegstrich ist Authentiks Vorgabe (siehe docs/idp/authentik.md).
+func resolveAuthentik(cfg *Config, env Env) error {
+	baseURL := strings.TrimSpace(env("MCP_AUTHENTIK_BASE_URL"))
+	slug := strings.TrimSpace(env("MCP_AUTHENTIK_APP_SLUG"))
+	clientID := strings.TrimSpace(env("MCP_AUTHENTIK_CLIENT_ID"))
+
+	if baseURL == "" {
+		return fmt.Errorf("MCP_AUTHENTIK_BASE_URL ist bei MCP_OIDC_PROVIDER=%q Pflicht — die "+
+			"Adresse der Authentik-Instanz, z. B. https://auth.example.com", ProviderAuthentik)
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return fmt.Errorf("MCP_AUTHENTIK_BASE_URL = %q ist keine https-Adresse — erwartet wird "+
+			"Schema und Host ohne Pfad, z. B. https://auth.example.com", baseURL)
+	}
+	if slug == "" {
+		return fmt.Errorf("MCP_AUTHENTIK_APP_SLUG ist bei MCP_OIDC_PROVIDER=%q Pflicht — das "+
+			"Kuerzel der Anwendung, wie es in ihrer Authentik-URL steht", ProviderAuthentik)
+	}
+	if strings.ContainsAny(slug, "/?#") {
+		return fmt.Errorf("MCP_AUTHENTIK_APP_SLUG = %q darf keine Pfad- oder Query-Zeichen "+
+			"enthalten — nur das Kuerzel selbst", slug)
+	}
+	if clientID == "" {
+		return fmt.Errorf("MCP_AUTHENTIK_CLIENT_ID ist bei MCP_OIDC_PROVIDER=%q Pflicht — die "+
+			"Client-ID des OAuth2/OIDC-Providers", ProviderAuthentik)
+	}
+
+	cfg.OIDCIssuer = strings.TrimSuffix(baseURL, "/") + "/application/o/" + slug + "/"
+	cfg.OIDCClientID = clientID
+	return nil
+}
+
+// resolveGeneric bedient jeden standardkonformen OpenID-Connect-Anbieter, fuer
+// den es hier keinen eigenen Zweig gibt — etwa GitLab oder Keycloak. Er ist ein
+// gleichrangiger Weg, kein Ausweichventil fuer Sonderfaelle der beiden anderen:
+// Wer Entra nutzt, waehlt entra und bekommt dessen Pruefungen; wer Authentik
+// nutzt, waehlt authentik.
+func resolveGeneric(cfg *Config, env Env) error {
+	issuer := strings.TrimSpace(env("MCP_OIDC_ISSUER"))
+	clientID := strings.TrimSpace(env("MCP_OIDC_CLIENT_ID"))
+
+	if issuer == "" {
+		return fmt.Errorf("MCP_OIDC_ISSUER ist bei MCP_OIDC_PROVIDER=%q Pflicht — der "+
+			"`issuer`-Wert aus dem Discovery-Dokument des Anbieters", ProviderGeneric)
+	}
+	if clientID == "" {
+		return fmt.Errorf("MCP_OIDC_CLIENT_ID ist bei MCP_OIDC_PROVIDER=%q Pflicht", ProviderGeneric)
+	}
+
+	cfg.OIDCIssuer = issuer
+	cfg.OIDCClientID = clientID
+	return nil
+}
+
+func ladeAuth(cfg *Config, env Env) error {
 	brauchtOIDC := cfg.AuthMode == AuthOIDC || cfg.AuthMode == AuthBoth
 	brauchtToken := cfg.AuthMode == AuthToken || cfg.AuthMode == AuthBoth
 
 	if brauchtOIDC {
-		if cfg.OIDCIssuer == "" {
-			return fmt.Errorf("MCP_OIDC_ISSUER ist im Modus %q Pflicht", cfg.AuthMode)
+		if err := resolveProvider(cfg, env); err != nil {
+			return err
 		}
-		// Gangways identity.OIDCConfig verlangt Issuer, Audience und
-		// SubjectClaim (Letzterer hat bereits einen Default). Ohne Audience
-		// wuerde jedes fuer den Issuer gueltige Token akzeptiert, egal fuer
-		// welchen Client es ausgestellt wurde.
-		if cfg.OIDCAudience == "" {
-			return fmt.Errorf("MCP_OIDC_AUDIENCE ist im Modus %q Pflicht", cfg.AuthMode)
-		}
+		// Aussteller und Client-ID sind an dieser Stelle garantiert gesetzt:
+		// jeder Anbieter-Zweig in resolveProvider bricht ohne sie ab. Die
+		// Client-ID ist zugleich die erwartete Audience — ohne sie wuerde jedes
+		// fuer den Aussteller gueltige Token akzeptiert, egal fuer welche
+		// Anwendung es ausgestellt wurde. Bei Entra waere das jede beliebige
+		// Anwendung desselben Mandanten.
 		if cfg.ResourceURL == "" {
 			return fmt.Errorf("MCP_RESOURCE_URL ist im Modus %q Pflicht — der Wert muss exakt der "+
 				"URL entsprechen, die im Client eingetragen wird", cfg.AuthMode)

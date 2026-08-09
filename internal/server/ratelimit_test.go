@@ -162,8 +162,9 @@ func testConfigWithRateLimits(t *testing.T, rl rateLimitEnv) (*config.Config, *t
 
 	env := map[string]string{
 		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
 		"MCP_OIDC_ISSUER":                idp.URL(),
-		"MCP_OIDC_AUDIENCE":              "fileee-mcp-server",
+		"MCP_OIDC_CLIENT_ID":             "fileee-mcp-server",
 		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
 		"MCP_ALLOWED_SUBJECTS":           subjects,
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0, ::/0",

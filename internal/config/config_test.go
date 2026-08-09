@@ -22,8 +22,9 @@ func minimalToken() map[string]string {
 func minimalOIDC() map[string]string {
 	return map[string]string{
 		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
 		"MCP_OIDC_ISSUER":                "https://idp.example.com/application/o/mcp/",
-		"MCP_OIDC_AUDIENCE":              "mcp-client",
+		"MCP_OIDC_CLIENT_ID":             "mcp-client",
 		"MCP_RESOURCE_URL":               "https://mcp.example.com/mcp",
 		"MCP_ALLOWED_SUBJECTS":           "abc123",
 		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
@@ -133,13 +134,13 @@ func TestLoadConfigFailFast(t *testing.T) {
 			erwartet: "MCP_ALLOWED_SUBJECTS",
 		},
 		{
-			name: "oidc ohne audience",
+			name: "oidc ohne client-id",
 			env: func() map[string]string {
 				e := minimalOIDC()
-				delete(e, "MCP_OIDC_AUDIENCE")
+				delete(e, "MCP_OIDC_CLIENT_ID")
 				return e
 			},
-			erwartet: "MCP_OIDC_AUDIENCE",
+			erwartet: "MCP_OIDC_CLIENT_ID",
 		},
 		{
 			name: "oidc mit resource-url ohne /mcp-suffix",
@@ -549,4 +550,213 @@ func TestLoadConfigNetzwerkPraefixe(t *testing.T) {
 	if bits := cfg.AllowedOriginPrefixes[1].Bits(); bits != 128 {
 		t.Errorf("AllowedOriginPrefixes[1].Bits() = %d, erwartet 128 (nackte IPv6-Adresse als /128)", bits)
 	}
+}
+
+// minimalEntra ist die kleinstmoegliche gueltige Entra-Konfiguration.
+func minimalEntra() map[string]string {
+	e := minimalOIDC()
+	delete(e, "MCP_OIDC_ISSUER")
+	delete(e, "MCP_OIDC_CLIENT_ID")
+	e["MCP_OIDC_PROVIDER"] = "entra"
+	e["MCP_ENTRA_TENANT_ID"] = testTenantID
+	e["MCP_ENTRA_CLIENT_ID"] = "11111111-2222-3333-4444-555555555555"
+	return e
+}
+
+// minimalAuthentik ist die kleinstmoegliche gueltige Authentik-Konfiguration.
+func minimalAuthentik() map[string]string {
+	e := minimalOIDC()
+	delete(e, "MCP_OIDC_ISSUER")
+	delete(e, "MCP_OIDC_CLIENT_ID")
+	e["MCP_OIDC_PROVIDER"] = "authentik"
+	e["MCP_AUTHENTIK_BASE_URL"] = "https://auth.example.com"
+	e["MCP_AUTHENTIK_APP_SLUG"] = "fileee-mcp"
+	e["MCP_AUTHENTIK_CLIENT_ID"] = "client-abc"
+	return e
+}
+
+const testTenantID = "ba37bc14-c21d-4f90-8d78-27054e628e15"
+
+func TestLoadConfigProviderEntra(t *testing.T) {
+	t.Parallel()
+
+	t.Run("baut die Aussteller-URL aus der Verzeichnis-ID", func(t *testing.T) {
+		t.Parallel()
+		cfg, err := LoadConfig(envOf(minimalEntra()))
+		if err != nil {
+			t.Fatalf("unerwarteter Fehler: %v", err)
+		}
+		want := "https://login.microsoftonline.com/" + testTenantID + "/v2.0"
+		if cfg.OIDCIssuer != want {
+			t.Errorf("Aussteller = %q, erwartet %q", cfg.OIDCIssuer, want)
+		}
+		if cfg.OIDCClientID != "11111111-2222-3333-4444-555555555555" {
+			t.Errorf("Client-ID = %q", cfg.OIDCClientID)
+		}
+	})
+
+	t.Run("entfernt Leerraum um die Verzeichnis-ID", func(t *testing.T) {
+		t.Parallel()
+		e := minimalEntra()
+		e["MCP_ENTRA_TENANT_ID"] = "  " + testTenantID + "\n"
+		cfg, err := LoadConfig(envOf(e))
+		if err != nil {
+			t.Fatalf("unerwarteter Fehler: %v", err)
+		}
+		if !strings.Contains(cfg.OIDCIssuer, testTenantID) || strings.Contains(cfg.OIDCIssuer, " ") {
+			t.Errorf("Aussteller = %q", cfg.OIDCIssuer)
+		}
+	})
+
+	// Diese drei Werte liefern eine Aussteller-URL, die NIE zum Token passt —
+	// sie muessen beim Start scheitern, nicht in einer 401-Schleife zur Laufzeit.
+	for _, bad := range []string{"common", "organizations", "example.com"} {
+		t.Run("weist "+bad+" ab", func(t *testing.T) {
+			t.Parallel()
+			e := minimalEntra()
+			e["MCP_ENTRA_TENANT_ID"] = bad
+			_, err := LoadConfig(envOf(e))
+			if err == nil {
+				t.Fatalf("erwartet: Fehler fuer %q", bad)
+			}
+			if !strings.Contains(err.Error(), "MCP_ENTRA_TENANT_ID") {
+				t.Errorf("Meldung nennt die Variable nicht: %v", err)
+			}
+		})
+	}
+
+	for _, missing := range []string{"MCP_ENTRA_TENANT_ID", "MCP_ENTRA_CLIENT_ID"} {
+		t.Run("bricht ohne "+missing+" ab", func(t *testing.T) {
+			t.Parallel()
+			e := minimalEntra()
+			delete(e, missing)
+			_, err := LoadConfig(envOf(e))
+			if err == nil {
+				t.Fatalf("erwartet: Fehler ohne %s", missing)
+			}
+			if !strings.Contains(err.Error(), missing) {
+				t.Errorf("Meldung nennt %s nicht: %v", missing, err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigProviderAuthentik(t *testing.T) {
+	t.Parallel()
+
+	t.Run("baut die Aussteller-URL aus Host und Kuerzel", func(t *testing.T) {
+		t.Parallel()
+		cfg, err := LoadConfig(envOf(minimalAuthentik()))
+		if err != nil {
+			t.Fatalf("unerwarteter Fehler: %v", err)
+		}
+		want := "https://auth.example.com/application/o/fileee-mcp/"
+		if cfg.OIDCIssuer != want {
+			t.Errorf("Aussteller = %q, erwartet %q", cfg.OIDCIssuer, want)
+		}
+	})
+
+	t.Run("doppelter Schraegstrich am Host erzeugt keinen doppelten Pfad", func(t *testing.T) {
+		t.Parallel()
+		e := minimalAuthentik()
+		e["MCP_AUTHENTIK_BASE_URL"] = "https://auth.example.com/"
+		cfg, err := LoadConfig(envOf(e))
+		if err != nil {
+			t.Fatalf("unerwarteter Fehler: %v", err)
+		}
+		want := "https://auth.example.com/application/o/fileee-mcp/"
+		if cfg.OIDCIssuer != want {
+			t.Errorf("Aussteller = %q, erwartet %q", cfg.OIDCIssuer, want)
+		}
+	})
+
+	t.Run("weist eine Nicht-https-Adresse ab", func(t *testing.T) {
+		t.Parallel()
+		e := minimalAuthentik()
+		e["MCP_AUTHENTIK_BASE_URL"] = "http://auth.example.com"
+		_, err := LoadConfig(envOf(e))
+		if err == nil || !strings.Contains(err.Error(), "MCP_AUTHENTIK_BASE_URL") {
+			t.Fatalf("erwartet: Fehler zur Basis-Adresse, bekam %v", err)
+		}
+	})
+
+	t.Run("weist ein Kuerzel mit Pfadanteil ab", func(t *testing.T) {
+		t.Parallel()
+		e := minimalAuthentik()
+		e["MCP_AUTHENTIK_APP_SLUG"] = "fileee/../admin"
+		_, err := LoadConfig(envOf(e))
+		if err == nil || !strings.Contains(err.Error(), "MCP_AUTHENTIK_APP_SLUG") {
+			t.Fatalf("erwartet: Fehler zum Kuerzel, bekam %v", err)
+		}
+	})
+
+	for _, missing := range []string{"MCP_AUTHENTIK_BASE_URL", "MCP_AUTHENTIK_APP_SLUG", "MCP_AUTHENTIK_CLIENT_ID"} {
+		t.Run("bricht ohne "+missing+" ab", func(t *testing.T) {
+			t.Parallel()
+			e := minimalAuthentik()
+			delete(e, missing)
+			_, err := LoadConfig(envOf(e))
+			if err == nil || !strings.Contains(err.Error(), missing) {
+				t.Fatalf("erwartet: Fehler zu %s, bekam %v", missing, err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigProviderSelection(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fehlender Anbieter nennt alle drei", func(t *testing.T) {
+		t.Parallel()
+		e := minimalOIDC()
+		delete(e, "MCP_OIDC_PROVIDER")
+		_, err := LoadConfig(envOf(e))
+		if err == nil {
+			t.Fatal("erwartet: Fehler ohne Anbieter")
+		}
+		for _, want := range []string{"entra", "authentik", "generic"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Meldung nennt %q nicht: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("unbekannter Anbieter wird abgewiesen", func(t *testing.T) {
+		t.Parallel()
+		e := minimalOIDC()
+		e["MCP_OIDC_PROVIDER"] = "keycloak"
+		_, err := LoadConfig(envOf(e))
+		if err == nil || !strings.Contains(err.Error(), "keycloak") {
+			t.Fatalf("erwartet: Fehler zum unbekannten Anbieter, bekam %v", err)
+		}
+	})
+
+	// Eine fremde Variable waere sonst wirkungslos gesetzt — der Betreiber
+	// suchte den Fehler an einer Einstellung, die gar nicht gelesen wird.
+	t.Run("Variablen eines anderen Anbieters brechen ab", func(t *testing.T) {
+		t.Parallel()
+		e := minimalEntra()
+		e["MCP_AUTHENTIK_APP_SLUG"] = "fileee-mcp"
+		_, err := LoadConfig(envOf(e))
+		if err == nil {
+			t.Fatal("erwartet: Fehler wegen gemischter Anbieter-Variablen")
+		}
+		if !strings.Contains(err.Error(), "MCP_AUTHENTIK_APP_SLUG") {
+			t.Errorf("Meldung nennt die fremde Variable nicht: %v", err)
+		}
+	})
+
+	t.Run("generic reicht Aussteller und Client-ID durch", func(t *testing.T) {
+		t.Parallel()
+		cfg, err := LoadConfig(envOf(minimalOIDC()))
+		if err != nil {
+			t.Fatalf("unerwarteter Fehler: %v", err)
+		}
+		if cfg.OIDCIssuer != "https://idp.example.com/application/o/mcp/" {
+			t.Errorf("Aussteller = %q", cfg.OIDCIssuer)
+		}
+		if cfg.OIDCClientID != "mcp-client" {
+			t.Errorf("Client-ID = %q", cfg.OIDCClientID)
+		}
+	})
 }
