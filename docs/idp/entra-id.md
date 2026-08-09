@@ -61,7 +61,7 @@ Für ein `https://`-Schema verlangt Entra eine im Tenant verifizierte Domain. Is
 | Consent display name / description | sprechend formulieren — der Text erscheint im Consent-Dialog |
 | State | Enabled |
 
-Voller Scope-Wert: `<MCP_URL>/mcp.access` bzw. `api://<CLIENT_ID>/mcp.access`. Er wird im Protected-Resource-Metadata-Dokument des MCP-Servers unter `scopes_supported` veröffentlicht, damit der Client ihn anfordert.
+Voller Scope-Wert: `<MCP_URL>/mcp.access` bzw. `api://<CLIENT_ID>/mcp.access`. Dieser Server veröffentlicht ihn **nicht** im eigenen Protected-Resource-Metadata-Dokument (siehe Abschnitt "Zu den Scopes" unten) — der Client (bzw. der Connector-Dialog) muss ihn deshalb von hier oder aus der Connector-Konfiguration kennen.
 
 > **Alternative `.default`:** Statt eines benannten Scopes lässt sich auch der Entra-eigene Sammel-Scope `api://<CLIENT_ID>/.default` anfordern, der alle statisch konfigurierten Berechtigungen der App auflöst. Er funktioniert nur, wenn mindestens ein Scope existiert — ein leeres „Expose an API" lässt `.default` ins Leere laufen. Wer diesen Weg geht, legt trotzdem einen Scope an (üblich: `user_impersonation`) und fordert dann `.default` an.
 
@@ -120,7 +120,7 @@ Ohne diese Einstellung kann jeder Benutzer des Tenants den Connector verbinden.
 | JWKS | aus dem Discovery-Dokument (`jwks_uri`) |
 | `aud` im v2-Token | `<CLIENT_ID>` |
 
-Der Server akzeptiert drei Audience-Werte als gültig: `MCP_RESOURCE_URL`, `MCP_OIDC_AUDIENCE` und `api://<CLIENT_ID>`. Entra füllt `aud` je nach angefordertem Scope und Token-Version unterschiedlich, und eine zu enge Prüfung erzeugt eine 401-Schleife, die im Client nur als „Authorization failed" ankommt.
+Der Server akzeptiert **genau einen** Audience-Wert: `MCP_OIDC_AUDIENCE`. Gangways OIDC-Verifier (`github.com/coreos/go-oidc`) prüft, ob dieser eine konfigurierte Wert im `aud`-Claim des Tokens enthalten ist — es gibt **keine** zusätzliche Prüfung gegen `MCP_RESOURCE_URL` oder `api://<CLIENT_ID>`. `MCP_OIDC_AUDIENCE` muss deshalb exakt dem `aud`-Wert entsprechen, den Entra für das tatsächlich angeforderte Token ausstellt — bei einem v2.0-Token für den in Abschnitt 3 angelegten Scope ist das die reine `<CLIENT_ID>` (kein `api://`-Präfix, siehe Beispiel unten). Fordert ein Client stattdessen den Application-ID-URI-Scope an und Entra setzt dafür `api://<CLIENT_ID>` als `aud`, scheitert die Prüfung — sichtbar nur als 401-Schleife, die im Client als „Authorization failed" ankommt. In diesem Fall `MCP_OIDC_AUDIENCE` auf den tatsächlich ausgestellten Wert anpassen; Abschnitt 8 zeigt, wie man `aud` im ausgestellten Token nachsieht.
 
 ```dotenv
 MCP_AUTH_MODE=oidc
@@ -140,7 +140,9 @@ Soll die Zuordnung über mehrere Anwendungen hinweg stabil sein, `MCP_OIDC_SUBJE
 
 ### Zu den Scopes
 
-Entra liefert den **kurzen** Namen im `scp`-Claim (`mcp.access`), während im Protected-Resource-Metadata-Dokument der volle URI-Scope veröffentlicht wird. `MCP_OIDC_REQUIRED_SCOPES` erwartet die kurze Form.
+Entra liefert den **kurzen** Namen im `scp`-Claim (`mcp.access`). `MCP_OIDC_REQUIRED_SCOPES` erwartet ebenfalls die kurze Form und prüft sie gegen den `scp`-Claim des verifizierten Tokens (ersatzweise gegen einen `scope`-Claim, falls ein anderer Aussteller stattdessen diesen setzt).
+
+Das Protected-Resource-Metadata-Dokument (`/.well-known/oauth-protected-resource`) veröffentlicht **keinen** Scope — das Feld `scopes_supported` fehlt in der Antwort dieses Servers vollständig, es wird von Gangway derzeit nicht befüllt. Ein Client kann den anzufordernden Scope also nicht aus diesem Dokument ablesen; er muss ihn kennen (z. B. aus dieser Anleitung oder der Connector-Konfiguration).
 
 ## 8. Verifikation
 
@@ -166,7 +168,7 @@ Erwartet: `iss` endet auf `/v2.0`, `aud` = `<CLIENT_ID>`, `scp` enthält `mcp.ac
 | `AADSTS50011` (Redirect-URI-Mismatch) | Redirect-URI weicht ab, bei Claude Code der Port | exakte URI eintragen; Entra ignoriert den Port **nicht** |
 | Connector funktioniert plötzlich nicht mehr | Client-Secret abgelaufen | neues Secret erzeugen und im Connector aktualisieren |
 | Verbindung bricht nach der ersten Token-Laufzeit ab | `offline_access` fehlt, kein Refresh-Token | Schritt 5 nachholen, inklusive Admin-Consent |
-| 401-Schleife, „audience mismatch" | `aud` ist keiner der akzeptierten Werte | `accessTokenAcceptedVersion: 2` prüfen und sicherstellen, dass `MCP_OIDC_AUDIENCE` zur Application ID URI passt |
+| 401-Schleife, „audience mismatch" | `aud` im ausgestellten Token entspricht nicht `MCP_OIDC_AUDIENCE` (der Server prüft nur diesen einen Wert, siehe Abschnitt 7) | `accessTokenAcceptedVersion: 2` prüfen; `aud` im Token nachsehen (Abschnitt 8) und `MCP_OIDC_AUDIENCE` exakt darauf setzen |
 | Write-Tools erscheinen nicht | App-Rolle nicht zugewiesen oder `MCP_OIDC_CAPABILITY_CLAIM` nicht gesetzt | Abschnitte 3a und 6 prüfen; `roles`-Claim im Token gegenprüfen |
 | Jeder Tenant-Benutzer kommt durch | „Assignment required" steht auf `No` | Schritt 6 nachholen |
 | Kein DCR möglich | Entra unterstützt weder Dynamic Client Registration noch Client ID Metadata Documents | vorregistrierte Client-ID/Secret im Connector-Dialog eintragen — der vorgesehene Weg |

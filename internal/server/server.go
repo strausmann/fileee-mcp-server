@@ -162,6 +162,18 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		accountsByKey[acc.Key] = acc
 	}
 	gw.AttachMCPSelector(func(_ context.Context, id *identity.Identity) *mcp.Server {
+		// scopesSatisfied ist die einzige Stelle, die MCP_OIDC_REQUIRED_SCOPES
+		// auswertet (siehe scopes.go) — davor wurde die Einstellung zwar aus
+		// der Umgebung gelesen (config.go, LoadConfig), aber nirgends geprueft
+		// (Pruefbefund zu dieser Aufgabe). Ein fehlender Scope liefert nil und
+		// damit Gangways 400, aus demselben Grund wie unten bei einer
+		// unerreichbaren Berechtigungsmenge: eine leere Instanz mit
+		// abgeschnittenem Werkzeugkatalog waere hier die falsche Antwort — der
+		// Aufrufer hat ein gueltiges Token, ihm fehlt nur der geforderte
+		// Scope, das ist eine Ablehnung, keine eingeschraenkte Sicht.
+		if !scopesSatisfied(cfg, id) {
+			return nil
+		}
 		// Liefert nil (und damit Gangways 400, niemals eine Standard-Instanz),
 		// wenn capabilitiesFor eine Menge zurueckgibt, fuer die instances keine
 		// Instanz haelt — nach Konstruktion unerreichbar, siehe
