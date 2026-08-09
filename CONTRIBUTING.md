@@ -66,7 +66,9 @@ Commit-Messages folgen [Conventional Commits](https://www.conventionalcommits.or
   | `fix`, `perf` | Patch-Release |
   | `refactor`, `build` | Patch-Release (abweichend vom Preset-Default, bewusst so gesetzt) |
   | `docs`, `test`, `chore`, `ci` | kein Release |
-  | Footer `BREAKING CHANGE:` | Major-Release, unabhängig vom Typ |
+  | Footer `BREAKING CHANGE:` | Major-Release, unabhängig vom Typ — **solange dieses Projekt in Entwicklung ist, nicht verwenden** (siehe unten) |
+
+  > **Kein `BREAKING CHANGE:` bis zur ersten stabilen Fassung.** Das Projekt ist in Entwicklung; ein Bruch ist hier der Normalfall und wird in der Commit-Beschreibung erklärt, nicht als Footer ausgezeichnet. Der Grund ist die Wirkung: semantic-release springt bei einem Bruch von `0.x` direkt auf `1.0.0` — die Versionsnummer sagt dann Stabilität zu, die der Funktionsumfang nicht hält. **Genau so ist am 09.08.2026 versehentlich `v1.0.0` entstanden.** Wer den Bruch dokumentieren will, schreibt ihn in den Fließtext des Commits und in die Anleitung, nicht in einen Footer.
 - **Subject in Kleinbuchstaben** (`subject-case`-Regel) — kein großgeschriebener Satzanfang.
 - **Scope** aus der festen Liste in `.commitlintrc.json` (`server`, `config`, `secrets`, `auth`, `accounts`, `clientpool`, `tools`, `capabilities`, `deploy`, `adr`, `ci`, `deps`, `docs`, `release`) — kein neuer Scope ohne Anpassung der Datei, auch nicht einer, der zum Verzeichnis passt (z. B. `betrieb` für `docs/betrieb/`): die Liste ist abschließend, nicht frei aus dem Pfad ableitbar.
 - **Issue-Referenz:** `Refs #N` oder `Closes #N` in Commit oder PR-Beschreibung.
