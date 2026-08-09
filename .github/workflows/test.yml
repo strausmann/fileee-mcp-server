@@ -48,7 +48,8 @@ jobs:
           #                                        internal/accounts/accounts.go,
           #                                        internal/config/capabilities.go,
           #                                        internal/config/config.go,
-          #                                        internal/server/scopes.go
+          #                                        internal/server/scopes.go,
+          #                                        internal/server/ratelimit.go
           #   Mutations-Logik ............... 85   internal/clientpool/pool.go,
           #                                        tools_destructive.go,
           #                                        alle mutierenden Tool-Pfade
@@ -70,6 +71,7 @@ jobs:
             internal/config/capabilities.go:90 \
             internal/config/version.go:90 \
             internal/server/scopes.go:90 \
+            internal/server/ratelimit.go:90 \
             internal/server/server.go:80 \
             internal/clientpool/pool.go:85 \
             internal/tools/read.go:80 \

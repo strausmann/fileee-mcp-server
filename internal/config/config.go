@@ -83,13 +83,37 @@ type Config struct {
 	AccountMode AccountMode
 	Accounts    []Account
 
-	Capabilities     Set
+	Capabilities Set
+	// AllowDestructive ist bereits vollstaendig verdrahtet, nicht bloss
+	// geladen: LoadConfig selbst weist den Start ab, wenn Capabilities
+	// CapDestructive enthaelt, aber AllowDestructive nicht true ist (siehe
+	// unten, direkt nach dem Einlesen) — anders als die anderen in dieser
+	// Aufgabe (#42) geprueften Einstellungen ist hier also nichts offen.
 	AllowDestructive bool
 
+	// MaxDownloadBytes und MaxUploadBytes sind fuer kuenftige Download-/
+	// Upload-Werkzeuge vorgesehen (Capability-Gruppen read/write, siehe
+	// README "Funktionsumfang festlegen") — heute registriert dieser Server
+	// nur lesende Werkzeuge ohne Binaertransfer (list_documents,
+	// search_documents), die beiden Werte haben also noch nichts zu
+	// begrenzen. MaxRequestBodyBytes ist davon abgeleitet (ladeZahlenwerte)
+	// und WUERDE den 4-MiB-Default des MCP-SDK ueberschreiben, sobald ein
+	// Aufrufer sie liest — aber Gangway v0.2.0 baut den Streamable-HTTP-
+	// Handler intern (serve.AttachMCP/AttachMCPSelector) mit einem fest
+	// verdrahteten &mcp.StreamableHTTPOptions{Stateless: true} und bietet
+	// keinen Weg, dessen MaxRequestBodyBytes-Feld zu setzen — ein zweiter,
+	// unabhaengiger Grund, warum diese drei Felder heute nicht durchgesetzt
+	// werden koennen, nicht nur der fehlende Werkzeug-Bedarf. Kandidat fuer
+	// eine Gangway-Erweiterung (siehe Nachtrag zu ADR-0015).
 	MaxDownloadBytes    int64
 	MaxUploadBytes      int64
 	MaxRequestBodyBytes int64
-	MaxInflight         int
+	// MaxInflight, RateRPS/RateBurst und RateGlobalRPS/RateGlobalBurst
+	// werden von internal/server.newToolCallLimiter durchgesetzt — siehe
+	// dort (internal/server/ratelimit.go) fuer die Bedeutung jedes einzelnen
+	// Werts und die Begruendung, warum RateRPS/RateBurst am verifizierten
+	// Token-Subject haengen, nicht an der Client-Adresse.
+	MaxInflight int
 
 	ListenAddr        string
 	SessionDir        string
@@ -118,6 +142,16 @@ type Config struct {
 	// geprueft werden, bevor TrustedProxies produktiv gesetzt wird.
 	ClientIPHeaderMode origin.HeaderMode
 
+	// LogLevel wird geladen, hat aber heute keinen Konsumenten: dieser
+	// Server hat noch keine eigene, levelgesteuerte Logging-Schicht (siehe
+	// cmd/fileee-mcp-server/main.go — Start-/Fehlermeldungen laufen ueber
+	// schlichtes fmt.Fprintf auf stdout/stderr, Gangways Zugriffsprotokoll
+	// (accesslog) kennt kein Level). go-fileee selbst akzeptiert zwar einen
+	// *slog.Logger (fileee.WithLogger), aber auch das wird von
+	// internal/server.New heute nicht verdrahtet. Ein Level ohne
+	// Logging-Schicht zu erzwingen waere Scheinarbeit — das gehoert zu
+	// einer bewussten Entscheidung fuer eine Logging-Architektur, nicht in
+	// einen Nebensatz einer anderen Aufgabe.
 	LogLevel string
 
 	// Warnings sind Hinweise, die den Start nicht verhindern, aber beim Boot

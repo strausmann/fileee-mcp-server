@@ -117,7 +117,19 @@ Der Katalog entsteht schrittweise. Was heute existiert (`read`: `list_documents`
 - **Credentials** (Fileee-Zugangsdaten, TOTP-Seed, API-Token) gehören ausschließlich in einen Secret-Manager, nie in Code oder Commits. Der Container unterstützt neben `.env` einen Infisical-Modus.
 - **Session-Dateien** des Client-Pools sind Secrets (`0600`, je Konto getrennt) und werden nie geloggt.
 - **Dokumentinhalte sind fremdbestimmte Daten.** OCR-Text kann Anweisungen enthalten, die an das Modell gerichtet sind. Tool-Ausgaben werden deshalb als nicht vertrauenswürdig markiert, und destruktive Operationen sind zusätzlich abgesichert.
-- Die Core-Lib **schont Fileees Infrastruktur** über Rate-Limiting und Backoff. Dieser Server ergänzt einen globalen Deckel über alle Konten hinweg, damit mehrere Konten die Last nicht vervielfachen.
+- Die Core-Lib **schont Fileees Infrastruktur** über ihr eigenes Rate-Limiting und Backoff im HTTP-Transport ([`go-fileee` ADR-0005](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0005-schonender-betrieb-rate-limiting.md)). Dieser Server ergänzt eine zweite, unabhängige Begrenzung auf Ebene der Werkzeugaufrufe selbst — siehe „Ratenbegrenzung" unten.
+
+### Ratenbegrenzung
+
+Jeder Aufruf eines Werkzeugs (`tools/call`) muss drei unabhängige Kontingente passieren, bevor er den Tool-Handler überhaupt erreicht — ein Aufrufer, der eines davon überschreitet, bekommt sofort einen JSON-RPC-Fehler (Code `-32011`), nie eine Wartezeit:
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `FILEEE_RATE_RPS` / `FILEEE_RATE_BURST` | Anfragerate **je Anrufer** — geschlüsselt auf das verifizierte Token-Subject, nicht auf die Client-Adresse (die hängt von `FILEEE_TRUSTED_PROXIES` ab und ist bei falscher Einstellung sogar vom Anrufer selbst wählbar) | `1` RPS, Burst `3` |
+| `FILEEE_RATE_GLOBAL_RPS` / `FILEEE_RATE_GLOBAL_BURST` | Anfragerate **über alle Anrufer hinweg** — das globale Kontingent, das die README bereits vor dieser Einstellung beschrieb, tatsächlich durchgesetzt | `1` RPS, Burst `3` |
+| `FILEEE_MAX_INFLIGHT` | Obergrenze **gleichzeitig laufender** Werkzeugaufrufe, über alle Anrufer hinweg — schützt die eine, je Fileee-Konto geteilte Verbindung ([`internal/clientpool`](internal/clientpool)) vor Überlastung durch Parallelität, unabhängig von der Rate | `8` |
+
+`FILEEE_MAX_DOWNLOAD_BYTES`, `FILEEE_MAX_UPLOAD_BYTES` und die daraus abgeleitete `MaxRequestBodyBytes` werden geladen, aber **noch nicht durchgesetzt** — es gibt bisher keine Upload-/Download-Werkzeuge, die sie bräuchten, und Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
 
 ## Entwicklung
 

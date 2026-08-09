@@ -156,7 +156,12 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// ueberhaupt nicht, eine unauthentifizierte Anfrage liefe dann in ein
 	// 404 vom inneren ServeMux statt in die 401-Challenge der
 	// Authentifizierung — siehe TestUnauthenticatedRequestReachesTheChallengeNotA404.
-	instances := buildInstances(pool, cfg.Capabilities)
+	// EIN toolCallLimiter fuer alle Instanzen, gebaut hier und nicht je
+	// Instanz — siehe dessen Doc-Kommentar (newToolCallLimiter) fuer den
+	// Grund: globale Rate und MaxInflight muessen serverweit gelten, nicht
+	// je Berechtigungsmenge neu anfangen.
+	limiter := newToolCallLimiter(cfg)
+	instances := buildInstances(pool, cfg.Capabilities, limiter)
 	accountsByKey := make(map[string]config.Account, len(cfg.Accounts))
 	for _, acc := range cfg.Accounts {
 		accountsByKey[acc.Key] = acc
@@ -230,7 +235,14 @@ func reachableCapabilitySets(global config.Set) []config.Set {
 // Werkzeugen registriert, wenn und nur wenn die Menge config.CapRead enthaelt.
 // Kuenftige Werkzeuggruppen (write/share/destructive) haetten hier ihre
 // eigene, analoge Bedingung.
-func buildInstances(pool *clientpool.Pool, global config.Set) map[config.Set]*mcp.Server {
+//
+// Jede Instanz bekommt zusaetzlich limiter.middleware() als
+// Receiving-Middleware, VOR der Rueckgabe an New() (das die Instanzen
+// anschliessend an gw.AttachMCPSelector uebergibt, welches Gangways eigene
+// Autorisierungs-Middleware erst beim ersten Request je Instanz installiert,
+// siehe gangway/serve.Server.ensureWired). Diese Reihenfolge ist Absicht,
+// nicht Zufall — siehe toolCallLimiter.middleware fuer die Begruendung.
+func buildInstances(pool *clientpool.Pool, global config.Set, limiter *toolCallLimiter) map[config.Set]*mcp.Server {
 	instances := make(map[config.Set]*mcp.Server)
 	for _, caps := range reachableCapabilitySets(global) {
 		mcpServer := mcp.NewServer(&mcp.Implementation{
@@ -240,6 +252,7 @@ func buildInstances(pool *clientpool.Pool, global config.Set) map[config.Set]*mc
 		if caps.Has(config.CapRead) {
 			tools.RegisterRead(mcpServer, pool)
 		}
+		mcpServer.AddReceivingMiddleware(limiter.middleware())
 		instances[caps] = mcpServer
 	}
 	return instances
