@@ -122,8 +122,12 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD ["/usr/local/bin/fileee-mcp-server", "healthcheck"]
 
-# Infisical umschliesst den eigentlichen Server-Prozess: Geheimnisse werden
-# von Infisical als Umgebungsvariablen injiziert, bevor fileee-mcp-server
-# startet. Exec-Form (kein "sh -c") — infisical uebernimmt selbst den
-# exec()-Wechsel in den Kindprozess.
-ENTRYPOINT ["/usr/local/bin/infisical", "run", "--", "/usr/local/bin/fileee-mcp-server"]
+# Der Entrypoint entscheidet beim Start, ob Infisical dazwischengeschaltet
+# wird: Sind dessen Zugangsdaten gesetzt, meldet er sich an und umschliesst den
+# Serverprozess mit `infisical run`; sonst startet der Server direkt mit den
+# vorhandenen Umgebungsvariablen. Ein fest verdrahtetes `infisical run` waere
+# hier falsch — es macht das Abbild fuer alle unbrauchbar, die keine
+# Secret-Verwaltung betreiben (ADR-0010). Begruendung und Faelle stehen im
+# Skript selbst, geprueft von deploy/entrypoint_test.sh.
+COPY --chmod=755 deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
