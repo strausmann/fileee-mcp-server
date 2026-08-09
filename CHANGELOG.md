@@ -1,3 +1,14 @@
+## [0.3.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.2.0...v0.3.0) (2026-08-09)
+
+### Features
+
+* **deploy:** bau-anweisung und healthcheck-unterbefehl fuer das abbild ([#32](https://github.com/strausmann/fileee-mcp-server/issues/32)) ([2bb8e90](https://github.com/strausmann/fileee-mcp-server/commit/2bb8e90b3378f8c112e2c679da7fbbc051390a5d))
+
+### Bug Fixes
+
+* **server:** mcp_oidc_required_scopes tatsaechlich durchgesetzt ([#29](https://github.com/strausmann/fileee-mcp-server/issues/29)) ([6641aea](https://github.com/strausmann/fileee-mcp-server/commit/6641aeab2e0808f3f1d25856a62a30699a34cd08))
+* **server:** rate-limit- und inflight-einstellungen tatsaechlich durchgesetzt ([#30](https://github.com/strausmann/fileee-mcp-server/issues/30)) ([da0da84](https://github.com/strausmann/fileee-mcp-server/commit/da0da8427edbc2193b33ff357e16096428ba75a9))
+
 ## [0.2.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.1.0...v0.2.0) (2026-08-09)
 
 ### Features
