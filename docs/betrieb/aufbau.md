@@ -124,12 +124,86 @@ dafür eine eigene Maschinen-Identität.
 Der gebackene Einstiegspunkt kennt weder `--env` noch `--path` — er läuft
 mit den Vorgaben `env=dev`/`path=/`. Das GitOps-Repo
 (`infrastructure/docker/fileee-mcp-server`) überschreibt den Einstiegspunkt
-deshalb per Compose auf `infisical run --env=dev --path=/authentik --
-/usr/local/bin/fileee-mcp-server` (für die Entra-ID-Instanz entsprechend
-`--path=/entra-id`). Die Machine-Identity-Umgebungsvariablen
-(`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`_SECRET`) reichen dafür aus — sobald
-sie gesetzt sind, authentifiziert sich `infisical run` selbstständig gegen
-die Instanz und injiziert die Geheimnisse aus dem angegebenen Ordner.
+deshalb per Compose auf einen eigenen `--env=dev --path=/authentik`
+(für die Entra-ID-Instanz entsprechend `--path=/entra-id`).
+
+**Korrektur nach Prüfung — `infisical run` authentifiziert sich NICHT von
+selbst über die Machine-Identity-Umgebungsvariablen.** Die ursprüngliche
+Annahme oben war falsch. Live gegen das gebaute Abbild geprüft (mit
+absichtlich ungültigen Zugangsdaten, um nur den *Mechanismus* zu sehen,
+nicht ein Geheimnis zu erraten):
+
+```bash
+docker run --rm \
+  -e INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=… -e INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=… \
+  -e INFISICAL_API_URL=https://secretsmanager.strausmann.cloud/api \
+  --entrypoint /usr/local/bin/infisical fileee-mcp-server:pruef \
+  run --env=dev --path=/authentik --projectId=<projekt-id> -- /bin/true
+```
+
+Ergebnis: `No valid login session found, triggering login flow` — die CLI
+versucht einen **interaktiven Browser-/E-Mail-Login**, ignoriert die
+gesetzten Umgebungsvariablen vollständig und scheitert danach zusätzlich
+am fehlenden Schreibzugriff auf `$HOME/.infisical` (der Container hat kein
+Zuhause-Verzeichnis für den `nonroot`-Benutzer). Die offizielle Dokumentation
+(<https://infisical.com/docs/cli/commands/run>, Abschnitt „Environment
+variables“) bestätigt das: `infisical run` kennt nur **`INFISICAL_TOKEN`**
+(oder `--token`) als Zugangsdaten — keine direkte
+Universal-Auth-Unterstützung. Der dort dokumentierte Weg:
+
+```bash
+export INFISICAL_TOKEN=$(infisical login --method=universal-auth \
+  --client-id=<identity-client-id> --client-secret=<identity-client-secret> \
+  --silent --plain)
+```
+
+`--plain` gibt bei Erfolg **ausschließlich** den Token aus (leer bei
+Fehlschlag, geprüft mit denselben ungültigen Zugangsdaten — Antwort blieb
+auf stdout leer, die Fehlermeldung lief über stderr). Damit lässt sich der
+Token in eine Shell-Variable einlesen, ohne ihn je auszugeben (siehe
+`.claude/rules/secret-safe-config-inspection.md` im
+`homelab-management`-Repo, Abschnitt „CLI: `infisical login` druckt …“).
+
+Der tatsächliche Einstiegspunkt im GitOps-Repo ist deshalb ein kleiner
+Shell-Wrapper (`entrypoint: [sh, -c, …]`), der zuerst den Login-Schritt
+ausführt und den Token nur intern weiterreicht:
+
+```sh
+TOKEN="$(/usr/local/bin/infisical login \
+  --method=universal-auth \
+  --client-id="$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+  --client-secret="$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+  --domain="$INFISICAL_API_URL" \
+  --silent --plain)"
+export INFISICAL_TOKEN="$TOKEN"
+exec /usr/local/bin/infisical run \
+  --domain="$INFISICAL_API_URL" --projectId="$INFISICAL_PROJECT_ID" \
+  --env="$INFISICAL_ENV" --path="$INFISICAL_SECRET_PATH" \
+  -- /usr/local/bin/fileee-mcp-server
+```
+
+Die vollständige, kommentierte Fassung steht im GitOps-Repo
+`infrastructure/docker/fileee-mcp-server/compose.yaml` (Anker
+`x-fileee-mcp-entrypoint`).
+
+**Offen, weil ohne echtes Client-Secret nicht abschließend prüfbar
+(Aufgabe 4 übernimmt das):** Ob `infisical login --silent --plain` auch
+bei **erfolgreicher** Anmeldung ohne Schreibzugriff auf ein
+`$HOME`-Verzeichnis auskommt, ist mit den zwangsläufig ungültigen
+Testzugangsdaten dieser Aufgabe nicht geprüft worden — der Login schlug
+in jedem Testlauf schon am `401` der API fehl, bevor ein etwaiger
+Session-Schreibversuch überhaupt drankäme. Aus dem Skill-Troubleshooting
+(`.claude/skills/infisical/references/troubleshooting.md` im
+`homelab-management`-Repo, „Ohne OS-Keyring … gibt den JWT auf stdout
+aus“) ist bekannt, dass die CLI in einer keyring-losen Umgebung wie
+diesem Debian-Abbild auf den reinen Stdout-Druck zurückfällt, statt zu
+scheitern — das spricht dafür, dass kein extra `$HOME` nötig ist, ist
+aber keine Live-Bestätigung für *dieses* Abbild. Der
+Sitzungsspeicher-Bind-Mount (`/docker/stacks/fileee-mcp-server/authentik`
+→ `/home/nonroot/sessions`, siehe GitOps-README) deckt den `nonroot`-
+Benutzer für den Fall ab, dass doch ein Schreibzugriff nötig wird — sollte
+Aufgabe 4 trotzdem einen Fehler in diesem Schritt sehen, ist das der
+erste Verdacht.
 
 ### Eine Identität für beide Instanzen — bewusst ohne Trennung
 
