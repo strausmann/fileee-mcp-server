@@ -212,8 +212,8 @@ func (c *Config) AccountBySubject(subject string) (string, bool) {
 // einer Meldung, die die betroffene Variable benennt.
 func LoadConfig(env Env) (*Config, error) {
 	cfg := &Config{
-		AuthMode:            AuthMode(orDefault(env("MCP_AUTH_MODE"), string(AuthToken))),
-		OIDCProvider:        OIDCProvider(strings.TrimSpace(env("MCP_OIDC_PROVIDER"))),
+		AuthMode:     AuthMode(orDefault(env("MCP_AUTH_MODE"), string(AuthToken))),
+		OIDCProvider: OIDCProvider(strings.TrimSpace(env("MCP_OIDC_PROVIDER"))),
 		// Der Vorgabewert haengt vom Anbieter ab und wird deshalb erst in
 		// resolveProvider gesetzt — hier steht nur die ausdrueckliche Angabe.
 		OIDCSubjectClaim:    strings.TrimSpace(env("MCP_OIDC_SUBJECT_CLAIM")),
