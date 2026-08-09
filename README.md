@@ -133,7 +133,7 @@ Der Katalog entsteht schrittweise. Was heute existiert (`read`: `list_documents`
 
 ## Sicherheit
 
-- **Credentials** (Fileee-Zugangsdaten, TOTP-Seed, API-Token) gehören ausschließlich in einen Secret-Manager, nie in Code oder Commits. Der Container unterstützt neben `.env` einen Infisical-Modus.
+- **Credentials** (Fileee-Zugangsdaten, TOTP-Seed, API-Token) gehören ausschließlich in einen Secret-Manager, nie in Code oder Commits. Der Container unterstützt neben `.env` einen Infisical-Modus: Sind `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` und `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` (oder `INFISICAL_TOKEN`) gesetzt, meldet sich der Entrypoint an und injiziert die Werte; sonst startet der Server direkt mit den vorhandenen Umgebungsvariablen. Ist nur **eine** der beiden Variablen gesetzt, bricht der Start ab — ein halbes Paar ist nie Absicht, und ein stiller Rückfall auf den Umgebungs-Weg würde den Fehler erst viel später sichtbar machen.
 - **Session-Dateien** des Client-Pools sind Secrets (`0600`, je Konto getrennt) und werden nie geloggt.
 - **Dokumentinhalte sind fremdbestimmte Daten.** OCR-Text kann Anweisungen enthalten, die an das Modell gerichtet sind. Tool-Ausgaben werden deshalb als nicht vertrauenswürdig markiert, und destruktive Operationen sind zusätzlich abgesichert.
 - Die Core-Lib **schont Fileees Infrastruktur** über ihr eigenes Rate-Limiting und Backoff im HTTP-Transport ([`go-fileee` ADR-0005](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0005-schonender-betrieb-rate-limiting.md)). Dieser Server ergänzt eine zweite, unabhängige Begrenzung auf Ebene der Werkzeugaufrufe selbst — siehe „Ratenbegrenzung" unten.
