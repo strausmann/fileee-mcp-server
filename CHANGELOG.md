@@ -1,3 +1,9 @@
+## [0.5.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.4.1...v0.5.0) (2026-08-10)
+
+### Features
+
+* MCP_OIDC_ADVERTISED_SCOPES getrennt von REQUIRED_SCOPES durchreichen ([#41](https://github.com/strausmann/fileee-mcp-server/issues/41)) ([80807e3](https://github.com/strausmann/fileee-mcp-server/commit/80807e3b20b6bf5c1a1177acbdd208b309ecbd5e))
+
 ## [0.4.1](https://github.com/strausmann/fileee-mcp-server/compare/v0.4.0...v0.4.1) (2026-08-09)
 
 ### Bug Fixes
