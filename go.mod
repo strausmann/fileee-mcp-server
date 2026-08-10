@@ -6,7 +6,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/strausmann/gangway v0.5.0
 	github.com/strausmann/go-fileee v0.2.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/time v0.15.0
 )
 
