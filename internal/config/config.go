@@ -96,9 +96,22 @@ type Config struct {
 	OIDCSubjectClaim    string
 	OIDCCapabilityClaim string
 	OIDCRequiredScopes  []string
-	ResourceURL         string
-	APIToken            string
-	AllowedSubjects     []string
+	// OIDCAdvertisedScopes wird, wenn gesetzt, statt OIDCRequiredScopes VOR
+	// jedem Token-Austausch angekuendigt (WWW-Authenticate "scope"-Parameter
+	// und RFC-9728 scopes_supported, siehe internal/server/server.go,
+	// gangway.serve.Config.AdvertisedScopes ab v0.5.0) -- OIDCRequiredScopes
+	// selbst bleibt unveraendert das, wogegen scopesSatisfied den Token-Claim
+	// prueft (scopes.go). Beide Werte sind bei den meisten Anbietern
+	// identisch und diese Variable bleibt leer; Entra ist die dokumentierte
+	// Ausnahme: ein nackter Scope-Name wie "mcp.access" wird beim
+	// Token-Austausch mit AADSTS650053 abgelehnt ("scope ... that doesn't
+	// exist on the resource 'Microsoft Graph'"), angekuendigt werden muss
+	// dort die vollqualifizierte Form, waehrend der scp-Claim im
+	// ausgestellten Token weiterhin nur den kurzen Namen traegt.
+	OIDCAdvertisedScopes []string
+	ResourceURL          string
+	APIToken             string
+	AllowedSubjects      []string
 
 	AccountMode AccountMode
 	Accounts    []Account
@@ -216,17 +229,18 @@ func LoadConfig(env Env) (*Config, error) {
 		OIDCProvider: OIDCProvider(strings.TrimSpace(env("MCP_OIDC_PROVIDER"))),
 		// Der Vorgabewert haengt vom Anbieter ab und wird deshalb erst in
 		// resolveProvider gesetzt — hier steht nur die ausdrueckliche Angabe.
-		OIDCSubjectClaim:    strings.TrimSpace(env("MCP_OIDC_SUBJECT_CLAIM")),
-		OIDCCapabilityClaim: strings.TrimSpace(env("MCP_OIDC_CAPABILITY_CLAIM")),
-		OIDCRequiredScopes:  splitListe(env("MCP_OIDC_REQUIRED_SCOPES")),
-		ResourceURL:         strings.TrimSpace(env("MCP_RESOURCE_URL")),
-		APIToken:            env("MCP_API_TOKEN"),
-		AllowedSubjects:     splitListe(env("MCP_ALLOWED_SUBJECTS")),
-		AccountMode:         AccountMode(orDefault(env("FILEEE_MODE"), string(ModeSingle))),
-		ListenAddr:          orDefault(env("MCP_LISTEN_ADDR"), ":8080"),
-		SessionDir:          orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
-		ClientIPHeaderMode:  origin.HeaderMode(orDefault(env("FILEEE_CLIENT_IP_HEADER_MODE"), string(origin.ModeCFConnectingIP))),
-		LogLevel:            orDefault(env("FILEEE_LOG_LEVEL"), "info"),
+		OIDCSubjectClaim:     strings.TrimSpace(env("MCP_OIDC_SUBJECT_CLAIM")),
+		OIDCCapabilityClaim:  strings.TrimSpace(env("MCP_OIDC_CAPABILITY_CLAIM")),
+		OIDCRequiredScopes:   splitListe(env("MCP_OIDC_REQUIRED_SCOPES")),
+		OIDCAdvertisedScopes: splitListe(env("MCP_OIDC_ADVERTISED_SCOPES")),
+		ResourceURL:          strings.TrimSpace(env("MCP_RESOURCE_URL")),
+		APIToken:             env("MCP_API_TOKEN"),
+		AllowedSubjects:      splitListe(env("MCP_ALLOWED_SUBJECTS")),
+		AccountMode:          AccountMode(orDefault(env("FILEEE_MODE"), string(ModeSingle))),
+		ListenAddr:           orDefault(env("MCP_LISTEN_ADDR"), ":8080"),
+		SessionDir:           orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
+		ClientIPHeaderMode:   origin.HeaderMode(orDefault(env("FILEEE_CLIENT_IP_HEADER_MODE"), string(origin.ModeCFConnectingIP))),
+		LogLevel:             orDefault(env("FILEEE_LOG_LEVEL"), "info"),
 	}
 
 	switch cfg.ClientIPHeaderMode {
