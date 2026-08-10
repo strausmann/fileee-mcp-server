@@ -79,6 +79,15 @@ Weitere netzwerkbezogene Variablen, die im Modus `oidc` Pflicht bzw. relevant si
 | `FILEEE_TRUSTED_PROXIES` | CIDR-Liste der Proxys, deren Weiterleitungs-Header (siehe `FILEEE_CLIENT_IP_HEADER_MODE`) geglaubt werden | leer — es zählt nur die Peer-Adresse |
 | `FILEEE_CLIENT_IP_HEADER_MODE` | genau ein Weiterleitungs-Header als Quelle der Client-Adresse: `x-forwarded-for`, `x-real-ip` oder `cf-connecting-ip` | `cf-connecting-ip` — vor dem Produktivbetrieb gegen die tatsächliche Proxy-Kette (z. B. Pangolin/Traefik) prüfen |
 
+Zwei weitere Variablen rund um Scopes — angefordert/geprüft und angekündigt sind bei den meisten Anbietern derselbe Wert, aber nicht bei jedem:
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `MCP_OIDC_REQUIRED_SCOPES` | Kommaliste der Scopes, die ein Token tragen muss — geprüft gegen den `scp`-Claim des verifizierten Tokens (ersatzweise `scope`) | leer — jeder authentifizierte Aufrufer erlaubt |
+| `MCP_OIDC_ADVERTISED_SCOPES` | überschreibt, wenn gesetzt, ausschließlich das, was **vor** dem Token-Austausch angekündigt wird (`WWW-Authenticate`-`scope`-Parameter, RFC-9728-`scopes_supported`) — `MCP_OIDC_REQUIRED_SCOPES` bleibt davon unberührt und bleibt das, wogegen tatsächlich geprüft wird | leer — Ankündigung fällt auf `MCP_OIDC_REQUIRED_SCOPES` zurück |
+
+Der Grund für die Trennung: ein Connector, der noch kein Token besitzt, erfährt den geforderten Scope ausschließlich über diese Ankündigung. Bei den meisten Anbietern (u. a. Authentik) ist der beim Anbieter angeforderte Scope-Name identisch mit dem später im Token ausgestellten `scp`-Wert — `MCP_OIDC_REQUIRED_SCOPES` allein reicht. Microsoft Entra ID ist die dokumentierte Ausnahme: angekündigt/angefordert werden muss dort eine vollqualifizierte Form (`https://<mcp-host>/mcp/<scope-name>`), während der ausgestellte `scp`-Claim weiterhin nur den kurzen Namen trägt — ein nackter Name scheitert beim Anbieter mit `AADSTS650053`. Details zur Entra-spezifischen Form: [`docs/idp/entra-id.md`](docs/idp/entra-id.md).
+
 ### Mehrere Benutzer, je eigenes Fileee-Konto
 
 ```dotenv

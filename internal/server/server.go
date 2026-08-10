@@ -136,6 +136,24 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		// jeder Kontrolle von scopesSatisfied, das nur ein bereits
 		// ausgestelltes Token prueft.
 		RequiredScopes: cfg.OIDCRequiredScopes,
+		// AdvertisedScopes (gangway >= v0.5.0) uebernimmt die Ankuendigung
+		// (WWW-Authenticate "scope" und RFC-9728 scopes_supported), WENN
+		// gesetzt -- RequiredScopes bleibt daneben unveraendert das, wogegen
+		// scopesSatisfied (scopes.go) den scp/scope-Claim des Tokens prueft.
+		// Der Grund fuer die Trennung ist Entra: RequiredScopes/AADSTS9010010
+		// oben loeste die fehlende Ankuendigung fuer Anbieter, bei denen der
+		// beim IdP angeforderte Scope-Name mit dem im Token ausgestellten
+		// scp-Claim identisch ist (Authentik). Bei Entra sind beide Werte
+		// NICHT identisch: angekuendigt werden muss die vollqualifizierte
+		// Form "https://<host>/mcp/<scope>", waehrend scp weiterhin nur den
+		// kurzen Namen traegt -- ein Connector, der RequiredScopes als
+		// Ankuendigung naehme, fordert dort den falschen (kurzen) Namen an
+		// und scheitert mit AADSTS650053, wieder bevor dieser Server je
+		// erreicht wird. cfg.OIDCAdvertisedScopes ist bei jedem anderen
+		// Anbieter leer (Default) -- Handler/challenge fallen dann in
+		// gangway selbst auf RequiredScopes zurueck (serve.Server.advertisedScopes),
+		// das Verhalten bleibt fuer diese Deployments unveraendert.
+		AdvertisedScopes: cfg.OIDCAdvertisedScopes,
 	}
 
 	gw, err := serve.New(ctx, gwCfg, serve.WithToolKinds(tools.ReadToolKinds()))

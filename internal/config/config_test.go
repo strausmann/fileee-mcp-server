@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -549,6 +550,78 @@ func TestLoadConfigNetzwerkPraefixe(t *testing.T) {
 	}
 	if bits := cfg.AllowedOriginPrefixes[1].Bits(); bits != 128 {
 		t.Errorf("AllowedOriginPrefixes[1].Bits() = %d, erwartet 128 (nackte IPv6-Adresse als /128)", bits)
+	}
+}
+
+// --- MCP_OIDC_ADVERTISED_SCOPES ---------------------------------------------
+//
+// Getrennt von MCP_OIDC_REQUIRED_SCOPES: RequiredScopes bleibt, wogegen
+// scopesSatisfied den scp/scope-Claim des Tokens prueft (siehe scopes.go).
+// AdvertisedScopes ist NEU und beeinflusst ausschliesslich, was VOR einem
+// Token-Austausch angekuendigt wird (WWW-Authenticate "scope"-Parameter und
+// RFC-9728 scopes_supported, siehe internal/server/server.go). Der Anlass:
+// Entra weist einen nackten Scope-Namen wie "mcp.access" beim Token-Austausch
+// mit AADSTS650053 zurueck ("scope ... that doesn't exist on the resource
+// 'Microsoft Graph'") -- angekuendigt werden muss dort die vollqualifizierte
+// Form (z. B. "https://<host>/mcp/mcp.access"), waehrend das Token im
+// scp-Claim weiterhin nur den kurzen Namen traegt. Fuer Authentik (kurze
+// Namen auf beiden Seiten) bleibt die Variable ungesetzt.
+
+// TestLoadConfigDefaultsAdvertisedScopesToEmpty ist die
+// Abwaertskompatibilitaets-Regression: ohne MCP_OIDC_ADVERTISED_SCOPES darf
+// sich nichts aendern -- server.go faellt dann auf OIDCRequiredScopes zurueck
+// (siehe dort).
+func TestLoadConfigDefaultsAdvertisedScopesToEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadConfig(envOf(minimalOIDC()))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	if len(cfg.OIDCAdvertisedScopes) != 0 {
+		t.Errorf("OIDCAdvertisedScopes = %v, erwartet leer (MCP_OIDC_ADVERTISED_SCOPES nicht gesetzt)",
+			cfg.OIDCAdvertisedScopes)
+	}
+}
+
+// TestLoadConfigParsesAdvertisedScopesFullyQualifiedEntraValue ist der Grund,
+// warum diese Variable ueberhaupt existiert: eine vollqualifizierte,
+// Entra-taugliche Form mit Doppelpunkt und Schraegstrichen muss unveraendert
+// durchgereicht werden -- eine Validierung, die solche Zeichen ablehnen
+// wuerde, waere fuer genau den Fall unbrauchbar, den die Variable loesen soll.
+func TestLoadConfigParsesAdvertisedScopesFullyQualifiedEntraValue(t *testing.T) {
+	t.Parallel()
+
+	env := minimalOIDC()
+	env["MCP_OIDC_ADVERTISED_SCOPES"] = "https://fileee-mcp-entra.strausmann.cloud/mcp/mcp.access"
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	want := []string{"https://fileee-mcp-entra.strausmann.cloud/mcp/mcp.access"}
+	if !slices.Equal(cfg.OIDCAdvertisedScopes, want) {
+		t.Errorf("OIDCAdvertisedScopes = %v, erwartet %v", cfg.OIDCAdvertisedScopes, want)
+	}
+}
+
+// TestLoadConfigParsesMultipleAdvertisedScopesCommaSeparated spiegelt das
+// bestehende Verhalten von MCP_OIDC_REQUIRED_SCOPES (splitListe: trimmt
+// Leerraum, verwirft leere Eintraege) -- dieselbe Kommaliste-Konvention wie
+// jede andere Listen-Variable in dieser Datei.
+func TestLoadConfigParsesMultipleAdvertisedScopesCommaSeparated(t *testing.T) {
+	t.Parallel()
+
+	env := minimalOIDC()
+	env["MCP_OIDC_ADVERTISED_SCOPES"] = " api://app-id/mcp.access , ,api://app-id/offline_access"
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	want := []string{"api://app-id/mcp.access", "api://app-id/offline_access"}
+	if !slices.Equal(cfg.OIDCAdvertisedScopes, want) {
+		t.Errorf("OIDCAdvertisedScopes = %v, erwartet %v", cfg.OIDCAdvertisedScopes, want)
 	}
 }
 
