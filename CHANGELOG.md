@@ -1,3 +1,9 @@
+## [0.5.1](https://github.com/strausmann/fileee-mcp-server/compare/v0.5.0...v0.5.1) (2026-08-11)
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/sync to v0.22.0 ([#25](https://github.com/strausmann/fileee-mcp-server/issues/25)) ([7a955d4](https://github.com/strausmann/fileee-mcp-server/commit/7a955d40e432de28acda85c373188621765a8465))
+
 ## [0.5.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.4.1...v0.5.0) (2026-08-10)
 
 ### Features
