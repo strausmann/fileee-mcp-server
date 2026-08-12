@@ -20,7 +20,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/go-fileee/fileee"
@@ -193,18 +195,24 @@ type genericSyncOutput[S any] struct {
 // registerReadService uses (read_generic.go), generalized over any
 // fileee.ReadService[T].Diff instead of Query/Get.
 //
+// logger receives d.SyncName's diagnostic log, threaded straight through
+// to genericSyncHandler — the same pattern registerReadService follows
+// for its own two tools (read_generic.go). Aufgabe 2c closed the gap
+// where this parameter did not exist yet, alongside the identical gap in
+// registerReadService (#45/#46 both shipped without it).
+//
 // It panics — like registerReadService already does for a leaking
 // list/get descriptor — if d fails mustNotLeakUntrustedText's check. That
 // check runs once, here, not per request: see mustNotLeakUntrustedText's
 // own doc comment (read_generic.go) for why.
-func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, d syncDescriptor[T, S]) {
+func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S]) {
 	mustNotLeakUntrustedText("syncDescriptor", d.SyncName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.SyncName,
 		Description: d.SyncDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, genericSyncHandler(p, d))
+	}, genericSyncHandler(p, logger, d))
 }
 
 // genericSyncHandler resolves d.SyncName. It checks the caller's cursor
@@ -214,18 +222,32 @@ func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, d syncDescrip
 // parameter (read_generic.go) — then splits client resolution from the
 // actual Diff/summarize/frame logic (syncFromService) for the same
 // testability reason listFromService does.
-func genericSyncHandler[T any, S any](p *clientpool.Pool, d syncDescriptor[T, S]) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[S]] {
+//
+// It logs through logger the same way genericListHandler/genericGetHandler
+// do (read_generic.go, see genericListHandler's own doc comment for the
+// endpoint-argument caveat that applies here too): the caller's cursor is
+// logged at debug only via logToolStart, on every path including a
+// rejected cursor or a clientFor failure.
+func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S]) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericSyncInput) (*mcp.CallToolResult, genericSyncOutput[S], error) {
+		start := time.Now()
+		logToolStart(ctx, logger, d.SyncName, slog.String("cursor", in.Cursor))
+
 		cursor, err := checkCursorEntityType(in.Cursor, d.EntityType)
 		if err != nil {
-			return nil, genericSyncOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.SyncName, err)
+			wrapped := fmt.Errorf("fileee-mcp: tools: %s: %w", d.SyncName, err)
+			logToolEnd(ctx, logger, d.SyncName, start, "", 0, wrapped)
+			return nil, genericSyncOutput[S]{}, wrapped
 		}
 
 		client, err := clientFor(ctx, p)
 		if err != nil {
+			logToolEnd(ctx, logger, d.SyncName, start, "", 0, err)
 			return nil, genericSyncOutput[S]{}, err
 		}
-		return syncFromService(ctx, d, d.Service(client), cursor)
+		result, out, err := syncFromService(ctx, d, d.Service(client), cursor)
+		logToolEnd(ctx, logger, d.SyncName, start, "", len(out.Entries), err)
+		return result, out, err
 	}
 }
 
@@ -522,12 +544,16 @@ func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConver
 // directly (read.go). This file's own tests also call it directly, without
 // going through RegisterRead, to keep those tests independent of the
 // unrelated tools RegisterRead mounts.
-func registerSyncTools(s *mcp.Server, p *clientpool.Pool) {
-	registerSync(s, p, tagSyncDescriptor())
-	registerSync(s, p, companySyncDescriptor())
-	registerSync(s, p, documentTypeSyncDescriptor())
-	registerSync(s, p, documentTypeSchemeSyncDescriptor())
-	registerSync(s, p, contactSyncDescriptor())
-	registerSync(s, p, reminderSyncDescriptor())
-	registerSync(s, p, conversationSyncDescriptor())
+//
+// logger is threaded straight through to every registerSync call — the
+// same logger RegisterRead itself received, never a fresh one built here
+// (see RegisterRead's own doc comment, read.go).
+func registerSyncTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+	registerSync(s, p, logger, tagSyncDescriptor())
+	registerSync(s, p, logger, companySyncDescriptor())
+	registerSync(s, p, logger, documentTypeSyncDescriptor())
+	registerSync(s, p, logger, documentTypeSchemeSyncDescriptor())
+	registerSync(s, p, logger, contactSyncDescriptor())
+	registerSync(s, p, logger, reminderSyncDescriptor())
+	registerSync(s, p, logger, conversationSyncDescriptor())
 }
