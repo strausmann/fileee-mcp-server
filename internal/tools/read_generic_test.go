@@ -112,9 +112,16 @@ func toolNamesOf(t *testing.T, s *mcp.Server) map[string]bool {
 // Mock-HTTP-Server, ohne Login-Handshake: readServiceDescriptor.Service
 // entscheidet, welche Implementierung der echte Handler bekommt, und ein
 // Test kann dort schlicht diese Attrappe eintragen.
+// diffErr/diffResult (added for read_sync_test.go's own error-path and
+// happy-path tests — this fixture is shared across both files, same
+// package) follow queryErr/getErr's own pattern: nil means "use the zero
+// value", set means "return this instead". Existing callers that never
+// set them are unaffected.
 type fakeReadService[T any] struct {
-	queryErr error
-	getErr   error
+	queryErr   error
+	getErr     error
+	diffErr    error
+	diffResult *fileee.DiffResult[T]
 }
 
 func (f *fakeReadService[T]) Query(context.Context, fileee.QueryOptions) (*fileee.QueryResult[T], error) {
@@ -125,6 +132,12 @@ func (f *fakeReadService[T]) Query(context.Context, fileee.QueryOptions) (*filee
 }
 
 func (f *fakeReadService[T]) Diff(context.Context, fileee.Cursor) (*fileee.DiffResult[T], error) {
+	if f.diffErr != nil {
+		return nil, f.diffErr
+	}
+	if f.diffResult != nil {
+		return f.diffResult, nil
+	}
 	return &fileee.DiffResult[T]{}, nil
 }
 
@@ -361,6 +374,35 @@ func TestRegisterReadServicePanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("erwartete Panic (PoisonProbe gesetzt, UntrustedLine nil) blieb aus")
+		}
+	}()
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	registerReadService(s, (*clientpool.Pool)(nil), d)
+}
+
+// TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp ist die Meldungstext-
+// Gegenprobe zu den Panic-Tests oben: die pruefen nur, DASS eine Panic
+// geschieht, nie WELCHER Text drinsteht. Bei der Extraktion von
+// mustNotLeakUntrustedText (Aufgabe 2b, Antrag #46, erste Runde) ist genau
+// dieser Text verlorengegangen — der Bezeichner "readServiceDescriptor"
+// fehlte in vier von fuenf Meldungen, weil kein Test je den Wortlaut
+// pruefte. Dieser Test schliesst die Luecke: schlaegt fehl, sollte
+// "readServiceDescriptor" wieder aus einer Meldung verschwinden.
+func TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp(t *testing.T) {
+	d := tagDescriptor()
+	d.PoisonProbe = nil // UntrustedLine bleibt gesetzt (aus tagDescriptor())
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("erwartete Panic blieb aus")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("Panic-Wert ist kein string: %v", r)
+		}
+		if !strings.Contains(msg, "readServiceDescriptor") {
+			t.Errorf("Panic-Meldung %q nennt nicht den Deskriptor-Typ readServiceDescriptor", msg)
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)

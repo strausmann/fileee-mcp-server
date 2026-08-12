@@ -32,6 +32,17 @@ import (
 const (
 	ToolListDocuments   = "list_documents"
 	ToolSearchDocuments = "search_documents"
+
+	// ToolSyncTags through ToolSyncConversations are the seven generic
+	// sync tools' registered names (read_sync.go, Aufgabe 2b) — Diff's
+	// counterpart to readServiceDescriptor's list/get pair.
+	ToolSyncTags                = "sync_tags"
+	ToolSyncCompanies           = "sync_companies"
+	ToolSyncDocumentTypes       = "sync_document_types"
+	ToolSyncDocumentTypeSchemes = "sync_document_type_schemes"
+	ToolSyncContacts            = "sync_contacts"
+	ToolSyncReminders           = "sync_reminders"
+	ToolSyncConversations       = "sync_conversations"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -75,6 +86,15 @@ const (
 var readToolNames = []string{
 	ToolListDocuments,
 	ToolSearchDocuments,
+	// The seven generic sync tools (Aufgabe 2b, read_sync.go) — all pure
+	// reads (fileee.ReadService[T].Diff), same reasoning as the pair above.
+	ToolSyncTags,
+	ToolSyncCompanies,
+	ToolSyncDocumentTypes,
+	ToolSyncDocumentTypeSchemes,
+	ToolSyncContacts,
+	ToolSyncReminders,
+	ToolSyncConversations,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
