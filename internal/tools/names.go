@@ -80,14 +80,18 @@ func registeredReadTools() []*mcp.Tool {
 	if err != nil {
 		panic(fmt.Errorf("fileee-mcp: tools: registeredReadTools: connect probe server: %w", err))
 	}
-	defer serverSession.Close()
+	// A close failure on a throwaway in-memory session that already served its
+	// one tools/list round-trip changes nothing about the result already
+	// captured below — same reasoning as cmd/fileee-mcp-server/main.go's
+	// resp.Body.Close() on a healthcheck response already fully read.
+	defer func() { _ = serverSession.Close() }()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "registered-read-tools-probe", Version: "0"}, nil)
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		panic(fmt.Errorf("fileee-mcp: tools: registeredReadTools: connect probe client: %w", err))
 	}
-	defer clientSession.Close()
+	defer func() { _ = clientSession.Close() }()
 
 	res, err := clientSession.ListTools(ctx, nil)
 	if err != nil {
