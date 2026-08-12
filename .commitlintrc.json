@@ -13,6 +13,7 @@
         "clientpool",
         "tools",
         "capabilities",
+        "diag",
         "deploy",
         "adr",
         "ci",
