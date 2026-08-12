@@ -31,7 +31,7 @@ Die Schwellen pro Datei stehen in [`.github/workflows/test.yml`](.github/workflo
 
 | Kategorie | Schwelle | Dateien |
 |---|---|---|
-| Auth/Permission | 90 | `auth_oidc.go`, `auth_token.go`, `internal/accounts/accounts.go`, `internal/config/capabilities.go`, `internal/config/config.go` |
+| Auth/Permission | 90 | `auth_oidc.go`, `auth_token.go`, `internal/accounts/accounts.go`, `internal/config/capabilities.go`, `internal/config/config.go`, `internal/server/scopes.go`, `internal/server/ratelimit.go`, `internal/diag/diag.go` (sicherheitskritisch: verhindert, dass ein Credential ins Diagnose-Protokoll gelangt) |
 | Mutations-Logik | 85 | `internal/clientpool/pool.go`, `tools_destructive.go`, mutierende Tool-Pfade |
 | Business-Logik | 80 | `internal/tools/read.go`, übrige `tools_*.go`, `internal/server/server.go`, `errors.go` |
 | Adapter/Boot | 60 | `cmd/fileee-mcp-server/main.go`, `secrets.go` |
