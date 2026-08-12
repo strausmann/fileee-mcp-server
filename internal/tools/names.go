@@ -1,9 +1,17 @@
 // names.go buendelt die Namen aller lesenden Werkzeuge und ihre Einstufung
 // fuer Gangways Autorisierungs-Zwischenschicht an einer Stelle. Ein Name,
 // der hier fehlt, gilt dort als access.KindWrite und wird fuer jeden
-// Aufrufer abgelehnt — deshalb liegen Anmeldung und Einstufung nebeneinander,
-// abgeleitet aus denselben tatsaechlich angemeldeten Werkzeugen statt
-// doppelt gepflegt (siehe registeredReadTools).
+// Aufrufer abgelehnt.
+//
+// Die Einstufung (readToolNames) ist bewusst NICHT aus der tatsaechlichen
+// Anmeldung abgeleitet, obwohl RegisterRead (registeredReadTools) genau das
+// haette hergeben koennen — eine Liste, die sich selbst aus dem prueft, was
+// sie eigentlich absichern soll, kann nichts entdecken: ein versehentlich
+// registriertes schreibendes Werkzeug waere ebenso automatisch als lesend
+// durchgerutscht. readToolNames ist deshalb eine zweite, physisch getrennte
+// Handlung; registeredReadTools() dient nur noch als Gegenprobe in beide
+// Richtungen. Ein fehlender Eintrag fuehrt zur Ablehnung (KindWrite), nie
+// zur Freigabe — die sichere Ausfallrichtung. Details siehe readToolNames.
 package tools
 
 import (
@@ -89,18 +97,23 @@ func ReadToolKinds() map[string]access.ToolKind {
 }
 
 // registeredReadTools mounts RegisterRead onto a throwaway server and reads
-// its tools back over an in-memory client-server connection.
+// its tools back over an in-memory client-server connection — the ground
+// truth of what RegisterRead actually mounts, used two ways:
+//
+//  1. descriptions_test.go's description-length check runs against this
+//     list, because that question ("what does a caller see") is exactly
+//     what a real tools/list call answers.
+//  2. It is readToolNames' Gegenprobe, not its source (see that var's doc
+//     comment for why the two must stay independent): the same tests
+//     compare this list against readToolNames in both directions, so
+//     neither a forgotten entry nor a stale one goes unnoticed.
 //
 // go-sdk v1.7.0's *mcp.Server keeps its registered tools in an unexported
 // featureSet (see mcp.Server.AddTool/listTools) with no public accessor —
 // there is no "probe.Tools()". Introspecting a server's own tool set
 // therefore means acting like a real MCP client and asking it, the same
 // pattern this repo's own tests already use for exactly this purpose
-// (internal/server/server_test.go, toolNamesOf). Going through the wire
-// protocol like a real caller, rather than keeping a second,
-// hand-maintained list of registered tools, means this function can never
-// drift from what RegisterRead actually mounts: descriptions_test.go's
-// checks see exactly what a real MCP client sees after a tools/list call.
+// (internal/server/server_test.go, toolNamesOf).
 //
 // p is (*clientpool.Pool)(nil): none of RegisterRead's tool handlers run
 // during registration or during a tools/list round-trip — only AddTool's
