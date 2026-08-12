@@ -307,3 +307,62 @@ func TestRegisterReadServicePanictNichtBeiUnabhaengigenLegitimenFeldern(t *testi
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 	registerReadService(s, (*clientpool.Pool)(nil), d) // darf NICHT paniken
 }
+
+// --- 3. Korrekturrunde: UntrustedLine optional, fuer Typen ohne Fremdtext ---
+//
+// Aufgabe 3 (Schlagworte, Firmen, Dokumenttypen, Schemata) hat KEINEN
+// fremdbestimmten Text — diese Namen waehlt der Kontoinhaber selbst, laut
+// Entwurf. Kein PoisonProbe kann fuer so einen Deskriptor je die
+// Selbstpruefung erfuellen, weil UntrustedLine die Entitaet gar nicht
+// ansieht. UntrustedLine ist deshalb optional (nil): nil bedeutet "dieser
+// Typ traegt nie Fremdtext", ueberspringt die Pruefung UND die
+// PoisonProbe-Pflicht vollstaendig. Siehe readServiceDescriptor's eigener
+// Kommentar (read_generic.go) fuer die Abgrenzung zu "UntrustedLine ist
+// gesetzt, liefert aber fuer DIESE Entitaet leeren Text".
+
+// TestRegisterReadServiceStartetSauberOhneFremdbestimmtenText ist der vom
+// Team-Lead/Pruefer konkret geforderte erste Abnahme-Fall: ein Deskriptor
+// nach Aufgabe-3-Muster (UntrustedLine nil, PoisonProbe nil) MUSS sauber
+// anmelden koennen — sonst kaeme der Server beim Start nicht hoch, sobald
+// Aufgabe 3 diese vier Dienste verdrahtet.
+func TestRegisterReadServiceStartetSauberOhneFremdbestimmtenText(t *testing.T) {
+	d := readServiceDescriptor[fileee.Tag, tagSummary]{
+		ListName:        "list_tags_notrusted",
+		GetName:         "get_tag_notrusted",
+		ListDescription: descriptionFixture,
+		GetDescription:  descriptionFixture,
+		Service:         func(c *fileee.Client) fileee.ReadService[fileee.Tag] { return c.Tags },
+		Summarize:       func(tag *fileee.Tag) tagSummary { return tagSummary{ID: tag.ID} },
+		// UntrustedLine bewusst nicht gesetzt — kein Fremdtext bei diesem Typ.
+		// PoisonProbe bewusst nicht gesetzt — es gibt nichts zu vergiften.
+	}
+
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	registerReadService(s, (*clientpool.Pool)(nil), d) // darf NICHT paniken
+
+	names := toolNamesOf(t, s)
+	if !names["list_tags_notrusted"] || !names["get_tag_notrusted"] {
+		t.Error("Werkzeuge eines Deskriptors ohne Fremdtext wurden nicht angemeldet")
+	}
+}
+
+// TestRegisterReadServicePanictWennPoisonProbeOhneUntrustedLineGesetztIst
+// ist das zusaetzliche, kostenlose Sicherheitsnetz: ein gesetztes
+// PoisonProbe bei nil UntrustedLine liest sich wie "die Fremdtext-Pruefung
+// wurde angefangen und nicht zu Ende verdrahtet" — die eine Haelfte dieses
+// Fehlers, die eine Mechanik erkennen kann (die andere Haelfte — beide
+// Felder faelschlich leer bei einem Typ, der tatsaechlich Fremdtext
+// traegt — kann keine Mechanik erkennen, das ist Fachwissen, siehe
+// UntrustedLine's eigener Kommentar).
+func TestRegisterReadServicePanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *testing.T) {
+	d := tagDescriptor()
+	d.UntrustedLine = nil // PoisonProbe bleibt gesetzt (aus tagDescriptor())
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("erwartete Panic (PoisonProbe gesetzt, UntrustedLine nil) blieb aus")
+		}
+	}()
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	registerReadService(s, (*clientpool.Pool)(nil), d)
+}

@@ -36,9 +36,7 @@ import (
 // foreign content: it never appears in Summarize's return value, only in
 // the accompanying text content, framed by wrapUntrustedLines (ADR-0013;
 // see also listDocumentsHandler's own doc comment for why the same rule
-// applies there). Returning "" from UntrustedLine means the entity carries
-// no foreign text worth framing — search_documentsHandler already makes
-// exactly that call for its own service, see its own doc comment.
+// applies there).
 //
 // Nothing about Summarize's and UntrustedLine's SIGNATURES enforces that
 // separation — they are two independent functions a descriptor author
@@ -55,6 +53,18 @@ import (
 //     TestRegisterReadServiceMeldetListeUndDetailAn already establishes)
 //     exercises registerReadService, and therefore exercises 1 for free —
 //     there is no separate assertion to remember.
+//
+// Neither of these — no mechanism this package can build — can decide
+// WHETHER a given T carries foreign text at all; that is domain knowledge
+// (does the account holder or a third party choose this value?), not
+// something derivable from a type or a running value. That classification
+// is made once, by hand, at each descriptor's UntrustedLine field itself —
+// see that field's own doc comment for the two ways to make it, and for
+// the boundary that stays a matter of author judgement no matter which
+// (Aufgabe 3's own tag/company/document-type/scheme descriptors are the
+// concrete case: their names are chosen by the account holder, per the
+// concept document, not by a third party — so they leave UntrustedLine
+// nil, deliberately, not as an oversight).
 type readServiceDescriptor[T any, S any] struct {
 	// ListName and GetName are the registered tool names.
 	ListName string
@@ -77,19 +87,45 @@ type readServiceDescriptor[T any, S any] struct {
 	// foreign free text, see this type's own doc comment.
 	Summarize func(*T) S
 	// UntrustedLine renders one entity's foreign free text as a single
-	// line for the untrusted block wrapUntrustedLines builds, or "" if
-	// this entity carries none.
+	// line for the untrusted block wrapUntrustedLines builds. There are
+	// two distinct ways for it to say "nothing to frame here", and they
+	// mean different things:
+	//
+	//   - Set, but returning "" for a PARTICULAR entity: this entity of an
+	//     otherwise foreign-text-carrying type just happens to have none
+	//     right now (list_documents' own title field, empty for a
+	//     document with no title, is this case — see
+	//     listDocumentsHandler's own doc comment). mustNotLeakUntrustedLine
+	//     still runs and still requires PoisonProbe.
+	//   - Left nil: this TYPE never carries foreign text at all — every
+	//     field Summarize could possibly expose is chosen by the account
+	//     holder, not by a third party (Aufgabe 3's tag/company/
+	//     document-type/scheme descriptors are the concrete case: their
+	//     names are the account holder's own, per the concept document).
+	//     mustNotLeakUntrustedLine skips its check entirely then — there
+	//     is nothing to verify a leak against — and PoisonProbe must be
+	//     nil too (see that field's own doc comment).
+	//
+	// This second case is a judgement call this package cannot verify —
+	// see readServiceDescriptor's own doc comment for why no mechanism
+	// here can decide it for you.
 	UntrustedLine func(*T) string
 	// PoisonProbe constructs a T whose foreign-text source — whichever
 	// field(s) UntrustedLine actually reads — is set to the marker it is
 	// given. registerReadService calls it once, at registration, to prove
 	// Summarize never reproduces what UntrustedLine frames (see
-	// mustNotLeakUntrustedLine). Required: a nil PoisonProbe panics at
-	// registration rather than silently skipping the check — an unset
-	// PoisonProbe means this guarantee was never verified for this
-	// descriptor at all, and that must be as loud as a missing tool name
-	// (see names.go's own reasoning for the same "silent gap must be
-	// loud" principle applied to readToolNames).
+	// mustNotLeakUntrustedLine).
+	//
+	// Required whenever UntrustedLine is set (a nil PoisonProbe then
+	// panics at registration rather than silently skipping the check —
+	// see UntrustedLine's own doc comment for why the two fields track
+	// each other, and names.go's reasoning for the same "silent gap must
+	// be loud" principle applied to readToolNames). Must itself be nil
+	// when UntrustedLine is nil: a set PoisonProbe with a nil
+	// UntrustedLine panics too — that combination reads as "I started
+	// wiring the foreign-text check and stopped partway", the one half of
+	// this mistake a mechanism CAN catch (see UntrustedLine's own doc
+	// comment on the half it cannot).
 	//
 	// Example, for a descriptor whose UntrustedLine composes "Max " +
 	// contact.LastName:
@@ -195,10 +231,30 @@ func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, d read
 // real caller's real documents into a rejected, working tool call —
 // worse than the silent duplication this exists to catch. This runs once
 // per process (registration time), so its cost is irrelevant regardless.
+//
+// d.UntrustedLine == nil is not a degenerate input to reject — it is the
+// descriptor's own declaration that this T never carries foreign text at
+// all (see that field's own doc comment), and this function has nothing
+// to check a leak against in that case: it returns immediately, requiring
+// PoisonProbe to be nil too (a set one with a nil UntrustedLine panics —
+// see PoisonProbe's own doc comment on why that combination is worth
+// catching even though the reverse mistake, both left nil for a type that
+// actually does carry foreign text, is not something any mechanism here
+// can detect).
 func mustNotLeakUntrustedLine[T any, S any](d readServiceDescriptor[T, S]) {
+	if d.UntrustedLine == nil {
+		if d.PoisonProbe != nil {
+			panic(fmt.Sprintf(
+				"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe is set but UntrustedLine is nil — "+
+					"either wire UntrustedLine too, or remove PoisonProbe if this type truly carries no foreign text",
+				d.ListName, d.GetName))
+		}
+		return
+	}
+
 	if d.PoisonProbe == nil {
 		panic(fmt.Sprintf(
-			"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe is required — "+
+			"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe is required whenever UntrustedLine is set — "+
 				"without it, whether Summarize reproduces UntrustedLine's foreign text was never checked for this descriptor",
 			d.ListName, d.GetName))
 	}
@@ -289,7 +345,7 @@ func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[
 	for i := range res.Rows {
 		entry := res.Rows[i]
 		out.Entries = append(out.Entries, d.Summarize(&entry))
-		if line := d.UntrustedLine(&entry); line != "" {
+		if line := untrustedLineOf(d, &entry); line != "" {
 			lines = append(lines, line)
 		}
 	}
@@ -330,11 +386,21 @@ func getFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T
 	}
 
 	out := genericGetOutput[S]{Entry: d.Summarize(entry)}
-	result, err := wrapUntrustedLines([]string{d.UntrustedLine(entry)})
+	result, err := wrapUntrustedLines([]string{untrustedLineOf(d, entry)})
 	if err != nil {
 		return nil, genericGetOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.GetName, err)
 	}
 	return result, out, nil
+}
+
+// untrustedLineOf returns d.UntrustedLine(entity), or "" if UntrustedLine
+// is nil — the descriptor's own declaration that this T carries no foreign
+// text at all (see UntrustedLine's own doc comment on readServiceDescriptor).
+func untrustedLineOf[T any, S any](d readServiceDescriptor[T, S], entity *T) string {
+	if d.UntrustedLine == nil {
+		return ""
+	}
+	return d.UntrustedLine(entity)
 }
 
 // wrapUntrustedLines frames lines' non-empty entries as one untrusted
