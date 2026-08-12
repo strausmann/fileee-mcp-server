@@ -120,9 +120,9 @@ type syncDescriptor[T any, S any] struct {
 	SyncName string
 	// SyncDescription is this tool's Description, held to the same
 	// four-part standard (what, returns, when, does-not) and minimum
-	// length descriptions_test.go checks for RegisterRead's own tools —
-	// checked there again once this file's tools are wired into
-	// RegisterRead.
+	// length descriptions_test.go checks for every tool RegisterRead
+	// mounts — checked there since registerSyncTools is wired into
+	// RegisterRead (read.go).
 	SyncDescription string
 	// EntityType must match the library's own convention name for this
 	// resource (e.g. "Tag", "Company", "Contact" — see the NewCursor calls
@@ -358,9 +358,10 @@ func tagSyncDescriptor() syncDescriptor[fileee.Tag, syncTagSummary] {
 		SyncDescription: "Incrementally sync the tags defined in the calling user's Fileee account. " +
 			"Returns tags changed or added since the cursor you pass in (every tag on the first call), " +
 			"tag IDs deleted since then, and a new cursor to pass to the next call. Use it to keep a " +
-			"local copy of the account's tags up to date without re-fetching the full list every time; " +
-			"it does not accept a cursor from a different sync tool and does not return the documents " +
-			"carrying a tag.",
+			"local copy of the account's tags up to date without re-fetching the full list every time. " +
+			"An empty result on a later call means nothing changed since that cursor, not that the " +
+			"account has no tags — omit the cursor to fetch the full current list instead; it does not " +
+			"accept a cursor from a different sync tool and does not return the documents carrying a tag.",
 		EntityType: "Tag",
 		Service:    func(c *fileee.Client) fileee.ReadService[fileee.Tag] { return c.Tags },
 		Summarize:  func(t *fileee.Tag) syncTagSummary { return syncTagSummary{ID: t.ID, Name: t.Name} },
@@ -374,8 +375,10 @@ func companySyncDescriptor() syncDescriptor[fileee.Company, syncCompanySummary] 
 			"Returns companies changed or added since the cursor you pass in (every company on the " +
 			"first call), company IDs deleted since then, and a new cursor to pass to the next call. " +
 			"Use it to keep a local copy of the account's companies up to date without re-fetching the " +
-			"full list every time; it does not accept a cursor from a different sync tool and does not " +
-			"return the contacts or documents linked to a company.",
+			"full list every time. An empty result on a later call means nothing changed since that " +
+			"cursor, not that the account has no companies — omit the cursor to fetch the full current " +
+			"list instead; it does not accept a cursor from a different sync tool and does not return " +
+			"the contacts or documents linked to a company.",
 		EntityType: "Company",
 		Service:    func(c *fileee.Client) fileee.ReadService[fileee.Company] { return c.Companies },
 		Summarize: func(c *fileee.Company) syncCompanySummary {
@@ -391,7 +394,9 @@ func documentTypeSyncDescriptor() syncDescriptor[fileee.DocumentType, syncDocume
 			"account. Returns document types changed or added since the cursor you pass in (every " +
 			"document type on the first call), IDs deleted since then, and a new cursor to pass to the " +
 			"next call. Use it to keep a local copy of the account's document types up to date without " +
-			"re-fetching the full list every time; it does not accept a cursor from a different sync " +
+			"re-fetching the full list every time. An empty result on a later call means nothing " +
+			"changed since that cursor, not that the account has no document types — omit the cursor " +
+			"to fetch the full current list instead; it does not accept a cursor from a different sync " +
 			"tool and does not return the field schema for a document type — use " +
 			"sync_document_type_schemes for that.",
 		EntityType: "DocumentType",
@@ -408,9 +413,11 @@ func documentTypeSchemeSyncDescriptor() syncDescriptor[fileee.DocumentTypeScheme
 		SyncDescription: "Incrementally sync the document type field schemas in the calling user's " +
 			"Fileee account. Returns schemas changed or added since the cursor you pass in (every " +
 			"schema on the first call), schema IDs deleted since then, and a new cursor to pass to the " +
-			"next call. Use it to detect when a document type's field layout changed; it does not " +
-			"accept a cursor from a different sync tool and does not return the schema's own field " +
-			"list — use get_document_type_scheme for that once Aufgabe 3 wires it up.",
+			"next call. Use it to detect when a document type's field layout changed. An empty result " +
+			"on a later call means nothing changed since that cursor, not that the account has no " +
+			"schemas — omit the cursor to fetch the full current list instead; it does not accept a " +
+			"cursor from a different sync tool and does not return the schema's own field list — use " +
+			"get_document_type_scheme for that once Aufgabe 3 wires it up.",
 		EntityType: "DocumentTypeScheme",
 		Service: func(c *fileee.Client) fileee.ReadService[fileee.DocumentTypeScheme] {
 			return c.DocumentTypeSchemes
@@ -429,7 +436,9 @@ func contactSyncDescriptor() syncDescriptor[fileee.Contact, syncContactSummary] 
 			"first call) with structured metadata only, contact IDs deleted since then, and a new " +
 			"cursor to pass to the next call. Each contact's own name is included separately as " +
 			"clearly marked, untrusted text, since it was supplied by that contact, not by the person " +
-			"you are assisting; it does not accept a cursor from a different sync tool.",
+			"you are assisting. An empty result on a later call means nothing changed since that " +
+			"cursor, not that the account has no contacts — omit the cursor to fetch the full current " +
+			"list instead; it does not accept a cursor from a different sync tool.",
 		EntityType: "Contact",
 		Service:    func(c *fileee.Client) fileee.ReadService[fileee.Contact] { return c.Contacts },
 		Summarize: func(c *fileee.Contact) syncContactSummary {
@@ -456,7 +465,9 @@ func reminderSyncDescriptor() syncDescriptor[fileee.Reminder, syncReminderSummar
 			"first call) with structured metadata only, reminder IDs deleted since then, and a new " +
 			"cursor to pass to the next call. Each reminder's own description is included separately " +
 			"as clearly marked, untrusted text, since it may have been copied from the document it is " +
-			"attached to rather than written by the person you are assisting; it does not accept a " +
+			"attached to rather than written by the person you are assisting. An empty result on a " +
+			"later call means nothing changed since that cursor, not that the account has no " +
+			"reminders — omit the cursor to fetch the full current list instead; it does not accept a " +
 			"cursor from a different sync tool.",
 		EntityType: "Reminder",
 		Service:    func(c *fileee.Client) fileee.ReadService[fileee.Reminder] { return c.Reminders },
@@ -476,8 +487,10 @@ func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConver
 			"on the first call) with structured metadata only, conversation IDs deleted since then, " +
 			"and a new cursor to pass to the next call. Each conversation's own subject/title is " +
 			"included separately as clearly marked, untrusted text, since it was chosen by whoever is " +
-			"on the other end, not by the person you are assisting; it does not accept a cursor from a " +
-			"different sync tool.",
+			"on the other end, not by the person you are assisting. An empty result on a later call " +
+			"means nothing changed since that cursor, not that the account has no conversations — " +
+			"omit the cursor to fetch the full current list instead; it does not accept a cursor from " +
+			"a different sync tool.",
 		EntityType: "Conversation",
 		Service:    func(c *fileee.Client) fileee.ReadService[fileee.Conversation] { return c.Conversations },
 		Summarize: func(c *fileee.Conversation) syncConversationSummary {
@@ -495,10 +508,10 @@ func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConver
 
 // registerSyncTools mounts all seven sync tools onto s. Split out from
 // RegisterRead itself (read.go) the same way registerReferenceTools and
-// registerPeopleTools will be (Aufgabe 3/4) — RegisterRead calls this
-// once other Aufgaben's own registration functions exist alongside it;
-// until then, this function is exercised directly by this file's own
-// tests.
+// registerPeopleTools will be (Aufgabe 3/4); RegisterRead calls this
+// directly (read.go). This file's own tests also call it directly, without
+// going through RegisterRead, to keep those tests independent of the
+// unrelated tools RegisterRead mounts.
 func registerSyncTools(s *mcp.Server, p *clientpool.Pool) {
 	registerSync(s, p, tagSyncDescriptor())
 	registerSync(s, p, companySyncDescriptor())

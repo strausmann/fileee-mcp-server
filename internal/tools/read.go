@@ -36,15 +36,19 @@ const (
 	maxLimit     = 100
 )
 
-// RegisterRead adds list_documents and search_documents to s. Both
-// resolve their Fileee connection through p — see clientFor.
+// RegisterRead adds list_documents, search_documents, and — since Aufgabe
+// 2b — the seven generic sync tools (registerSyncTools, read_sync.go) to
+// s. All resolve their Fileee connection through p — see clientFor.
 //
-// logger receives this server's diagnostic log for both tools — arguments
-// at FILEEE_LOG_LEVEL=debug (logToolStart), outcome and duration at info
-// (logToolEnd) — through internal/diag's masking guarantee regardless of
-// which package built logger (see internal/diag's own doc comment); it
-// must never be nil, since every call to either tool logs through it
-// unconditionally.
+// logger receives this server's diagnostic log for list_documents and
+// search_documents — arguments at FILEEE_LOG_LEVEL=debug (logToolStart),
+// outcome and duration at info (logToolEnd) — through internal/diag's
+// masking guarantee regardless of which package built logger (see
+// internal/diag's own doc comment); it must never be nil, since every call
+// to either tool logs through it unconditionally. The generic descriptor
+// path (registerReadService, registerSyncTools) does not thread logger
+// through yet — an existing gap from Aufgabe 2 (#45), not introduced or
+// closed here; see this repo's own tracking for when it gets addressed.
 func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocuments,
@@ -63,6 +67,8 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"another tool (e.g. list_documents) for its details.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, searchDocumentsHandler(p, logger))
+
+	registerSyncTools(s, p)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current

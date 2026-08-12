@@ -86,6 +86,15 @@ const (
 var readToolNames = []string{
 	ToolListDocuments,
 	ToolSearchDocuments,
+	// The seven generic sync tools (Aufgabe 2b, read_sync.go) — all pure
+	// reads (fileee.ReadService[T].Diff), same reasoning as the pair above.
+	ToolSyncTags,
+	ToolSyncCompanies,
+	ToolSyncDocumentTypes,
+	ToolSyncDocumentTypeSchemes,
+	ToolSyncContacts,
+	ToolSyncReminders,
+	ToolSyncConversations,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
