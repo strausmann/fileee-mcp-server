@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -16,11 +18,23 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 	"github.com/strausmann/fileee-mcp-server/internal/config"
+	"github.com/strausmann/fileee-mcp-server/internal/diag"
 	"github.com/strausmann/fileee-mcp-server/internal/tools"
 	"github.com/strausmann/gangway/identity"
 	"github.com/strausmann/gangway/identity/testidp"
 	"github.com/strausmann/go-fileee/fileee"
 )
+
+// testLogger builds a diagnostic logger for the tests in this package
+// that need to pass one into buildInstances or New() but do not
+// themselves assert on what it logs. Tests that DO assert on log output
+// (this file's own TestNew... selector-logging tests) build their own via
+// diag.New against a *bytes.Buffer and internal/server.WithLogOutput
+// instead.
+func testLogger(t *testing.T) *slog.Logger {
+	t.Helper()
+	return diag.New(diag.LevelDebug, io.Discard)
+}
 
 // envOf baut ein config.Env aus einer Map — dieselbe kleine Hilfsfunktion wie
 // in internal/config/config_test.go, hier lokal dupliziert statt importiert:
@@ -1063,7 +1077,7 @@ func TestReachableCapabilitySetsShrinksWithTheCeiling(t *testing.T) {
 func TestEveryReachableCapabilitySetHasAnInstance(t *testing.T) {
 	global := mustCaps(t, "read,write,share,destructive")
 	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
-	instances := buildInstances(pool, global, testUnlimitedLimiter())
+	instances := buildInstances(pool, global, testUnlimitedLimiter(), testLogger(t))
 
 	for _, s := range reachableCapabilitySets(global) {
 		if instances[s] == nil {
@@ -1081,7 +1095,7 @@ func TestEveryReachableCapabilitySetHasAnInstance(t *testing.T) {
 func TestBuildInstancesRegistersReadToolsOnlyWhenCapRead(t *testing.T) {
 	global := mustCaps(t, "read,share")
 	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
-	instances := buildInstances(pool, global, testUnlimitedLimiter())
+	instances := buildInstances(pool, global, testUnlimitedLimiter(), testLogger(t))
 
 	cases := []struct {
 		name     string

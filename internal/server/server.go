@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 	"github.com/strausmann/fileee-mcp-server/internal/config"
+	"github.com/strausmann/fileee-mcp-server/internal/diag"
 	"github.com/strausmann/fileee-mcp-server/internal/tools"
 	"github.com/strausmann/gangway/identity"
 	"github.com/strausmann/gangway/serve"
@@ -38,13 +42,14 @@ type Server struct {
 // buildOptions buendelt, was Option anpasst.
 type buildOptions struct {
 	poolOptions []clientpool.Option
+	logOutput   io.Writer
 }
 
 // Option passt Verdrahtung an, die kein produktiver Aufrufer je braucht —
-// heute ausschliesslich zusaetzliche clientpool.Option-Werte fuer den
-// Konto-Pool. Sie existiert, damit ein Test diesen Server ueber den echten
-// New()-Weg gegen ein lokales Test-Double statt gegen das echte
-// https://my.fileee.com verdrahten kann (siehe
+// zusaetzliche clientpool.Option-Werte fuer den Konto-Pool, und wohin der
+// diagnostische Logger schreibt. Sie existiert, damit ein Test diesen
+// Server ueber den echten New()-Weg gegen ein lokales Test-Double statt
+// gegen das echte https://my.fileee.com verdrahten kann (siehe
 // TestNewRegistersReadToolsUsableThroughTheRealWiring) — ohne sie muesste
 // ein End-zu-Ende-Test entweder echte Netzwerkzugriffe machen oder die
 // Verdrahtung aus New() ein zweites Mal nachbauen, was genau das Problem
@@ -57,6 +62,14 @@ type Option func(*buildOptions)
 // Konto-Pool durch, den New() baut — siehe Option.
 func WithPoolOptions(opts ...clientpool.Option) Option {
 	return func(o *buildOptions) { o.poolOptions = append(o.poolOptions, opts...) }
+}
+
+// WithLogOutput leitet das diagnostische Protokoll (internal/diag) an out
+// statt an os.Stdout um — fuer Tests, die dessen Zeilen einlesen wollen,
+// ohne den Prozess-Standardausgabestrom mitzuschneiden. Kein produktiver
+// Aufruf von New() uebergibt diese Option — siehe Option.
+func WithLogOutput(out io.Writer) Option {
+	return func(o *buildOptions) { o.logOutput = out }
 }
 
 // New uebersetzt unsere Konfiguration in Gangways und bereitet jede Schicht
@@ -169,11 +182,29 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	for _, opt := range opts {
 		opt(&o)
 	}
+
+	// logger is this server's ONE diagnostic logger — level-gated and
+	// masked (internal/diag.New) — shared by every tool call
+	// (tools.RegisterRead below), by go-fileee's own transport-level
+	// request log (fileee.WithLogger, passed into every account's client
+	// via clientpool.WithClientOptions — see that package's own doc
+	// comment on WithClientOptions for why this applies to every account
+	// this pool ever builds a client for), and by the capability-selector
+	// logging further down. o.logOutput is nil for every production
+	// call (see Option) and defaults to os.Stdout; only a test (via
+	// WithLogOutput) redirects it.
+	logOutput := o.logOutput
+	if logOutput == nil {
+		logOutput = os.Stdout
+	}
+	logger := diag.New(cfg.LogLevel, logOutput)
+
 	poolOptions := append([]clientpool.Option{
 		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
 			return fileee.NewFileSessionStore(sessionFilePath(cfg.SessionDir, accountKey))
 		}),
 		clientpool.WithKeepalive(cfg.KeepaliveInterval),
+		clientpool.WithClientOptions(fileee.WithLogger(logger)),
 	}, o.poolOptions...)
 	pool := clientpool.New(resolver, poolOptions...)
 
@@ -196,12 +227,12 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// Grund: globale Rate und MaxInflight muessen serverweit gelten, nicht
 	// je Berechtigungsmenge neu anfangen.
 	limiter := newToolCallLimiter(cfg)
-	instances := buildInstances(pool, cfg.Capabilities, limiter)
+	instances := buildInstances(pool, cfg.Capabilities, limiter, logger)
 	accountsByKey := make(map[string]config.Account, len(cfg.Accounts))
 	for _, acc := range cfg.Accounts {
 		accountsByKey[acc.Key] = acc
 	}
-	gw.AttachMCPSelector(func(_ context.Context, id *identity.Identity) *mcp.Server {
+	gw.AttachMCPSelector(func(ctx context.Context, id *identity.Identity) *mcp.Server {
 		// scopesSatisfied ist die einzige Stelle, die MCP_OIDC_REQUIRED_SCOPES
 		// auswertet (siehe scopes.go) — davor wurde die Einstellung zwar aus
 		// der Umgebung gelesen (config.go, LoadConfig), aber nirgends geprueft
@@ -211,7 +242,13 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		// abgeschnittenem Werkzeugkatalog waere hier die falsche Antwort — der
 		// Aufrufer hat ein gueltiges Token, ihm fehlt nur der geforderte
 		// Scope, das ist eine Ablehnung, keine eingeschraenkte Sicht.
+		//
+		// Protokolliert (info): missingScopes() ist ausschliesslich fuer
+		// dieses Protokoll da, nicht Teil der Entscheidung selbst — siehe
+		// deren Doc-Kommentar in scopes.go.
 		if !scopesSatisfied(cfg, id) {
+			logger.InfoContext(ctx, "mcp selector: caller rejected: required scope missing",
+				"missing_scopes", missingScopes(cfg, id))
 			return nil
 		}
 		// Liefert nil (und damit Gangways 400, niemals eine Standard-Instanz),
@@ -220,7 +257,15 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		// reachableCapabilitySets: jede von config.Resolve moegliche Ausgabe ist
 		// eine Teilmenge von cfg.Capabilities, und instances deckt jede
 		// Teilmenge ab.
-		return instances[capabilitiesFor(cfg, accountsByKey, id)]
+		//
+		// Protokolliert (info): die aufgeloeste Faehigkeitsmenge und wie
+		// viele Werkzeuge die dafuer gebaute Instanz haelt — der Befund,
+		// den dieses Protokoll beantworten soll, wenn ein Aufrufer einen
+		// leeren Werkzeugkatalog sieht (siehe toolCountFor).
+		caps := capabilitiesFor(cfg, accountsByKey, id)
+		logger.InfoContext(ctx, "mcp selector: resolved capabilities",
+			"capabilities", caps.String(), "tool_count", toolCountFor(caps))
+		return instances[caps]
 	})
 
 	return &Server{cfg: cfg, gw: gw, pool: pool}, nil
@@ -277,7 +322,12 @@ func reachableCapabilitySets(global config.Set) []config.Set {
 // Autorisierungs-Middleware erst beim ersten Request je Instanz installiert,
 // siehe gangway/serve.Server.ensureWired). Diese Reihenfolge ist Absicht,
 // nicht Zufall — siehe toolCallLimiter.middleware fuer die Begruendung.
-func buildInstances(pool *clientpool.Pool, global config.Set, limiter *toolCallLimiter) map[config.Set]*mcp.Server {
+//
+// logger wird unveraendert an jede registrierte Werkzeuggruppe
+// durchgereicht (heute nur tools.RegisterRead) — derselbe Logger fuer
+// jede Instanz, nicht einer je Berechtigungsmenge: New() baut ihn genau
+// einmal (siehe dort), buildInstances reicht ihn nur weiter.
+func buildInstances(pool *clientpool.Pool, global config.Set, limiter *toolCallLimiter, logger *slog.Logger) map[config.Set]*mcp.Server {
 	instances := make(map[config.Set]*mcp.Server)
 	for _, caps := range reachableCapabilitySets(global) {
 		mcpServer := mcp.NewServer(&mcp.Implementation{
@@ -285,12 +335,27 @@ func buildInstances(pool *clientpool.Pool, global config.Set, limiter *toolCallL
 			Version: config.Version(),
 		}, nil)
 		if caps.Has(config.CapRead) {
-			tools.RegisterRead(mcpServer, pool)
+			tools.RegisterRead(mcpServer, pool, logger)
 		}
 		mcpServer.AddReceivingMiddleware(limiter.middleware())
 		instances[caps] = mcpServer
 	}
 	return instances
+}
+
+// toolCountFor returns how many tools an instance for caps carries —
+// mirrors buildInstances' own conditional above (today: config.CapRead
+// adds exactly the tools tools.ReadToolKinds() names) without needing a
+// live *mcp.Server to count against. Used only for the diagnostic log
+// line in AttachMCPSelector's closure (New, above); stays correct as
+// buildInstances grows because both read the same
+// tools.ReadToolKinds() rather than a separately maintained number.
+func toolCountFor(caps config.Set) int {
+	n := 0
+	if caps.Has(config.CapRead) {
+		n += len(tools.ReadToolKinds())
+	}
+	return n
 }
 
 // capabilitiesFor bestimmt die wirksame Berechtigungsmenge fuer id, nach der

@@ -81,3 +81,33 @@ func scopesSatisfied(cfg *config.Config, id *identity.Identity) bool {
 	}
 	return true
 }
+
+// missingScopes reports which of cfg.OIDCRequiredScopes id's token does
+// not carry — for the diagnostic log line AttachMCPSelector writes when
+// scopesSatisfied rejects a caller (internal/server/server.go), so an
+// operator sees WHICH scope was missing, not just that "something" was.
+//
+// This deliberately duplicates scopesSatisfied's own granted-scope
+// comparison instead of having scopesSatisfied return it: scopesSatisfied
+// is the actual authorization decision AttachMCPSelector's fail-closed
+// branch depends on, and changing its signature only to serve a logging
+// need would put logging code on the same line as a security decision —
+// see internal/diag's own doc comment on why this task keeps that
+// boundary sharp. missingScopes must never influence what
+// scopesSatisfied decides, only describe it after the fact.
+func missingScopes(cfg *config.Config, id *identity.Identity) []string {
+	if len(cfg.OIDCRequiredScopes) == 0 {
+		return nil
+	}
+	var granted map[string]bool
+	if id != nil {
+		granted = tokenScopes(id.Claims)
+	}
+	var missing []string
+	for _, required := range cfg.OIDCRequiredScopes {
+		if !granted[required] {
+			missing = append(missing, required)
+		}
+	}
+	return missing
+}

@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -66,7 +67,14 @@ func ReadToolKinds() map[string]access.ToolKind {
 
 // RegisterRead adds list_documents and search_documents to s. Both
 // resolve their Fileee connection through p — see clientFor.
-func RegisterRead(s *mcp.Server, p *clientpool.Pool) {
+//
+// logger receives this server's diagnostic log for both tools — arguments
+// at FILEEE_LOG_LEVEL=debug (logToolStart), outcome and duration at info
+// (logToolEnd) — through internal/diag's masking guarantee regardless of
+// which package built logger (see internal/diag's own doc comment); it
+// must never be nil, since every call to either tool logs through it
+// unconditionally.
+func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocuments,
 		Description: "List documents in the calling user's Fileee account, most recently modified " +
@@ -75,7 +83,7 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool) {
 			"was written by whoever sent or scanned the document, not by the person you are " +
 			"assisting.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, listDocumentsHandler(p))
+	}, listDocumentsHandler(p, logger))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolSearchDocuments,
@@ -83,7 +91,7 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool) {
 			"number of matches and the matching document IDs, most relevant first; pass an ID to " +
 			"another tool (e.g. list_documents) for its details.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, searchDocumentsHandler(p))
+	}, searchDocumentsHandler(p, logger))
 }
 
 // clientFor resolves the Fileee client for whoever is making the current
@@ -118,6 +126,105 @@ func clientFor(ctx context.Context, p *clientpool.Pool) (*fileee.Client, error) 
 		return nil, fmt.Errorf("fileee-mcp: tools: resolve fileee client: %w", err)
 	}
 	return client, nil
+}
+
+// --- diagnostic logging ---------------------------------------------------
+//
+// Both handlers in this file log the same two things, through the same two
+// functions: their arguments, once, right when they start (logToolStart —
+// a no-op unless FILEEE_LOG_LEVEL=debug, since that gate lives on logger
+// itself, see internal/diag.New), and their outcome, once, right before
+// they return (logToolEnd — always, at info). Neither function decides
+// what is safe to log on its own: internal/diag's masking handler is the
+// actual enforcement, applied to every attribute regardless of which of
+// these two functions produced it (see that package's own doc comment).
+// What lives here is strictly about WHAT gets logged, never about whether
+// a given value is safe to include — that judgement (never a search term
+// at info, never a document title or Fileee response body at either
+// level) is made once, by the call sites in listDocumentsHandler and
+// searchDocumentsHandler, not by logToolStart/logToolEnd themselves.
+
+// listDocumentsEndpoint and searchDocumentsEndpoint are the Fileee wire
+// endpoint each tool ultimately calls — both the same one, go-fileee's
+// Documents.Search is Documents.Query underneath with OnlyIDs:true (see
+// go-fileee, fileee/search.go; internal/tools/read_test.go's own doc
+// comment on newIsolationServer says the same about the mock server this
+// package's tests share). Logged as fixed, per-tool metadata rather than
+// read off the actual *http.Request: go-fileee's Documents service does
+// not hand this server a way to observe the request it built, and this
+// endpoint does not vary per call the way a document ID or search term
+// would.
+const (
+	listDocumentsEndpoint   = "POST /api/documents/rest/query"
+	searchDocumentsEndpoint = "POST /api/documents/rest/query"
+)
+
+// errEmptyTerm is search_documents' own input-validation failure — a
+// sentinel purely so classifyErr (used only for the diagnostic log, see
+// logToolEnd) can tell it apart from every other kind of failure this
+// file's handlers return, without inspecting an error's message text.
+// The tool-facing error text this produces is unchanged by its
+// introduction (see searchDocumentsHandler, %w wrapping this value).
+var errEmptyTerm = errors.New("term must not be empty")
+
+// logToolStart logs, at debug only, the arguments tool was called with —
+// key/value pairs the caller supplied to it, using the same names its
+// JSON schema does. args flow straight to logger.LogAttrs inside a
+// slog.Group named "args": nothing here inspects or filters them by
+// name — internal/diag's masking handler is what actually enforces that a
+// credential-shaped key never reaches the output, applied uniformly to
+// every attribute logger ever writes, group-nested or not (see that
+// package's TestNewRedactsNestedGroupAttributes). This function's own
+// contribution is narrower and unrelated to masking: which values are
+// safe to hand it AT ALL is decided by each call site, not here — see
+// this section's own doc comment.
+func logToolStart(ctx context.Context, logger *slog.Logger, tool string, args ...slog.Attr) {
+	logger.LogAttrs(ctx, slog.LevelDebug, "tool call: arguments",
+		slog.String("tool", tool), slog.Attr{Key: "args", Value: slog.GroupValue(args...)})
+}
+
+// logToolEnd logs, at info, one tool call's outcome: its duration, the
+// Fileee endpoint it reached, a fixed-vocabulary outcome kind (never an
+// error's own message — see classifyErr), the Fileee HTTP status behind a
+// failure when known, and — only on success — how many results it
+// returned. err == nil is a successful call; resultCount is ignored
+// otherwise.
+func logToolEnd(ctx context.Context, logger *slog.Logger, tool string, start time.Time, endpoint string, resultCount int, err error) {
+	durationMS := time.Since(start).Milliseconds()
+	if err == nil {
+		logger.InfoContext(ctx, "tool call succeeded",
+			"tool", tool, "duration_ms", durationMS, "fileee_endpoint", endpoint,
+			"outcome", "ok", "http_status", 200, "result_count", resultCount)
+		return
+	}
+	kind, httpStatus := classifyErr(err)
+	attrs := []any{"tool", tool, "duration_ms", durationMS, "fileee_endpoint", endpoint, "outcome", kind}
+	if httpStatus != 0 {
+		attrs = append(attrs, "http_status", httpStatus)
+	}
+	logger.InfoContext(ctx, "tool call failed", attrs...)
+}
+
+// classifyErr reduces err to a short, fixed-vocabulary outcome kind and,
+// when known, the Fileee HTTP status behind it — deliberately never err's
+// own message: that can carry text Fileee's backend chose
+// (fileee.APIError's Message/Localized fields, populated straight from
+// its response body), and this server's diagnostic log must never carry
+// a Fileee response body or a document's content, at any level (see
+// internal/diag's own doc comment).
+func classifyErr(err error) (kind string, httpStatus int) {
+	switch {
+	case errors.Is(err, errEmptyTerm):
+		return "invalid_input", 0
+	case errors.Is(err, accounts.ErrNoAccount):
+		return "access_denied", 0
+	default:
+		var apiErr *fileee.APIError
+		if errors.As(err, &apiErr) {
+			return "fileee_error", apiErr.HTTPStatus
+		}
+		return "error", 0
+	}
 }
 
 // clampLimit maps a caller-supplied limit onto the range this server
@@ -208,10 +315,14 @@ type listDocumentsOutput struct {
 // there would reach the model unwrapped and unmarked, defeating the
 // framing applied below. It appears only inside the returned text
 // content, inside the boundary wrapUntrusted builds.
-func listDocumentsHandler(p *clientpool.Pool) mcp.ToolHandlerFor[listDocumentsInput, listDocumentsOutput] {
+func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[listDocumentsInput, listDocumentsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in listDocumentsInput) (*mcp.CallToolResult, listDocumentsOutput, error) {
+		start := time.Now()
+		logToolStart(ctx, logger, ToolListDocuments, slog.Int("start", in.Start), slog.Int("limit", in.Limit))
+
 		client, err := clientFor(ctx, p)
 		if err != nil {
+			logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, 0, err)
 			return nil, listDocumentsOutput{}, err
 		}
 
@@ -220,7 +331,9 @@ func listDocumentsHandler(p *clientpool.Pool) mcp.ToolHandlerFor[listDocumentsIn
 			Limit: clampLimit(in.Limit),
 		})
 		if err != nil {
-			return nil, listDocumentsOutput{}, fmt.Errorf("fileee-mcp: tools: list_documents: %w", err)
+			wrapped := fmt.Errorf("fileee-mcp: tools: list_documents: %w", err)
+			logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, 0, wrapped)
+			return nil, listDocumentsOutput{}, wrapped
 		}
 
 		out := listDocumentsOutput{TotalRows: res.TotalRows, Documents: make([]documentSummary, 0, len(res.Rows))}
@@ -238,8 +351,11 @@ func listDocumentsHandler(p *clientpool.Pool) mcp.ToolHandlerFor[listDocumentsIn
 
 		text, err := renderDocumentList(len(out.Documents), out.TotalRows, lines)
 		if err != nil {
-			return nil, listDocumentsOutput{}, fmt.Errorf("fileee-mcp: tools: list_documents: %w", err)
+			wrapped := fmt.Errorf("fileee-mcp: tools: list_documents: %w", err)
+			logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, 0, wrapped)
+			return nil, listDocumentsOutput{}, wrapped
 		}
+		logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, len(out.Documents), nil)
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
 	}
 }
@@ -272,20 +388,34 @@ type searchDocumentsOutput struct {
 // have written. There is therefore, deliberately, no untrusted-content
 // framing to apply here; a caller wanting a match's title calls
 // list_documents (or a future document-detail tool) with the returned ID.
-func searchDocumentsHandler(p *clientpool.Pool) mcp.ToolHandlerFor[searchDocumentsInput, searchDocumentsOutput] {
+func searchDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[searchDocumentsInput, searchDocumentsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in searchDocumentsInput) (*mcp.CallToolResult, searchDocumentsOutput, error) {
+		start := time.Now()
+		// The search term itself is debug-only (see internal/diag's own
+		// doc comment: a search term is already content about the
+		// caller's documents, not mere operating metadata) — logToolStart
+		// is a no-op call at FILEEE_LOG_LEVEL=info, since logger's own
+		// level gate (internal/diag.New) never lets a Debug record
+		// through in the first place.
+		logToolStart(ctx, logger, ToolSearchDocuments, slog.String("term", in.Term), slog.Int("limit", in.Limit))
+
 		if strings.TrimSpace(in.Term) == "" {
-			return nil, searchDocumentsOutput{}, fmt.Errorf("fileee-mcp: tools: search_documents: term must not be empty")
+			err := fmt.Errorf("fileee-mcp: tools: search_documents: %w", errEmptyTerm)
+			logToolEnd(ctx, logger, ToolSearchDocuments, start, searchDocumentsEndpoint, 0, err)
+			return nil, searchDocumentsOutput{}, err
 		}
 
 		client, err := clientFor(ctx, p)
 		if err != nil {
+			logToolEnd(ctx, logger, ToolSearchDocuments, start, searchDocumentsEndpoint, 0, err)
 			return nil, searchDocumentsOutput{}, err
 		}
 
 		res, err := client.Documents.Search(ctx, in.Term, fileee.SearchOptions{Limit: clampLimit(in.Limit)})
 		if err != nil {
-			return nil, searchDocumentsOutput{}, fmt.Errorf("fileee-mcp: tools: search_documents: %w", err)
+			wrapped := fmt.Errorf("fileee-mcp: tools: search_documents: %w", err)
+			logToolEnd(ctx, logger, ToolSearchDocuments, start, searchDocumentsEndpoint, 0, wrapped)
+			return nil, searchDocumentsOutput{}, wrapped
 		}
 
 		out := searchDocumentsOutput{IDs: res.IDs, TotalRows: res.TotalRows}
@@ -293,6 +423,7 @@ func searchDocumentsHandler(p *clientpool.Pool) mcp.ToolHandlerFor[searchDocumen
 		if len(out.IDs) > 0 {
 			text += " IDs: " + strings.Join(out.IDs, ", ")
 		}
+		logToolEnd(ctx, logger, ToolSearchDocuments, start, searchDocumentsEndpoint, len(out.IDs), nil)
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
 	}
 }
