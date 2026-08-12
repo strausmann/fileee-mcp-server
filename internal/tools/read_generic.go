@@ -8,6 +8,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -39,19 +40,21 @@ import (
 // no foreign text worth framing — search_documentsHandler already makes
 // exactly that call for its own service, see its own doc comment.
 //
-// Nothing here enforces that separation — Summarize and UntrustedLine are
-// two independent functions a descriptor author writes by hand, and
-// nothing stops one from accidentally also returning what the other
-// frames (the entity's foreign text would then reach the model twice:
-// once framed as untrusted, once again, unframed, inside
-// StructuredContent). This package cannot catch that generically at
-// runtime without risking the opposite failure — rejecting real calls
-// over coincidental data, not actual bugs (see leaksUntrustedLine's own
-// doc comment in read_generic_test.go for why). Every descriptor's own
-// test MUST therefore call leaksUntrustedLine against one representative
-// entity, including at least one where UntrustedLine's source is
-// deliberately mirrored into a Summarize field — see
-// read_generic_test.go's own tests on that function for the pattern.
+// Nothing about Summarize's and UntrustedLine's SIGNATURES enforces that
+// separation — they are two independent functions a descriptor author
+// writes by hand, and nothing stops one from accidentally also returning
+// what the other frames (the entity's foreign text would then reach the
+// model twice: once framed as untrusted, once again, unframed, inside
+// StructuredContent). Two things enforce it in practice instead:
+//
+//  1. PoisonProbe (below), checked once by registerReadService itself, at
+//     registration — not per request, and never against real Fileee data
+//     (see mustNotLeakUntrustedLine's own doc comment for the reasoning
+//     behind that split).
+//  2. Every descriptor's own registration test (the pattern
+//     TestRegisterReadServiceMeldetListeUndDetailAn already establishes)
+//     exercises registerReadService, and therefore exercises 1 for free —
+//     there is no separate assertion to remember.
 type readServiceDescriptor[T any, S any] struct {
 	// ListName and GetName are the registered tool names.
 	ListName string
@@ -77,6 +80,24 @@ type readServiceDescriptor[T any, S any] struct {
 	// line for the untrusted block wrapUntrustedLines builds, or "" if
 	// this entity carries none.
 	UntrustedLine func(*T) string
+	// PoisonProbe constructs a T whose foreign-text source — whichever
+	// field(s) UntrustedLine actually reads — is set to the marker it is
+	// given. registerReadService calls it once, at registration, to prove
+	// Summarize never reproduces what UntrustedLine frames (see
+	// mustNotLeakUntrustedLine). Required: a nil PoisonProbe panics at
+	// registration rather than silently skipping the check — an unset
+	// PoisonProbe means this guarantee was never verified for this
+	// descriptor at all, and that must be as loud as a missing tool name
+	// (see names.go's own reasoning for the same "silent gap must be
+	// loud" principle applied to readToolNames).
+	//
+	// Example, for a descriptor whose UntrustedLine composes "Max " +
+	// contact.LastName:
+	//
+	//	PoisonProbe: func(marker string) *fileee.Contact {
+	//		return &fileee.Contact{LastName: marker}
+	//	}
+	PoisonProbe func(marker string) *T
 }
 
 // genericListInput are every generic list tool's parameters — the same
@@ -121,7 +142,14 @@ type genericGetOutput[S any] struct {
 // their Fileee connection through p on every call (see clientFor) — the
 // same pattern RegisterRead uses for list_documents/search_documents,
 // generalized over any fileee.ReadService[T].
+//
+// It panics — like mcp.AddTool itself already does for a malformed tool —
+// if d fails mustNotLeakUntrustedLine's check. That check runs once, here,
+// not per request: see that function's own doc comment for why a
+// per-request version would be worse than the bug it replaces.
 func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, d readServiceDescriptor[T, S]) {
+	mustNotLeakUntrustedLine(d)
+
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.ListName,
 		Description: d.ListDescription,
@@ -133,6 +161,97 @@ func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, d read
 		Description: d.GetDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, genericGetHandler(p, d))
+}
+
+// mustNotLeakUntrustedLine proves, once, that d.Summarize never reproduces
+// what d.UntrustedLine frames — using a synthetic marker constructed by
+// d.PoisonProbe, never real Fileee data.
+//
+// Why a marker instead of comparing UntrustedLine's actual output against
+// Summarize's actual output directly: UntrustedLine's text can be COMPOSED
+// from several fields ("Max " + contact.LastName is the case that broke an
+// earlier, exact-equality version of this check — Summarize returning only
+// LastName is a real, partial leak that never equals the whole line). A
+// fixed, unpredictable marker embedded in the one field UntrustedLine
+// actually reads sidesteps that: it must appear, whole, inside
+// UntrustedLine's output BY CONSTRUCTION (checked below, and PoisonProbe
+// setting the wrong field is itself a bug this catches), and it can then
+// appear ANYWHERE inside Summarize's rendered fields — the whole line, a
+// substring of it, doesn't matter — while still being unable to
+// coincidentally match a real, unrelated field: reused from newUntrustedBoundary
+// (read.go) specifically for its "nobody could have predicted this ahead
+// of the call that produces it" property, the same property that makes it
+// safe to test with strings.Contains here without the false-positive risk
+// a real word ("Rechnung" turning up in two unrelated fields, a case this
+// package hit for real during review) would carry.
+//
+// Why once, at registration, not per request against real entities: a
+// leaking descriptor is a property of its CODE (does Summarize reproduce
+// UntrustedLine's source or not) — true for every entity of that type or
+// none, never data-dependent. A per-request version would need to compare
+// against the CALL's actual UntrustedLine output rather than a marker,
+// reintroducing the exact substring-vs-exact tradeoff this function's
+// marker design exists to avoid, and would turn a coincidental match in a
+// real caller's real documents into a rejected, working tool call —
+// worse than the silent duplication this exists to catch. This runs once
+// per process (registration time), so its cost is irrelevant regardless.
+func mustNotLeakUntrustedLine[T any, S any](d readServiceDescriptor[T, S]) {
+	if d.PoisonProbe == nil {
+		panic(fmt.Sprintf(
+			"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe is required — "+
+				"without it, whether Summarize reproduces UntrustedLine's foreign text was never checked for this descriptor",
+			d.ListName, d.GetName))
+	}
+
+	marker, err := newUntrustedBoundary()
+	if err != nil {
+		panic(fmt.Sprintf("fileee-mcp: tools: %s/%s: generate poison marker: %v", d.ListName, d.GetName, err))
+	}
+
+	entity := d.PoisonProbe(marker)
+	line := d.UntrustedLine(entity)
+	if !strings.Contains(line, marker) {
+		panic(fmt.Sprintf(
+			"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe does not set the field UntrustedLine actually reads — "+
+				"UntrustedLine's rendered text %q does not contain the probe's marker",
+			d.ListName, d.GetName, line))
+	}
+
+	for _, v := range summaryFieldValues(d.Summarize(entity)) {
+		if strings.Contains(v, marker) {
+			panic(fmt.Sprintf(
+				"fileee-mcp: tools: %s/%s: readServiceDescriptor.Summarize reproduces UntrustedLine's foreign text — "+
+					"a summary field's rendered value contains the probe's marker",
+				d.ListName, d.GetName))
+		}
+	}
+}
+
+// summaryFieldValues renders summary's exported field values as strings —
+// one level deep, without recursing into nested structs/slices: every
+// summary struct in this package so far (documentSummary in read.go
+// included) is flat. If summary itself is not a struct (or a pointer to
+// one), its single value is rendered as one candidate. Only used by
+// mustNotLeakUntrustedLine.
+func summaryFieldValues(summary any) []string {
+	rv := reflect.ValueOf(summary)
+	for rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return []string{fmt.Sprint(summary)}
+	}
+	values := make([]string, 0, rv.NumField())
+	for i := 0; i < rv.NumField(); i++ {
+		if !rv.Type().Field(i).IsExported() {
+			continue
+		}
+		values = append(values, fmt.Sprint(rv.Field(i).Interface()))
+	}
+	return values
 }
 
 // genericListHandler resolves d.ListName. It splits client resolution
