@@ -50,3 +50,26 @@ func TestReadToolKindsEnthaeltKeineUnbekanntenNamen(t *testing.T) {
 		}
 	}
 }
+
+// TestStammdatenWerkzeugeSindAngemeldet ist Aufgabe 3's eigener Test: alle
+// acht Stammdaten-Werkzeuge (vier Dienste, je Liste+Detail) muessen unter
+// RegisterRead auftauchen. Der Beschreibungs- und Einstufungstest oben
+// deckt sie automatisch mit ab, sobald sie hier registriert sind — dieser
+// Test prueft zusaetzlich explizit, dass keiner der acht Namen fehlt.
+func TestStammdatenWerkzeugeSindAngemeldet(t *testing.T) {
+	want := []string{
+		"list_tags", "get_tag",
+		"list_companies", "get_company",
+		"list_document_types", "get_document_type",
+		"list_document_type_schemes", "get_document_type_scheme",
+	}
+	got := make(map[string]bool)
+	for _, tool := range registeredReadTools() {
+		got[tool.Name] = true
+	}
+	for _, name := range want {
+		if !got[name] {
+			t.Errorf("Werkzeug %q fehlt", name)
+		}
+	}
+}

@@ -43,6 +43,20 @@ const (
 	ToolSyncContacts            = "sync_contacts"
 	ToolSyncReminders           = "sync_reminders"
 	ToolSyncConversations       = "sync_conversations"
+
+	// ToolListTags through ToolGetDocumentTypeScheme are the four
+	// reference-data services' registered list/get tool names
+	// (read_reference.go, Aufgabe 3) — readServiceDescriptor's own
+	// list/get pair, this time for Tags, Companies, DocumentTypes and
+	// DocumentTypeSchemes.
+	ToolListTags                = "list_tags"
+	ToolGetTag                  = "get_tag"
+	ToolListCompanies           = "list_companies"
+	ToolGetCompany              = "get_company"
+	ToolListDocumentTypes       = "list_document_types"
+	ToolGetDocumentType         = "get_document_type"
+	ToolListDocumentTypeSchemes = "list_document_type_schemes"
+	ToolGetDocumentTypeScheme   = "get_document_type_scheme"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -95,6 +109,17 @@ var readToolNames = []string{
 	ToolSyncContacts,
 	ToolSyncReminders,
 	ToolSyncConversations,
+	// The four reference-data list/get pairs (Aufgabe 3, read_reference.go)
+	// — all pure reads (fileee.ReadService[T].Query/Get), same reasoning
+	// as every entry above.
+	ToolListTags,
+	ToolGetTag,
+	ToolListCompanies,
+	ToolGetCompany,
+	ToolListDocumentTypes,
+	ToolGetDocumentType,
+	ToolListDocumentTypeSchemes,
+	ToolGetDocumentTypeScheme,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
