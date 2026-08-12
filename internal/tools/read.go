@@ -17,22 +17,11 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/strausmann/gangway/access"
 	"github.com/strausmann/gangway/serve"
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
-)
-
-// The names of the tools RegisterRead adds, exported so a caller wiring
-// Gangway's tool-authorization middleware doesn't have to repeat the
-// string literals — see ReadToolKinds.
-const (
-	// ToolListDocuments is list_documents' registered name.
-	ToolListDocuments = "list_documents"
-	// ToolSearchDocuments is search_documents' registered name.
-	ToolSearchDocuments = "search_documents"
 )
 
 // defaultLimit and maxLimit bound how many documents a single call to
@@ -46,24 +35,6 @@ const (
 	defaultLimit = 20
 	maxLimit     = 100
 )
-
-// ReadToolKinds returns the access.ToolKind classification for every tool
-// RegisterRead adds — the mapping Gangway's tool-authorization middleware
-// needs via serve.WithToolKinds.
-//
-// This is not optional wiring: a tool name absent from that mapping
-// defaults to access.KindWrite (see gangway/serve, toolMiddleware), and
-// this server's default access.Decider (access.NewGrid) refuses writing
-// outright unless a writer role is separately configured. Without
-// serve.WithToolKinds(tools.ReadToolKinds()) at the call to serve.New,
-// every call to either of these strictly reading tools would be refused
-// for every caller, including ones with no interest in writing anything.
-func ReadToolKinds() map[string]access.ToolKind {
-	return map[string]access.ToolKind{
-		ToolListDocuments:   access.KindRead,
-		ToolSearchDocuments: access.KindRead,
-	}
-}
 
 // RegisterRead adds list_documents and search_documents to s. Both
 // resolve their Fileee connection through p — see clientFor.
