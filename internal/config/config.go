@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/strausmann/fileee-mcp-server/internal/diag"
 	"github.com/strausmann/gangway/origin"
 )
 
@@ -193,17 +194,24 @@ type Config struct {
 	// geprueft werden, bevor TrustedProxies produktiv gesetzt wird.
 	ClientIPHeaderMode origin.HeaderMode
 
-	// LogLevel wird geladen, hat aber heute keinen Konsumenten: dieser
-	// Server hat noch keine eigene, levelgesteuerte Logging-Schicht (siehe
-	// cmd/fileee-mcp-server/main.go — Start-/Fehlermeldungen laufen ueber
-	// schlichtes fmt.Fprintf auf stdout/stderr, Gangways Zugriffsprotokoll
-	// (accesslog) kennt kein Level). go-fileee selbst akzeptiert zwar einen
-	// *slog.Logger (fileee.WithLogger), aber auch das wird von
-	// internal/server.New heute nicht verdrahtet. Ein Level ohne
-	// Logging-Schicht zu erzwingen waere Scheinarbeit — das gehoert zu
-	// einer bewussten Entscheidung fuer eine Logging-Architektur, nicht in
-	// einen Nebensatz einer anderen Aufgabe.
-	LogLevel string
+	// LogLevel waehlt die Stufe des diagnostischen Loggers, den
+	// internal/server.New ueber internal/diag.New baut (siehe dessen
+	// Paket-Kommentar): "info" (Vorgabe) protokolliert Werkzeugname,
+	// Dauer, Ergebnisart und die aufgeloeste Faehigkeitsmenge — "debug"
+	// zusaetzlich die vom Aufrufer uebergebenen Werkzeug-Argumente. Beide
+	// Stufen laufen durch dieselbe Maskierung (internal/diag), die jedes
+	// Feld mit einem verdaechtigen Namen unabhaengig von der Stufe
+	// ersetzt. Derselbe Logger wird auch an go-fileee durchgereicht
+	// (fileee.WithLogger, siehe internal/server.New) — dessen eigenes
+	// Debug-Protokoll (Methode, Pfad, Status je HTTP-Versuch) landet damit
+	// automatisch hinter derselben Maskierung.
+	//
+	// Vor dieser Aenderung wurde die Variable zwar geladen, hatte aber
+	// keinen Konsumenten — Start-/Fehlermeldungen in
+	// cmd/fileee-mcp-server/main.go liefen (und laufen weiterhin) ueber
+	// schlichtes fmt.Fprintf auf stdout/stderr, unabhaengig von dieser
+	// Einstellung.
+	LogLevel diag.Level
 
 	// Warnings sind Hinweise, die den Start nicht verhindern, aber beim Boot
 	// protokolliert werden sollen.
@@ -240,7 +248,7 @@ func LoadConfig(env Env) (*Config, error) {
 		ListenAddr:           orDefault(env("MCP_LISTEN_ADDR"), ":8080"),
 		SessionDir:           orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
 		ClientIPHeaderMode:   origin.HeaderMode(orDefault(env("FILEEE_CLIENT_IP_HEADER_MODE"), string(origin.ModeCFConnectingIP))),
-		LogLevel:             orDefault(env("FILEEE_LOG_LEVEL"), "info"),
+		LogLevel:             diag.Level(orDefault(env("FILEEE_LOG_LEVEL"), string(diag.LevelInfo))),
 	}
 
 	switch cfg.ClientIPHeaderMode {
@@ -248,6 +256,12 @@ func LoadConfig(env Env) (*Config, error) {
 	default:
 		return nil, fmt.Errorf("FILEEE_CLIENT_IP_HEADER_MODE = %q — erlaubt sind %s, %s, %s",
 			cfg.ClientIPHeaderMode, origin.ModeXForwardedFor, origin.ModeXRealIP, origin.ModeCFConnectingIP)
+	}
+	switch cfg.LogLevel {
+	case diag.LevelInfo, diag.LevelDebug:
+	default:
+		return nil, fmt.Errorf("FILEEE_LOG_LEVEL = %q — erlaubt sind %q, %q",
+			cfg.LogLevel, diag.LevelInfo, diag.LevelDebug)
 	}
 
 	switch cfg.AuthMode {
