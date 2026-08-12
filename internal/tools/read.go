@@ -40,15 +40,18 @@ const (
 // 2b — the seven generic sync tools (registerSyncTools, read_sync.go) to
 // s. All resolve their Fileee connection through p — see clientFor.
 //
-// logger receives this server's diagnostic log for list_documents and
-// search_documents — arguments at FILEEE_LOG_LEVEL=debug (logToolStart),
-// outcome and duration at info (logToolEnd) — through internal/diag's
-// masking guarantee regardless of which package built logger (see
-// internal/diag's own doc comment); it must never be nil, since every call
-// to either tool logs through it unconditionally. The generic descriptor
-// path (registerReadService, registerSyncTools) does not thread logger
-// through yet — an existing gap from Aufgabe 2 (#45), not introduced or
-// closed here; see this repo's own tracking for when it gets addressed.
+// logger receives this server's diagnostic log for every tool this
+// function mounts, directly or through registerSyncTools — arguments at
+// FILEEE_LOG_LEVEL=debug (logToolStart), outcome and duration at info
+// (logToolEnd) — through internal/diag's masking guarantee regardless of
+// which package built logger (see internal/diag's own doc comment); it
+// must never be nil, since every call to any of these tools logs through
+// it unconditionally. Aufgabe 2c closed the one remaining gap here:
+// neither registerReadService (read_generic.go — not yet wired into this
+// function, Aufgabe 3/4) nor registerSyncTools threaded logger through
+// before it (#45/#46 both shipped without it); both now take it and pass
+// it on to their own handlers the same way
+// listDocumentsHandler/searchDocumentsHandler already did.
 func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocuments,
@@ -68,7 +71,7 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, searchDocumentsHandler(p, logger))
 
-	registerSyncTools(s, p)
+	registerSyncTools(s, p, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current

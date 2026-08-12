@@ -20,6 +20,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -28,6 +29,18 @@ import (
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 )
+
+// discardLogger builds a *slog.Logger that discards everything it is
+// given — for the many tests in this file and in read_sync_test.go that
+// pass one into registerReadService/registerSync/genericListHandler/
+// genericGetHandler/genericSyncHandler but do not themselves assert on
+// what it logs (that is read_generic_sync_diag_test.go's own job). Never
+// nil: RegisterRead's own doc comment (read.go) requires a non-nil
+// logger, and the same requirement carries down to every function this
+// package threads it through.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
+}
 
 // tagSummary is this file's stand-in for a real service's summary struct
 // (Aufgabe 3/4 define one per service) — just enough fields to prove
@@ -61,7 +74,7 @@ func tagDescriptor() readServiceDescriptor[fileee.Tag, tagSummary] {
 func TestRegisterReadServiceMeldetListeUndDetailAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerReadService(s, (*clientpool.Pool)(nil), tagDescriptor())
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), tagDescriptor())
 
 	names := toolNamesOf(t, s)
 	if !names["list_tags"] {
@@ -172,7 +185,7 @@ func TestGenericGetHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testing.
 	// Test mit einer Nil-Pointer-Dereferenzierung ab statt still zu
 	// bestehen — das ist der Beleg, dass die leere Kennung VOR jedem
 	// Netzwerkzugriff abgefangen wird.
-	handler := genericGetHandler[fileee.Tag, tagSummary](nil, d)
+	handler := genericGetHandler[fileee.Tag, tagSummary](nil, discardLogger(), d)
 
 	_, _, err := handler(context.Background(), nil, genericGetInput{ID: "   "})
 	if err == nil {
@@ -221,7 +234,7 @@ func TestRegisterReadServicePanictBeiEinemDeskriptorDerDenGerahmtenTextMitliefer
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 // TestRegisterReadServicePanictBeiZusammengesetztemFremdtextInEinemTeilfeld
@@ -253,7 +266,7 @@ func TestRegisterReadServicePanictBeiZusammengesetztemFremdtextInEinemTeilfeld(t
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 func TestRegisterReadServicePanictWennPoisonProbeFehlt(t *testing.T) {
@@ -266,7 +279,7 @@ func TestRegisterReadServicePanictWennPoisonProbeFehlt(t *testing.T) {
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 // TestRegisterReadServicePanictWennPoisonProbeDasFalscheFeldSetzt ist die
@@ -294,7 +307,7 @@ func TestRegisterReadServicePanictWennPoisonProbeDasFalscheFeldSetzt(t *testing.
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 // TestRegisterReadServicePanictNichtBeiUnabhaengigenLegitimenFeldern ist
@@ -318,7 +331,7 @@ func TestRegisterReadServicePanictNichtBeiUnabhaengigenLegitimenFeldern(t *testi
 	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d) // darf NICHT paniken
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d) // darf NICHT paniken
 }
 
 // --- 3. Korrekturrunde: UntrustedLine optional, fuer Typen ohne Fremdtext ---
@@ -351,7 +364,7 @@ func TestRegisterReadServiceStartetSauberOhneFremdbestimmtenText(t *testing.T) {
 	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d) // darf NICHT paniken
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d) // darf NICHT paniken
 
 	names := toolNamesOf(t, s)
 	if !names["list_tags_notrusted"] || !names["get_tag_notrusted"] {
@@ -377,7 +390,7 @@ func TestRegisterReadServicePanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 // TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp ist die Meldungstext-
@@ -406,5 +419,5 @@ func TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp(t *testing.T) {
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
 }

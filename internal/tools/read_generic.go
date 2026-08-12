@@ -8,8 +8,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/go-fileee/fileee"
@@ -179,24 +181,32 @@ type genericGetOutput[S any] struct {
 // same pattern RegisterRead uses for list_documents/search_documents,
 // generalized over any fileee.ReadService[T].
 //
+// logger receives d.ListName's and d.GetName's diagnostic log exactly the
+// way listDocumentsHandler/searchDocumentsHandler already do (read.go,
+// logToolStart/logToolEnd) — passed straight through to
+// genericListHandler/genericGetHandler, never rebuilt here. Aufgabe 2c
+// closed the gap where this parameter did not exist yet (#45); see this
+// function's own callers for why threading it through matters (RegisterRead's
+// own doc comment, read.go).
+//
 // It panics — like mcp.AddTool itself already does for a malformed tool —
 // if d fails mustNotLeakUntrustedLine's check. That check runs once, here,
 // not per request: see that function's own doc comment for why a
 // per-request version would be worse than the bug it replaces.
-func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, d readServiceDescriptor[T, S]) {
+func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) {
 	mustNotLeakUntrustedLine(d)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.ListName,
 		Description: d.ListDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, genericListHandler(p, d))
+	}, genericListHandler(p, logger, d))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.GetName,
 		Description: d.GetDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, genericGetHandler(p, d))
+	}, genericGetHandler(p, logger, d))
 }
 
 // mustNotLeakUntrustedLine proves, once, that d.Summarize never reproduces
@@ -347,13 +357,29 @@ func summaryFieldValues(summary any) []string {
 // logic (listFromService), so the latter stays testable against a fake
 // fileee.ReadService[T] without needing a live Fileee login (see
 // read_generic_test.go).
-func genericListHandler[T any, S any](p *clientpool.Pool, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericListInput, genericListOutput[S]] {
+//
+// It logs through logger exactly the way listDocumentsHandler does
+// (read.go): arguments once via logToolStart (debug only), outcome and
+// duration once via logToolEnd, on every path including a clientFor
+// failure. The Fileee wire endpoint a given service's Query call actually
+// reaches is, unlike list_documents' own listDocumentsEndpoint constant
+// (read.go), not something this generic layer knows per descriptor — d
+// carries no such field, and go-fileee's fileee.ReadService[T] does not
+// expose it either — so logToolEnd's endpoint argument is passed as "",
+// deliberately, rather than a guessed or hardcoded value.
+func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericListInput, genericListOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericListInput) (*mcp.CallToolResult, genericListOutput[S], error) {
+		start := time.Now()
+		logToolStart(ctx, logger, d.ListName, slog.Int("start", in.Start), slog.Int("limit", in.Limit))
+
 		client, err := clientFor(ctx, p)
 		if err != nil {
+			logToolEnd(ctx, logger, d.ListName, start, "", 0, err)
 			return nil, genericListOutput[S]{}, err
 		}
-		return listFromService(ctx, d, d.Service(client), in)
+		result, out, err := listFromService(ctx, d, d.Service(client), in)
+		logToolEnd(ctx, logger, d.ListName, start, "", len(out.Entries), err)
+		return result, out, err
 	}
 }
 
@@ -394,17 +420,31 @@ func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[
 // rejected without spending a login round trip on it, and so this path is
 // testable without a *clientpool.Pool at all (see
 // read_generic_test.go).
-func genericGetHandler[T any, S any](p *clientpool.Pool, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericGetInput, genericGetOutput[S]] {
+//
+// It logs through logger the same way genericListHandler does (see that
+// function's own doc comment for the endpoint-argument caveat) — the
+// requested ID is logged at debug only (logToolStart), the same
+// "arguments are content, not bare operating metadata" reasoning
+// searchDocumentsHandler already applies to its own search term (read.go).
+func genericGetHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericGetInput, genericGetOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericGetInput) (*mcp.CallToolResult, genericGetOutput[S], error) {
+		start := time.Now()
+		logToolStart(ctx, logger, d.GetName, slog.String("id", in.ID))
+
 		if strings.TrimSpace(in.ID) == "" {
-			return nil, genericGetOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: id must not be empty", d.GetName)
+			err := fmt.Errorf("fileee-mcp: tools: %s: id must not be empty", d.GetName)
+			logToolEnd(ctx, logger, d.GetName, start, "", 0, err)
+			return nil, genericGetOutput[S]{}, err
 		}
 
 		client, err := clientFor(ctx, p)
 		if err != nil {
+			logToolEnd(ctx, logger, d.GetName, start, "", 0, err)
 			return nil, genericGetOutput[S]{}, err
 		}
-		return getFromService(ctx, d, d.Service(client), in.ID)
+		result, out, err := getFromService(ctx, d, d.Service(client), in.ID)
+		logToolEnd(ctx, logger, d.GetName, start, "", 1, err)
+		return result, out, err
 	}
 }
 
