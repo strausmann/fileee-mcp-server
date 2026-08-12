@@ -50,6 +50,16 @@ func encodeCursor(c fileee.Cursor) (string, error) {
 // ordinary error, never a panic, since this runs on every sync call with
 // caller-controlled input, unlike mustNotLeakUntrustedText's
 // once-at-registration checks below.
+//
+// Boundary case decodeCursor itself does NOT reject: a string that is
+// valid base64 AND decodes to valid JSON, but the wrong shape for
+// fileee.Cursor (e.g. `{}`, or JSON for some other type entirely), decodes
+// cleanly — EntityType simply comes out empty. No security issue results:
+// checkCursorEntityType's comparison against the caller's own EntityType
+// catches it next, before any Diff call. But the actual safeguard against
+// a malformed-but-well-typed cursor therefore lives in that type check,
+// not in this decoding step — worth knowing before assuming decodeCursor
+// itself validates shape.
 func decodeCursor(encoded string) (fileee.Cursor, error) {
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
@@ -188,7 +198,7 @@ type genericSyncOutput[S any] struct {
 // check runs once, here, not per request: see mustNotLeakUntrustedText's
 // own doc comment (read_generic.go) for why.
 func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, d syncDescriptor[T, S]) {
-	mustNotLeakUntrustedText(d.SyncName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
+	mustNotLeakUntrustedText("syncDescriptor", d.SyncName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.SyncName,

@@ -260,6 +260,31 @@ func TestRegisterSyncPanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *testing
 	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), d)
 }
 
+// TestMustNotLeakUntrustedTextMeldetSyncDeskriptorTyp ist
+// TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp's Gegenstueck
+// (read_generic_test.go) fuer syncDescriptor -- derselbe Meldungstext-Verlust
+// waere hier genauso unbemerkt geblieben, haette registerSync's eigener
+// Aufruf von mustNotLeakUntrustedText "syncDescriptor" nicht mitgegeben.
+func TestMustNotLeakUntrustedTextMeldetSyncDeskriptorTyp(t *testing.T) {
+	d := tagSyncDescriptorMitFremdtext()
+	d.PoisonProbe = nil // UntrustedLine bleibt gesetzt
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("erwartete Panic blieb aus")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("Panic-Wert ist kein string: %v", r)
+		}
+		if !strings.Contains(msg, "syncDescriptor") {
+			t.Errorf("Panic-Meldung %q nennt nicht den Deskriptor-Typ syncDescriptor", msg)
+		}
+	}()
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), d)
+}
+
 func TestRegisterSyncOhneFremdtextfelderBleibtSauber(t *testing.T) {
 	// tagSyncDescriptor() laesst UntrustedLine/PoisonProbe bewusst nil -- Tag traegt keinen
 	// Fremdtext (dieselbe Einstufung wie Aufgabe 3's tag-Deskriptor, read_generic.go). Das

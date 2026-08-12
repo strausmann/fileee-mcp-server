@@ -379,3 +379,32 @@ func TestRegisterReadServicePanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 	registerReadService(s, (*clientpool.Pool)(nil), d)
 }
+
+// TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp ist die Meldungstext-
+// Gegenprobe zu den Panic-Tests oben: die pruefen nur, DASS eine Panic
+// geschieht, nie WELCHER Text drinsteht. Bei der Extraktion von
+// mustNotLeakUntrustedText (Aufgabe 2b, Antrag #46, erste Runde) ist genau
+// dieser Text verlorengegangen — der Bezeichner "readServiceDescriptor"
+// fehlte in vier von fuenf Meldungen, weil kein Test je den Wortlaut
+// pruefte. Dieser Test schliesst die Luecke: schlaegt fehl, sollte
+// "readServiceDescriptor" wieder aus einer Meldung verschwinden.
+func TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp(t *testing.T) {
+	d := tagDescriptor()
+	d.PoisonProbe = nil // UntrustedLine bleibt gesetzt (aus tagDescriptor())
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("erwartete Panic blieb aus")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("Panic-Wert ist kein string: %v", r)
+		}
+		if !strings.Contains(msg, "readServiceDescriptor") {
+			t.Errorf("Panic-Meldung %q nennt nicht den Deskriptor-Typ readServiceDescriptor", msg)
+		}
+	}()
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	registerReadService(s, (*clientpool.Pool)(nil), d)
+}

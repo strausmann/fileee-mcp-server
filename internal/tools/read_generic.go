@@ -242,7 +242,7 @@ func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, d read
 // actually does carry foreign text, is not something any mechanism here
 // can detect).
 func mustNotLeakUntrustedLine[T any, S any](d readServiceDescriptor[T, S]) {
-	mustNotLeakUntrustedText(d.ListName+"/"+d.GetName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
+	mustNotLeakUntrustedText("readServiceDescriptor", d.ListName+"/"+d.GetName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
 }
 
 // mustNotLeakUntrustedText is mustNotLeakUntrustedLine's descriptor-agnostic
@@ -253,57 +253,63 @@ func mustNotLeakUntrustedLine[T any, S any](d readServiceDescriptor[T, S]) {
 // the CHECK means sharing a function of the four fields it actually reads,
 // not the two callers' descriptor types themselves.
 //
-// label identifies the caller in every panic message below. readServiceDescriptor's
-// own two-tool-name pair ("list_tags/get_tag") becomes one composed string
-// here (mustNotLeakUntrustedLine builds it above); syncDescriptor
-// (read_sync.go) has only one tool name to begin with. Every panic message's
-// wording and structure is otherwise unchanged from the pre-extraction
-// version — this function's own tests (read_generic_test.go) only ever
-// asserted "a panic happened", never the exact string, so this split changes
-// no test's outcome.
+// descriptorType and label together identify the caller in every panic
+// message below: descriptorType names the Go struct whose field is at
+// fault ("readServiceDescriptor" or "syncDescriptor", see each caller's own
+// call site), label identifies which instance of it ("list_tags/get_tag"
+// or "sync_tags"). The first extraction of this function (Aufgabe 2b's
+// first round) dropped descriptorType entirely and reasoned the loss away
+// as "cosmetic" — true only as long as exactly one descriptor type
+// existed. A whole-branch review caught it once a second type
+// (syncDescriptor) existed and the same wording no longer said which type
+// a given panic came from; see this repo's PR #46 review thread and
+// read_generic_test.go/read_sync_test.go's own message-content tests
+// (TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp and its
+// read_sync_test.go counterpart) for the regression test that would have
+// caught it.
 //
 // See mustNotLeakUntrustedLine's own (now slightly stale in wording, still
 // accurate in substance) doc comment above for the full reasoning behind the
 // marker design and the once-at-registration timing; this function is that
-// reasoning's implementation, unchanged.
-func mustNotLeakUntrustedText[T any, S any](label string, untrustedLine func(*T) string, poisonProbe func(marker string) *T, summarize func(*T) S) {
+// reasoning's implementation.
+func mustNotLeakUntrustedText[T any, S any](descriptorType, label string, untrustedLine func(*T) string, poisonProbe func(marker string) *T, summarize func(*T) S) {
 	if untrustedLine == nil {
 		if poisonProbe != nil {
 			panic(fmt.Sprintf(
-				"fileee-mcp: tools: %s: PoisonProbe is set but UntrustedLine is nil — "+
+				"fileee-mcp: tools: %s: %s.PoisonProbe is set but UntrustedLine is nil — "+
 					"either wire UntrustedLine too, or remove PoisonProbe if this type truly carries no foreign text",
-				label))
+				label, descriptorType))
 		}
 		return
 	}
 
 	if poisonProbe == nil {
 		panic(fmt.Sprintf(
-			"fileee-mcp: tools: %s: PoisonProbe is required whenever UntrustedLine is set — "+
+			"fileee-mcp: tools: %s: %s.PoisonProbe is required whenever UntrustedLine is set — "+
 				"without it, whether Summarize reproduces UntrustedLine's foreign text was never checked for this descriptor",
-			label))
+			label, descriptorType))
 	}
 
 	marker, err := newUntrustedBoundary()
 	if err != nil {
-		panic(fmt.Sprintf("fileee-mcp: tools: %s: generate poison marker: %v", label, err))
+		panic(fmt.Sprintf("fileee-mcp: tools: %s: %s: generate poison marker: %v", label, descriptorType, err))
 	}
 
 	entity := poisonProbe(marker)
 	line := untrustedLine(entity)
 	if !strings.Contains(line, marker) {
 		panic(fmt.Sprintf(
-			"fileee-mcp: tools: %s: PoisonProbe does not set the field UntrustedLine actually reads — "+
+			"fileee-mcp: tools: %s: %s.PoisonProbe does not set the field UntrustedLine actually reads — "+
 				"UntrustedLine's rendered text %q does not contain the probe's marker",
-			label, line))
+			label, descriptorType, line))
 	}
 
 	for _, v := range summaryFieldValues(summarize(entity)) {
 		if strings.Contains(v, marker) {
 			panic(fmt.Sprintf(
-				"fileee-mcp: tools: %s: Summarize reproduces UntrustedLine's foreign text — "+
+				"fileee-mcp: tools: %s: %s.Summarize reproduces UntrustedLine's foreign text — "+
 					"a summary field's rendered value contains the probe's marker",
-				label))
+				label, descriptorType))
 		}
 	}
 }
