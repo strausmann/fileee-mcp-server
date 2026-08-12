@@ -38,6 +38,20 @@ import (
 // applies there). Returning "" from UntrustedLine means the entity carries
 // no foreign text worth framing — search_documentsHandler already makes
 // exactly that call for its own service, see its own doc comment.
+//
+// Nothing here enforces that separation — Summarize and UntrustedLine are
+// two independent functions a descriptor author writes by hand, and
+// nothing stops one from accidentally also returning what the other
+// frames (the entity's foreign text would then reach the model twice:
+// once framed as untrusted, once again, unframed, inside
+// StructuredContent). This package cannot catch that generically at
+// runtime without risking the opposite failure — rejecting real calls
+// over coincidental data, not actual bugs (see leaksUntrustedLine's own
+// doc comment in read_generic_test.go for why). Every descriptor's own
+// test MUST therefore call leaksUntrustedLine against one representative
+// entity, including at least one where UntrustedLine's source is
+// deliberately mirrored into a Summarize field — see
+// read_generic_test.go's own tests on that function for the pattern.
 type readServiceDescriptor[T any, S any] struct {
 	// ListName and GetName are the registered tool names.
 	ListName string
