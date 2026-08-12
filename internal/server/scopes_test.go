@@ -166,6 +166,54 @@ func TestScopesSatisfied(t *testing.T) {
 	}
 }
 
+// --- missingScopes: was scopesSatisfied fuer das Diagnose-Protokoll preisgibt ---
+
+// TestMissingScopes deckt missingScopes direkt ab -- das Gegenstueck zu
+// TestScopesSatisfied oben, diesmal mit der konkreten Liste statt nur
+// einem bool, wie sie internal/server/server.go beim Ablehnen eines
+// Aufrufers protokolliert.
+func TestMissingScopes(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *config.Config
+		id   *identity.Identity
+		want []string
+	}{
+		{
+			"keine Pflicht-Scopes konfiguriert: nichts fehlt",
+			&config.Config{},
+			&identity.Identity{Claims: map[string]any{}},
+			nil,
+		},
+		{
+			"alle Pflicht-Scopes vorhanden: nichts fehlt",
+			&config.Config{OIDCRequiredScopes: []string{"mcp.access"}},
+			&identity.Identity{Claims: map[string]any{"scp": "mcp.access"}},
+			nil,
+		},
+		{
+			"ein Pflicht-Scope fehlt",
+			&config.Config{OIDCRequiredScopes: []string{"mcp.access", "mcp.write"}},
+			&identity.Identity{Claims: map[string]any{"scp": "mcp.access"}},
+			[]string{"mcp.write"},
+		},
+		{
+			"keine Identitaet: alle konfigurierten Scopes fehlen",
+			&config.Config{OIDCRequiredScopes: []string{"mcp.access", "mcp.write"}},
+			nil,
+			[]string{"mcp.access", "mcp.write"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := missingScopes(tc.cfg, tc.id)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("missingScopes(...) = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // --- End-zu-Ende: MCP_OIDC_REQUIRED_SCOPES tatsaechlich durchgesetzt -------
 
 // testConfigWithIDPAndRequiredScopes ist testConfigWithIDP, verlangt aber

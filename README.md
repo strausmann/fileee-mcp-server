@@ -159,6 +159,24 @@ Jeder Aufruf eines Werkzeugs (`tools/call`) muss drei unabhängige Kontingente p
 
 `FILEEE_MAX_DOWNLOAD_BYTES` und `FILEEE_MAX_UPLOAD_BYTES` werden geladen, aber **noch nicht durchgesetzt** — nicht weil die Fähigkeit fehlt (`go-fileee`s `DocumentService.Upload`/`DownloadPDF`/`DownloadPageImage` sowie die freigabe-seitigen Gegenstücke in `ShareClient` existieren bereits), sondern weil dieser Server noch kein Werkzeug registriert, das sie aufruft — die Grenze bekommt ihren Platz um den `io.Reader`/`io.ReadCloser` dieser Methoden herum, sobald das erste Upload-/Download-Werkzeug entsteht. Die davon unabhängig abgeleitete `MaxRequestBodyBytes` bleibt aus einem anderen Grund offen: Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
 
+## Diagnose
+
+`FILEEE_LOG_LEVEL` steuert das diagnostische Protokoll dieses Servers ([`internal/diag`](internal/diag)) — ein JSON-Objekt pro Zeile auf der Standardausgabe, unabhängig von Gangways eigenem Zugriffsprotokoll (NGINX-Format, siehe dessen Doku) und von den Start-/Fehlermeldungen in `cmd/fileee-mcp-server/main.go`, die weiterhin unverändert auf stdout/stderr laufen.
+
+```dotenv
+FILEEE_LOG_LEVEL=info     # Default
+FILEEE_LOG_LEVEL=debug
+```
+
+| Stufe | Was protokolliert wird |
+|---|---|
+| `info` (Default) | Je Werkzeugaufruf: Werkzeugname, Dauer, Erfolg oder Fehlerart (`ok`, `invalid_input`, `access_denied`, `fileee_error` mit HTTP-Status, `error`), der aufgerufene Fileee-Endpunkt und bei Erfolg die Anzahl zurückgegebener Treffer. Zusätzlich je aufgelöster Anfrage: die vom OIDC-Selector ermittelte Fähigkeitsmenge und wie viele Werkzeuge die dafür gebaute Instanz hält — der Befund, wenn ein Client einen leeren Werkzeugkatalog sieht — sowie, bei `MCP_OIDC_REQUIRED_SCOPES`, der Name des fehlenden Scopes bei einer Ablehnung. |
+| `debug` | Zusätzlich zu allem oben: die vom Aufrufer übergebenen Werkzeug-Argumente (Suchbegriffe, Limits, Paging-Offsets) sowie go-fileees eigenes Transport-Protokoll (Methode, Pfad, Statuscode je HTTP-Versuch gegen Fileee, `fileee.WithLogger`). |
+
+**Niemals, auf keiner Stufe:** Zugangsdaten, Token, TOTP-Seed, Antwortkörper der Fileee-API, Dokumentinhalte oder -titel. Jedes Attribut, das dieser Logger schreibt — unabhängig davon, welcher Code es erzeugt hat, unabhängig von der Stufe — läuft durch eine einzige Maskierung (`internal/diag`, `redactingHandler`): ein Feldname, der wie ein Credential aussieht (`password`, `secret`, `token`, `totp`, `seed`, `authorization`, `apikey`, `credential`, `cookie`, als Teilstring, unabhängig von Groß-/Kleinschreibung), wird durch `***` ersetzt, bevor er die Ausgabe erreicht — auch verschachtelt in einer Argument-Gruppe.
+
+> **`debug` enthält Suchbegriffe** (das Argument von `search_documents`) und ist damit selbst schon eine — wenn auch begrenzte — inhaltliche Angabe über die Dokumente des aufrufenden Kontos. Für den Dauerbetrieb ist `info` vorgesehen; `debug` ist ein befristetes Werkzeug zum Fehlersuchen, keine Dauereinstellung.
+
 ## Entwicklung
 
 ```bash

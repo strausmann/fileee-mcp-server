@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/strausmann/fileee-mcp-server/internal/diag"
 	"github.com/strausmann/gangway/origin"
 )
 
@@ -187,6 +188,15 @@ func TestLoadConfigFailFast(t *testing.T) {
 				return e
 			},
 			erwartet: "FILEEE_CLIENT_IP_HEADER_MODE",
+		},
+		{
+			name: "unbekannte log-stufe",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_LOG_LEVEL"] = "verbose"
+				return e
+			},
+			erwartet: "FILEEE_LOG_LEVEL",
 		},
 		{
 			name: "token-modus ohne token",
@@ -528,6 +538,37 @@ func TestLoadConfigClientIPHeaderModeDefault(t *testing.T) {
 	}
 	if cfg.ClientIPHeaderMode != origin.ModeCFConnectingIP {
 		t.Errorf("ClientIPHeaderMode = %q, erwartet Default %q", cfg.ClientIPHeaderMode, origin.ModeCFConnectingIP)
+	}
+}
+
+// TestLoadConfigLogLevelDefault belegt den Vorgabewert von FILEEE_LOG_LEVEL —
+// diag.LevelInfo, die leisere der beiden Stufen (siehe internal/diag).
+func TestLoadConfigLogLevelDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadConfig(envOf(minimalToken()))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	if cfg.LogLevel != diag.LevelInfo {
+		t.Errorf("LogLevel = %q, erwartet Default %q", cfg.LogLevel, diag.LevelInfo)
+	}
+}
+
+// TestLoadConfigLogLevelDebug belegt, dass FILEEE_LOG_LEVEL=debug tatsaechlich
+// ankommt — das Gegenstueck zum Default-Test oben.
+func TestLoadConfigLogLevelDebug(t *testing.T) {
+	t.Parallel()
+
+	env := minimalToken()
+	env["FILEEE_LOG_LEVEL"] = "debug"
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	if cfg.LogLevel != diag.LevelDebug {
+		t.Errorf("LogLevel = %q, erwartet %q", cfg.LogLevel, diag.LevelDebug)
 	}
 }
 

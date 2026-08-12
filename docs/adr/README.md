@@ -38,6 +38,7 @@ Besonders relevant für dieses Repo sind [ADR-0005 (schonender Betrieb / Rate-Li
 | [0013](0013-prompt-injection-schutz.md) | Dokumentinhalte sind fremdbestimmte Daten | accepted | 2026-08-06 |
 | [0015](0015-gangway-als-unterbau.md) | Gangway v0.2.0 als Unterbau für Anmeldung, Freigabeliste und Zugriffsprotokoll | accepted | 2026-08-08 |
 | [0016](0016-anbieter-namensraeume-statt-roher-oidc-parameter.md) | Ein Variablen-Namensraum je Identity Provider statt roher OIDC-Parameter | accepted | 2026-08-09 |
+| [0017](0017-diagnose-protokoll-mit-erzwungener-maskierung.md) | Diagnose-Protokoll mit erzwungener Maskierung statt vertrauensbasierter Feldwahl | accepted | 2026-08-12 |
 
 > **Lücke:** Die Nummer **0014** ist in diesem Repo nie vergeben worden — sie fehlt zwischen 0013 und 0015 ohne erkennbaren Grund. Nummern werden nicht wiederverwendet, sie bleibt also frei. Wer den Grund kennt, trägt ihn hier nach.
 
