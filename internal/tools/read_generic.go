@@ -242,43 +242,68 @@ func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, d read
 // actually does carry foreign text, is not something any mechanism here
 // can detect).
 func mustNotLeakUntrustedLine[T any, S any](d readServiceDescriptor[T, S]) {
-	if d.UntrustedLine == nil {
-		if d.PoisonProbe != nil {
+	mustNotLeakUntrustedText(d.ListName+"/"+d.GetName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
+}
+
+// mustNotLeakUntrustedText is mustNotLeakUntrustedLine's descriptor-agnostic
+// core — extracted (Aufgabe 2b, Antrag #46) so syncDescriptor's own leak
+// check (read_sync.go) can share it instead of re-implementing the exact
+// same marker/panic logic against a differently named struct. Go's generics
+// have no structural typing across distinct named struct types, so sharing
+// the CHECK means sharing a function of the four fields it actually reads,
+// not the two callers' descriptor types themselves.
+//
+// label identifies the caller in every panic message below. readServiceDescriptor's
+// own two-tool-name pair ("list_tags/get_tag") becomes one composed string
+// here (mustNotLeakUntrustedLine builds it above); syncDescriptor
+// (read_sync.go) has only one tool name to begin with. Every panic message's
+// wording and structure is otherwise unchanged from the pre-extraction
+// version — this function's own tests (read_generic_test.go) only ever
+// asserted "a panic happened", never the exact string, so this split changes
+// no test's outcome.
+//
+// See mustNotLeakUntrustedLine's own (now slightly stale in wording, still
+// accurate in substance) doc comment above for the full reasoning behind the
+// marker design and the once-at-registration timing; this function is that
+// reasoning's implementation, unchanged.
+func mustNotLeakUntrustedText[T any, S any](label string, untrustedLine func(*T) string, poisonProbe func(marker string) *T, summarize func(*T) S) {
+	if untrustedLine == nil {
+		if poisonProbe != nil {
 			panic(fmt.Sprintf(
-				"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe is set but UntrustedLine is nil — "+
+				"fileee-mcp: tools: %s: PoisonProbe is set but UntrustedLine is nil — "+
 					"either wire UntrustedLine too, or remove PoisonProbe if this type truly carries no foreign text",
-				d.ListName, d.GetName))
+				label))
 		}
 		return
 	}
 
-	if d.PoisonProbe == nil {
+	if poisonProbe == nil {
 		panic(fmt.Sprintf(
-			"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe is required whenever UntrustedLine is set — "+
+			"fileee-mcp: tools: %s: PoisonProbe is required whenever UntrustedLine is set — "+
 				"without it, whether Summarize reproduces UntrustedLine's foreign text was never checked for this descriptor",
-			d.ListName, d.GetName))
+			label))
 	}
 
 	marker, err := newUntrustedBoundary()
 	if err != nil {
-		panic(fmt.Sprintf("fileee-mcp: tools: %s/%s: generate poison marker: %v", d.ListName, d.GetName, err))
+		panic(fmt.Sprintf("fileee-mcp: tools: %s: generate poison marker: %v", label, err))
 	}
 
-	entity := d.PoisonProbe(marker)
-	line := d.UntrustedLine(entity)
+	entity := poisonProbe(marker)
+	line := untrustedLine(entity)
 	if !strings.Contains(line, marker) {
 		panic(fmt.Sprintf(
-			"fileee-mcp: tools: %s/%s: readServiceDescriptor.PoisonProbe does not set the field UntrustedLine actually reads — "+
+			"fileee-mcp: tools: %s: PoisonProbe does not set the field UntrustedLine actually reads — "+
 				"UntrustedLine's rendered text %q does not contain the probe's marker",
-			d.ListName, d.GetName, line))
+			label, line))
 	}
 
-	for _, v := range summaryFieldValues(d.Summarize(entity)) {
+	for _, v := range summaryFieldValues(summarize(entity)) {
 		if strings.Contains(v, marker) {
 			panic(fmt.Sprintf(
-				"fileee-mcp: tools: %s/%s: readServiceDescriptor.Summarize reproduces UntrustedLine's foreign text — "+
+				"fileee-mcp: tools: %s: Summarize reproduces UntrustedLine's foreign text — "+
 					"a summary field's rendered value contains the probe's marker",
-				d.ListName, d.GetName))
+				label))
 		}
 	}
 }

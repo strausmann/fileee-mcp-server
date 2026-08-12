@@ -112,9 +112,16 @@ func toolNamesOf(t *testing.T, s *mcp.Server) map[string]bool {
 // Mock-HTTP-Server, ohne Login-Handshake: readServiceDescriptor.Service
 // entscheidet, welche Implementierung der echte Handler bekommt, und ein
 // Test kann dort schlicht diese Attrappe eintragen.
+// diffErr/diffResult (added for read_sync_test.go's own error-path and
+// happy-path tests — this fixture is shared across both files, same
+// package) follow queryErr/getErr's own pattern: nil means "use the zero
+// value", set means "return this instead". Existing callers that never
+// set them are unaffected.
 type fakeReadService[T any] struct {
-	queryErr error
-	getErr   error
+	queryErr   error
+	getErr     error
+	diffErr    error
+	diffResult *fileee.DiffResult[T]
 }
 
 func (f *fakeReadService[T]) Query(context.Context, fileee.QueryOptions) (*fileee.QueryResult[T], error) {
@@ -125,6 +132,12 @@ func (f *fakeReadService[T]) Query(context.Context, fileee.QueryOptions) (*filee
 }
 
 func (f *fakeReadService[T]) Diff(context.Context, fileee.Cursor) (*fileee.DiffResult[T], error) {
+	if f.diffErr != nil {
+		return nil, f.diffErr
+	}
+	if f.diffResult != nil {
+		return f.diffResult, nil
+	}
 	return &fileee.DiffResult[T]{}, nil
 }
 
