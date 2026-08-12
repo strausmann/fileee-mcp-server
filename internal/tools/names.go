@@ -26,9 +26,52 @@ const (
 	ToolSearchDocuments = "search_documents"
 )
 
+// readToolNames is the hand-maintained list of tool names ReadToolKinds
+// classifies as access.KindRead — the only source it consults.
+//
+// This is deliberately NOT derived from registeredReadTools(). An earlier
+// version of this file did exactly that (every tool RegisterRead mounts is
+// read, unconditionally) and a review caught the failure mode: a writing
+// tool mistakenly added to RegisterRead's wiring would have been
+// auto-classified as reading and thereby granted unconditional access for
+// every caller (access.NewGrid.Allow lets KindRead through with no role
+// check at all — see gangway/access/grid.go). Reproduced with a
+// delete_document tool inserted into RegisterRead: every test in this file
+// still passed, because the classification and the check it was supposed
+// to guard against read the exact same source.
+//
+// ToolAnnotations.ReadOnlyHint (set inline at the mcp.AddTool call) was
+// considered and rejected as the independent source: gangway's
+// toolMiddleware never reads it — only this map — so it would still only
+// affect map-building, not authorization directly; and the SDK's own doc
+// comment on ToolAnnotations warns "Clients should never make tool use
+// decisions based on ToolAnnotations received from untrusted servers"
+// (go-sdk/mcp/protocol.go). More concretely: whoever mistakenly adds a
+// destructive tool to RegisterRead is copying boilerplate from a
+// neighbouring read tool at the very same call site — the same
+// carelessness that added the tool there would just as easily carry
+// ReadOnlyHint: true along with it.
+//
+// A hand-maintained list is a second, physically separate edit — adding a
+// name here is not something a copy-pasted mcp.AddTool block does for you.
+// registeredReadTools() (the actual, live tools/list round-trip) becomes
+// this list's Gegenprobe instead of its source: descriptions_test.go's
+// TestJedesWerkzeugIstAlsLesendEingestuft fails loudly if a registered tool
+// is missing here (forgotten entry, or a write tool that was never meant
+// to be here at all), and TestReadToolKindsEnthaeltKeineUnbekanntenNamen
+// fails loudly if an entry here names nothing RegisterRead actually
+// mounts (stale entry after a rename or removal). Both directions now
+// scream instead of one of them silently granting access — see
+// docs/superpowers/plans/2026-08-12-fileee-werkzeuge-teil-a-lesend.md,
+// "Globale Randbedingungen", for the full writeup.
+var readToolNames = []string{
+	ToolListDocuments,
+	ToolSearchDocuments,
+}
+
 // ReadToolKinds returns the access.ToolKind classification for every tool
-// RegisterRead adds — the mapping Gangway's tool-authorization middleware
-// needs via serve.WithToolKinds.
+// named in readToolNames — the mapping Gangway's tool-authorization
+// middleware needs via serve.WithToolKinds.
 //
 // This is not optional wiring: a tool name absent from that mapping
 // defaults to access.KindWrite (see gangway/serve, toolMiddleware), and
@@ -37,15 +80,10 @@ const (
 // serve.WithToolKinds(tools.ReadToolKinds()) at the call to serve.New,
 // every call to any of these strictly reading tools would be refused for
 // every caller, including ones with no interest in writing anything.
-//
-// The mapping is derived from registeredReadTools() rather than listed by
-// hand, so it can never omit a tool RegisterRead actually mounts — the
-// failure mode this function exists to prevent.
 func ReadToolKinds() map[string]access.ToolKind {
-	registered := registeredReadTools()
-	kinds := make(map[string]access.ToolKind, len(registered))
-	for _, tool := range registered {
-		kinds[tool.Name] = access.KindRead
+	kinds := make(map[string]access.ToolKind, len(readToolNames))
+	for _, name := range readToolNames {
+		kinds[name] = access.KindRead
 	}
 	return kinds
 }
