@@ -373,6 +373,26 @@ type getSelfCheckOutput struct {
 // through something that reaches ensureSession/userSession instead of
 // (or in addition to) a raw Login call — a bigger design change, an
 // open follow-up, not built into this pass.
+//
+// A SHARPER, UNRESOLVED version of the same gap (flagged in review,
+// 2026-08-13, after the paragraph above was already written): even
+// without a dedicated "blocked" state, a genuine account lockout hit
+// DURING login()'s own POST /api/f/login call is likely to come back
+// misclassified as "degraded" (wrong credentials), not "down". login()'s
+// own switch (auth.go:236-246) only recognises 200/401/403/default —
+// on 401 or 403 it returns ErrInvalidCredentials/ErrTwoFactorInvalid
+// unconditionally, with no branch for "this 401/403 means blocked, not
+// wrong password". Whether Fileee's real backend actually answers a
+// blocked account's login attempt with 401/403 (making this a real,
+// live bug) or with something else entirely (a distinct status, an
+// APIError body login() would fall through to instead) is NOT decidable
+// from go-fileee's source alone, and testing it against the real
+// service would mean deliberately triggering the very lockout self_check
+// exists to help avoid — so it stays a documented, honest suspicion, not
+// a verified fact and not something silently patched over here. A
+// caller acting on "degraded" should not treat it as certainly a wrong
+// password for that reason; go-fileee itself would need a distinguishing
+// signal from that HTTP response before this classifier could act on it.
 func classifySelfCheckOutcome(err error) getSelfCheckOutput {
 	switch {
 	case err == nil:
