@@ -41,8 +41,12 @@ const (
 // reference-data list/get pairs (registerReferenceTools, read_reference.go,
 // Aufgabe 3: tags, companies, document types, document-type schemes), and —
 // since Aufgabe 4 — the three people-data list/get pairs (registerPeopleTools,
-// read_people.go: contacts, reminders, conversations) to s. All resolve
-// their Fileee connection through p — see clientFor.
+// read_people.go: contacts, reminders, conversations) to s. Since Aufgabe
+// C1, it also adds this server's own operational tools
+// (registerOpsTools, ops.go: get_runtime_stats today, get_tool_manifest
+// once Aufgabe C2 lands) — unlike every other tool here, these never
+// touch Fileee data at all. All Fileee-backed tools resolve their
+// connection through p — see clientFor.
 //
 // logger receives this server's diagnostic log for every tool this
 // function mounts, directly or through registerSyncTools/
@@ -118,6 +122,7 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	registerBoxTools(s, p, logger)
 	registerBinaryTools(s, p, logger)
 	registerAccountTools(s, p, logger)
+	registerOpsTools(s, p, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current
@@ -215,15 +220,30 @@ func logToolStart(ctx context.Context, logger *slog.Logger, tool string, args ..
 // failure when known, and — only on success — how many results it
 // returned. err == nil is a successful call; resultCount is ignored
 // otherwise.
+//
+// This is also the single choke point get_runtime_stats' counters hang
+// off (ops.go, Aufgabe C1, recordToolCall): all three registration
+// families (hand-written, generic via read_generic.go, sync via
+// read_sync.go) already call this function for every tool, so a counter
+// added here — and nowhere else — cannot drift from what actually
+// happened the way three separately maintained counters could. kind is
+// computed once, right below, and reused for both the log line and the
+// counter; recordToolCall never sees err itself, only kind, the same
+// separation logToolEnd already enforces for its own logging (see
+// classifyErr's own doc comment on why the raw error text must never
+// reach either surface).
 func logToolEnd(ctx context.Context, logger *slog.Logger, tool string, start time.Time, endpoint string, resultCount int, err error) {
-	durationMS := time.Since(start).Milliseconds()
+	now := time.Now()
+	durationMS := now.Sub(start).Milliseconds()
 	if err == nil {
+		recordToolCall(tool, "", now)
 		logger.InfoContext(ctx, "tool call succeeded",
 			"tool", tool, "duration_ms", durationMS, "fileee_endpoint", endpoint,
 			"outcome", "ok", "http_status", 200, "result_count", resultCount)
 		return
 	}
 	kind, httpStatus := classifyErr(err)
+	recordToolCall(tool, kind, now)
 	attrs := []any{"tool", tool, "duration_ms", durationMS, "fileee_endpoint", endpoint, "outcome", kind}
 	if httpStatus != 0 {
 		attrs = append(attrs, "http_status", httpStatus)

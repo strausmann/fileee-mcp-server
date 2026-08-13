@@ -96,6 +96,11 @@ const (
 	// (Aufgabe 11, read_account.go) — bespoke handler, no ReadService[T]
 	// shape and no input parameters.
 	ToolGetAccountStatus = "get_account_status"
+
+	// ToolGetRuntimeStats is get_runtime_stats' registered name (Aufgabe
+	// C1, ops.go) — this server's own call-count/error diagnostics, not a
+	// Fileee-backed tool at all.
+	ToolGetRuntimeStats = "get_runtime_stats"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -184,6 +189,10 @@ var readToolNames = []string{
 	ToolGetPageOCR,
 	// get_account_status (Aufgabe 11, read_account.go) — same reasoning.
 	ToolGetAccountStatus,
+	// get_runtime_stats (Aufgabe C1, ops.go) — reads this process's own
+	// in-memory counters, no Fileee access at all, still classified
+	// access.KindRead: it is a strict read of server-internal state.
+	ToolGetRuntimeStats,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
