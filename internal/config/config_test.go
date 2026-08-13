@@ -82,7 +82,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 // blaeht um Faktor 4/3, und der JSON-Rahmen kommt obendrauf. Ohne diese
 // Ableitung wuerde der 4-MiB-Default des SDK groessere Uploads mit 413
 // abweisen, bevor der Tool-Handler ueberhaupt laeuft.
-func TestLoadConfigLeitetTransportLimitAusUploadLimitAb(t *testing.T) {
+func TestLoadConfigDerivesTransportLimitFromUploadLimit(t *testing.T) {
 	t.Parallel()
 
 	env := minimalToken()
@@ -104,9 +104,9 @@ func TestLoadConfigFailFast(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		env      func() map[string]string
-		erwartet string // Teilstring der Fehlermeldung
+		name string
+		env  func() map[string]string
+		want string // Teilstring der Fehlermeldung
 	}{
 		{
 			name: "oidc ohne issuer",
@@ -115,7 +115,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				delete(e, "MCP_OIDC_ISSUER")
 				return e
 			},
-			erwartet: "MCP_OIDC_ISSUER",
+			want: "MCP_OIDC_ISSUER",
 		},
 		{
 			name: "oidc ohne resource-url",
@@ -124,7 +124,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				delete(e, "MCP_RESOURCE_URL")
 				return e
 			},
-			erwartet: "MCP_RESOURCE_URL",
+			want: "MCP_RESOURCE_URL",
 		},
 		{
 			name: "oidc mit single ohne allowlist",
@@ -133,7 +133,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				delete(e, "MCP_ALLOWED_SUBJECTS")
 				return e
 			},
-			erwartet: "MCP_ALLOWED_SUBJECTS",
+			want: "MCP_ALLOWED_SUBJECTS",
 		},
 		{
 			name: "oidc ohne client-id",
@@ -142,7 +142,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				delete(e, "MCP_OIDC_CLIENT_ID")
 				return e
 			},
-			erwartet: "MCP_OIDC_CLIENT_ID",
+			want: "MCP_OIDC_CLIENT_ID",
 		},
 		{
 			name: "oidc mit resource-url ohne /mcp-suffix",
@@ -151,7 +151,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["MCP_RESOURCE_URL"] = "https://mcp.example.com/"
 				return e
 			},
-			erwartet: "/mcp",
+			want: "/mcp",
 		},
 		{
 			name: "oidc ohne herkunfts-allowlist",
@@ -160,7 +160,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				delete(e, "FILEEE_ALLOWED_ORIGIN_PREFIXES")
 				return e
 			},
-			erwartet: "FILEEE_ALLOWED_ORIGIN_PREFIXES",
+			want: "FILEEE_ALLOWED_ORIGIN_PREFIXES",
 		},
 		{
 			name: "unbrauchbares praefix in der herkunfts-allowlist",
@@ -169,7 +169,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_ALLOWED_ORIGIN_PREFIXES"] = "nicht-eine-adresse"
 				return e
 			},
-			erwartet: "FILEEE_ALLOWED_ORIGIN_PREFIXES",
+			want: "FILEEE_ALLOWED_ORIGIN_PREFIXES",
 		},
 		{
 			name: "unbrauchbares praefix bei trusted proxies",
@@ -178,7 +178,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_TRUSTED_PROXIES"] = "nicht-eine-adresse"
 				return e
 			},
-			erwartet: "FILEEE_TRUSTED_PROXIES",
+			want: "FILEEE_TRUSTED_PROXIES",
 		},
 		{
 			name: "unbekannter client-ip-header-modus",
@@ -187,7 +187,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_CLIENT_IP_HEADER_MODE"] = "x-forwarded-host"
 				return e
 			},
-			erwartet: "FILEEE_CLIENT_IP_HEADER_MODE",
+			want: "FILEEE_CLIENT_IP_HEADER_MODE",
 		},
 		{
 			name: "unbekannte log-stufe",
@@ -196,7 +196,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_LOG_LEVEL"] = "verbose"
 				return e
 			},
-			erwartet: "FILEEE_LOG_LEVEL",
+			want: "FILEEE_LOG_LEVEL",
 		},
 		{
 			name: "token-modus ohne token",
@@ -205,7 +205,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				delete(e, "MCP_API_TOKEN")
 				return e
 			},
-			erwartet: "MCP_API_TOKEN",
+			want: "MCP_API_TOKEN",
 		},
 		{
 			name: "multi ohne kontenliste",
@@ -214,7 +214,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_MODE"] = "multi"
 				return e
 			},
-			erwartet: "FILEEE_ACCOUNTS",
+			want: "FILEEE_ACCOUNTS",
 		},
 		{
 			name: "multi zusammen mit dem token-modus",
@@ -230,7 +230,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 					"FILEEE_ACCOUNT_ANNA_TOTP_SEED": "",
 				}
 			},
-			erwartet: "kein Subject",
+			want: "kein Subject",
 		},
 		{
 			name: "konto ohne passwort",
@@ -242,7 +242,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_ACCOUNT_ANNA_SUBJECTS"] = "anna"
 				return e
 			},
-			erwartet: "_PASSWORD",
+			want: "_PASSWORD",
 		},
 		{
 			name: "unzulaessiger konto-key",
@@ -252,7 +252,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_ACCOUNTS"] = "../../etc/x"
 				return e
 			},
-			erwartet: "Konto-Key",
+			want: "Konto-Key",
 		},
 		{
 			name: "ein subject zeigt auf zwei konten",
@@ -267,7 +267,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				}
 				return e
 			},
-			erwartet: "zwei Konten",
+			want: "zwei Konten",
 		},
 		{
 			name: "konto-capability ueberschreitet die obergrenze",
@@ -282,7 +282,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_ACCOUNT_ANNA_CAPABILITIES"] = "read,write"
 				return e
 			},
-			erwartet: "Obergrenze",
+			want: "Obergrenze",
 		},
 		{
 			name: "destructive ohne das zweite gate",
@@ -291,7 +291,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_CAPABILITIES"] = "read,destructive"
 				return e
 			},
-			erwartet: "FILEEE_ALLOW_DESTRUCTIVE",
+			want: "FILEEE_ALLOW_DESTRUCTIVE",
 		},
 		{
 			name: "unbekannter auth-modus",
@@ -300,7 +300,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["MCP_AUTH_MODE"] = "basic"
 				return e
 			},
-			erwartet: "MCP_AUTH_MODE",
+			want: "MCP_AUTH_MODE",
 		},
 		{
 			name: "unbekannter konto-modus",
@@ -309,7 +309,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_MODE"] = "viele"
 				return e
 			},
-			erwartet: "FILEEE_MODE",
+			want: "FILEEE_MODE",
 		},
 		{
 			name: "unbekannte capability",
@@ -318,7 +318,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_CAPABILITIES"] = "read,admin"
 				return e
 			},
-			erwartet: "unbekannte capability",
+			want: "unbekannte capability",
 		},
 		{
 			name: "nicht numerisches limit",
@@ -327,7 +327,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_MAX_UPLOAD_BYTES"] = "viel"
 				return e
 			},
-			erwartet: "FILEEE_MAX_UPLOAD_BYTES",
+			want: "FILEEE_MAX_UPLOAD_BYTES",
 		},
 		{
 			name: "unbrauchbare dauer",
@@ -336,7 +336,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_KEEPALIVE_INTERVAL"] = "bald"
 				return e
 			},
-			erwartet: "FILEEE_KEEPALIVE_INTERVAL",
+			want: "FILEEE_KEEPALIVE_INTERVAL",
 		},
 		{
 			name: "doppelter konto-key",
@@ -349,7 +349,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_ACCOUNT_ANNA_SUBJECTS"] = "anna"
 				return e
 			},
-			erwartet: "mehrfach",
+			want: "mehrfach",
 		},
 		{
 			name: "konto-keys kollidieren nach der praefix-normalisierung",
@@ -361,7 +361,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_ACCOUNT_FOO_BAR_PASSWORD"] = "geheim"
 				return e
 			},
-			erwartet: "dieselben Variablen",
+			want: "dieselben Variablen",
 		},
 		{
 			name: "negatives byte-limit",
@@ -370,7 +370,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_MAX_UPLOAD_BYTES"] = "-1"
 				return e
 			},
-			erwartet: "FILEEE_MAX_UPLOAD_BYTES",
+			want: "FILEEE_MAX_UPLOAD_BYTES",
 		},
 		{
 			name: "negative rate",
@@ -379,7 +379,7 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_RATE_RPS"] = "-0.5"
 				return e
 			},
-			erwartet: "FILEEE_RATE_RPS",
+			want: "FILEEE_RATE_RPS",
 		},
 		{
 			name: "nulldauer beim keepalive",
@@ -388,14 +388,14 @@ func TestLoadConfigFailFast(t *testing.T) {
 				e["FILEEE_KEEPALIVE_INTERVAL"] = "-5m"
 				return e
 			},
-			erwartet: "FILEEE_KEEPALIVE_INTERVAL",
+			want: "FILEEE_KEEPALIVE_INTERVAL",
 		},
 		{
 			name: "single-modus ohne credentials",
 			env: func() map[string]string {
 				return map[string]string{"MCP_API_TOKEN": "t0ken"}
 			},
-			erwartet: "FILEEE_USERNAME",
+			want: "FILEEE_USERNAME",
 		},
 	}
 
@@ -405,11 +405,11 @@ func TestLoadConfigFailFast(t *testing.T) {
 
 			_, err := LoadConfig(envOf(tt.env()))
 			if err == nil {
-				t.Fatalf("LoadConfig = kein Fehler, erwartet Abbruch mit %q im Text", tt.erwartet)
+				t.Fatalf("LoadConfig = kein Fehler, erwartet Abbruch mit %q im Text", tt.want)
 			}
-			if !strings.Contains(err.Error(), tt.erwartet) {
+			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Fehlermeldung %q enthaelt %q nicht — die Meldung muss die betroffene "+
-					"Variable benennen, sonst sucht der Betreiber im Dunkeln", err.Error(), tt.erwartet)
+					"Variable benennen, sonst sucht der Betreiber im Dunkeln", err.Error(), tt.want)
 			}
 		})
 	}
@@ -467,7 +467,7 @@ func TestLoadConfigMultiAccount(t *testing.T) {
 // Der token-Modus auf einem oeffentlich erreichbaren Endpunkt ist zulaessig,
 // aber erklaerungsbeduerftig: der Zugriff haengt dann an einem einzigen String.
 // Das ist eine Warnung, kein Abbruch — sonst braeche man legitime Setups.
-func TestLoadConfigWarntBeiTokenModusMitOeffentlicherURL(t *testing.T) {
+func TestLoadConfigWarnsOnTokenModeWithPublicURL(t *testing.T) {
 	t.Parallel()
 
 	env := minimalToken()
@@ -499,7 +499,7 @@ func TestLoadConfigWarntBeiTokenModusMitOeffentlicherURL(t *testing.T) {
 	}
 }
 
-func TestLoadConfigListenUndZahlenwerte(t *testing.T) {
+func TestLoadConfigListenAndNumericValues(t *testing.T) {
 	t.Parallel()
 
 	env := minimalToken()
@@ -572,7 +572,7 @@ func TestLoadConfigLogLevelDebug(t *testing.T) {
 	}
 }
 
-func TestLoadConfigNetzwerkPraefixe(t *testing.T) {
+func TestLoadConfigNetworkPrefixes(t *testing.T) {
 	t.Parallel()
 
 	env := minimalOIDC()
@@ -647,7 +647,7 @@ func TestLoadConfigParsesAdvertisedScopesFullyQualifiedEntraValue(t *testing.T) 
 }
 
 // TestLoadConfigParsesMultipleAdvertisedScopesCommaSeparated spiegelt das
-// bestehende Verhalten von MCP_OIDC_REQUIRED_SCOPES (splitListe: trimmt
+// bestehende Verhalten von MCP_OIDC_REQUIRED_SCOPES (splitList: trimmt
 // Leerraum, verwirft leere Eintraege) -- dieselbe Kommaliste-Konvention wie
 // jede andere Listen-Variable in dieser Datei.
 func TestLoadConfigParsesMultipleAdvertisedScopesCommaSeparated(t *testing.T) {
@@ -877,7 +877,7 @@ func TestLoadConfigProviderSelection(t *testing.T) {
 
 // Authentik laesst sich unter einem Unterpfad betreiben. Die Aussteller-URL
 // muss diesen Pfad behalten, sonst zeigt sie ins Leere.
-func TestLoadConfigAuthentikUnterpfad(t *testing.T) {
+func TestLoadConfigAuthentikSubpath(t *testing.T) {
 	t.Parallel()
 
 	e := minimalAuthentik()
@@ -897,7 +897,7 @@ func TestLoadConfigAuthentikUnterpfad(t *testing.T) {
 // zu ignorieren waere derselbe Fehler, den rejectForeignProviderVariables
 // bereits verhindert: Der Betreiber sucht an einer Stelle, die nicht gelesen
 // wird.
-func TestLoadConfigProviderImTokenModus(t *testing.T) {
+func TestLoadConfigProviderInTokenMode(t *testing.T) {
 	t.Parallel()
 
 	for _, key := range []string{"MCP_OIDC_PROVIDER", "MCP_ENTRA_TENANT_ID", "MCP_AUTHENTIK_APP_SLUG", "MCP_OIDC_ISSUER"} {
@@ -927,10 +927,10 @@ func TestLoadConfigProviderImTokenModus(t *testing.T) {
 // Der sinnvolle Subject-Claim folgt aus dem Anbieter: Bei Entra ist `sub`
 // paarweise pseudonymisiert und im Portal nirgends ablesbar, `oid` dagegen
 // schon. Wer entra waehlt, soll das nicht zusaetzlich eintragen muessen.
-func TestLoadConfigSubjectClaimDefaultProProvider(t *testing.T) {
+func TestLoadConfigSubjectClaimDefaultPerProvider(t *testing.T) {
 	t.Parallel()
 
-	faelle := []struct {
+	cases := []struct {
 		name string
 		env  func() map[string]string
 		want string
@@ -939,7 +939,7 @@ func TestLoadConfigSubjectClaimDefaultProProvider(t *testing.T) {
 		{"authentik ohne Angabe nutzt sub", minimalAuthentik, "sub"},
 		{"generic ohne Angabe nutzt sub", minimalOIDC, "sub"},
 	}
-	for _, f := range faelle {
+	for _, f := range cases {
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
 			e := f.env()

@@ -95,7 +95,7 @@ func newToolCallLimiter(cfg *config.Config) *toolCallLimiter {
 // limiterFor liefert den Rate-Limiter fuer subject, legt ihn beim ersten
 // Zugriff an. Die Menge moeglicher Subjects ist durch die Konfiguration
 // beschraenkt (MCP_ALLOWED_SUBJECTS im single-Modus, die Vereinigung aller
-// FILEEE_ACCOUNT_<KEY>_SUBJECTS im multi-Modus — siehe config.go, ladeKonten)
+// FILEEE_ACCOUNT_<KEY>_SUBJECTS im multi-Modus — siehe config.go, loadAccounts)
 // — diese Map waechst also nicht unbeschraenkt mit jedem neuen Anrufer, wie
 // es bei einer Begrenzung auf Basis der Client-Adresse der Fall waere.
 func (l *toolCallLimiter) limiterFor(subject string) *rate.Limiter {

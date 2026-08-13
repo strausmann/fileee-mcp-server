@@ -433,7 +433,7 @@ func claimStrings(v any) []string {
 	}
 }
 
-// buildResolver uebersetzt cfg.Accounts (siehe config.LoadConfig, ladeKonten)
+// buildResolver uebersetzt cfg.Accounts (siehe config.LoadConfig, loadAccounts)
 // in einen accounts.Resolver — fuer BEIDE Kontomodi ueber denselben Weg,
 // accounts.NewMulti: jedes Konto expandiert seine konfigurierte
 // Subjects-Liste zu einem Subject->Credentials-Mapping, ein nicht
@@ -441,10 +441,10 @@ func claimStrings(v any) []string {
 // Fallback (ADR-0012, Punkt 4/5).
 //
 // Im Modus single ist cfg.Accounts[0].Subjects identisch mit
-// cfg.AllowedSubjects (config.go, ladeKonten) — LoadConfig erzwingt dort
+// cfg.AllowedSubjects (config.go, loadAccounts) — LoadConfig erzwingt dort
 // bereits, dass diese Liste im Modus single nicht leer sein darf, mit der
 // Begruendung "leer hiesse: jeder authentifizierte Benutzer des IdP darf
-// zugreifen" (config.go, ladeAuth). accounts.NewSingle wuerde genau diese
+// zugreifen" (config.go, loadAuth). accounts.NewSingle wuerde genau diese
 // Zusicherung unterlaufen: es ist per eigenem Doc-Kommentar bewusst
 // subject-blind gebaut ("every caller gangway lets through shares one
 // Fileee account") — mit ihm haette die erzwungene Liste keinerlei
@@ -464,7 +464,7 @@ func claimStrings(v any) []string {
 // Modus single kein oder mehr als ein Konto traegt, obwohl LoadConfig selbst
 // das nie zuliesse. Aus demselben Grund wird ein Subject, das ueber zwei
 // Konten hinweg auftaucht, hier noch einmal abgelehnt (Pruefbefund):
-// LoadConfigs eigene ladeKonten haelt dieselbe Regel bereits ueber
+// LoadConfigs eigene loadAccounts haelt dieselbe Regel bereits ueber
 // cfg.subjectIndex ein, aber New() erhaelt eine *config.Config und keine rohe
 // Env — eine von Hand gebaute Config mit einem doppelten Subject wuerde ohne
 // diese Pruefung hier still das letzte Konto gewinnen lassen und einen
@@ -496,7 +496,7 @@ func buildResolver(cfg *config.Config) (accounts.Resolver, error) {
 //
 // clientpool schluesselt gepoolte Clients ueber den AUFGELOESTEN Fileee-
 // Benutzernamen (siehe clientpool.Pool, Doc-Kommentar zu accountKey) — nicht
-// ueber den kurzen, per accountKeyMuster dateisystemsicher geprueften
+// ueber den kurzen, per accountKeyPattern dateisystemsicher geprueften
 // FILEEE_ACCOUNT_<KEY> aus FILEEE_ACCOUNTS (config.Account.Key). Ein
 // Benutzername ist das, was der Betreiber in FILEEE_ACCOUNT_<KEY>_USERNAME
 // eingetragen hat — meist eine E-Mail-Adresse, aber nichts erzwingt das.
