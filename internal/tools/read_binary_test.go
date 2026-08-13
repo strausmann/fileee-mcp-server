@@ -206,6 +206,25 @@ func TestGetPageImageHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testin
 	}
 }
 
+// TestGetPageImageHandlerLehntEineUnbekannteGroesseOhneNetzwerkzugriffAb ist
+// parseImageSize's eigener Test, nach dem Muster von
+// TestGetDocumentPDFHandlerLehntEinenUnbekanntenModusOhneNetzwerkzugriffAb
+// (parsePDFMode) -- vom Pruefer zu Antrag #55 als fehlende Asymmetrie
+// gemeldet: das PDF-Geschwister hatte diesen Test bereits, das
+// Seitenbild-Geschwister nicht, obwohl beide dieselbe
+// Validierungs-vor-Netzwerkzugriff-Struktur teilen.
+func TestGetPageImageHandlerLehntEineUnbekannteGroesseOhneNetzwerkzugriffAb(t *testing.T) {
+	handler := getPageImageHandler(nil, discardLogger())
+
+	_, _, err := handler(context.Background(), nil, getPageImageInput{PageID: "p1", Size: "unsinn", Version: 3})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !strings.Contains(err.Error(), ToolGetPageImage) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolGetPageImage)
+	}
+}
+
 func TestDocumentPageImageFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *testing.T) {
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeDocumentBinaryService{imageErr: backendErr}
