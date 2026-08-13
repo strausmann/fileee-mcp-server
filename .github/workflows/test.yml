@@ -78,20 +78,31 @@ jobs:
           # (Bei read_sync.go ist die Luft ueber der Schwelle knapp — 0,6 Punkte. Das ist die
           # 80%-Business-Logik-Stufe selbst, keine eigens gewaehlte Marge; siehe PR-Beschreibung.)
           #
-          # ZWEI Dateien derselben Stufe erreichen 80% NOCH NICHT und sind deshalb bewusst
-          # NICHT in der Liste unten — kein erfundener Ersatzwert, der die Schranke nur zum
-          # Schein scharf schaltet:
-          #   read_generic.go   79,3%   (genericListHandler 70%, genericGetHandler 50% — deren
-          #                              Erfolgspfad haengt an clientFor/einer verifizierten
-          #                              Identitaet aus dem Kontext und ist aus diesem
-          #                              White-Box-Paket heraus nicht ohne einen echten
-          #                              Gangway/HTTP-Rundlauf testbar, siehe deren eigene
-          #                              Doc-Kommentare)
-          #   read_reference.go 77,3%   (referenceTagDescriptor 33%, referenceDocumentType-
-          #                              Descriptor 67% — reine Deskriptor-Bauer, ueber
-          #                              registerReadService/Registrierungstests nur indirekt
-          #                              erreicht)
-          # Siehe Bericht zu diesem PR fuer die vollstaendige Funktionsaufschluesselung.
+          # ZWEI Dateien derselben Stufe erreichen 80% NOCH NICHT: read_generic.go (79,3%) und
+          # read_reference.go (77,3%). Kontrollierte Ausnahme statt Luecke oder erfundenem
+          # Ersatzwert (test-coverage-pflicht.md, Abschnitt "Coverage-Whitelist") — Begruendung,
+          # Weg zum Ziel und Verfallsdatum je Datei:
+          #
+          #   read_generic.go:75 — Begruendung: genericListHandler (70%) und genericGetHandler
+          #     (50%) ziehen die Datei unter 80. Deren Erfolgspfad haengt an clientFor/einer
+          #     verifizierten Identitaet aus dem Kontext und ist aus diesem White-Box-Paket
+          #     heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar (siehe deren eigene
+          #     Doc-Kommentare) — keine vergessene Zeile, sondern eine strukturelle Grenze des
+          #     Unit-Tests. Die Logik-Ebene darunter (getFromService/listFromService/
+          #     untrustedLineOf) liegt bereits bei 87,5%/92,9%/100% (#51). 75 statt 80 laesst
+          #     Raum fuer eine weitere Funktion, ohne beim naechsten Commit rot zu faerben, und
+          #     faengt trotzdem ein Absinken unter den heutigen Stand ab.
+          #     Weg zum Ziel: Integrationstest nach dem Muster von internal/server/server_test.go
+          #     (echter Gangway/HTTP-Rundlauf mit verifizierter Identitaet) fuer beide Handler.
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          #   read_reference.go:75 — Begruendung: referenceTagDescriptor (33%) und
+          #     referenceDocumentTypeDescriptor (67%) ziehen die Datei unter 80 — reine
+          #     Deskriptor-Bauer, die nur indirekt ueber registerReadService/Registrierungstests
+          #     erreicht werden, nicht ueber eigene Tests ihrer Summarize/UntrustedLine-Closures.
+          #     Weg zum Ziel: gezielte Tests je Deskriptor-Funktion (Muster: tagDescriptor() in
+          #     read_generic_test.go).
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -106,6 +117,8 @@ jobs:
             internal/tools/read_sync.go:80 \
             internal/tools/read_people.go:80 \
             internal/tools/names.go:80 \
+            internal/tools/read_generic.go:75 \
+            internal/tools/read_reference.go:75 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
