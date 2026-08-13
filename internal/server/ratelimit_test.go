@@ -148,7 +148,7 @@ type rateLimitEnv struct {
 // setzen -- fuer die Tests, die pruefen, dass diese Einstellungen (Aufgabe
 // #42, Pruefbefund: gelesen, aber nirgends ausgewertet) tatsaechlich wirken.
 // Mehrere Subjects im single-Modus bilden alle auf dasselbe eine Konto ab
-// (config.go, ladeKonten) — ausreichend, um mehrere verifizierte, aber
+// (config.go, loadAccounts) — ausreichend, um mehrere verifizierte, aber
 // UNTERSCHIEDLICHE Identitaeten fuer die Isolations-Tests zu bekommen, ohne
 // den multi-Modus mit mehreren Konten aufsetzen zu muessen.
 func testConfigWithRateLimits(t *testing.T, rl rateLimitEnv) (*config.Config, *testidp.IDP) {

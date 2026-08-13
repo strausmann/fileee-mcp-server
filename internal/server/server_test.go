@@ -745,7 +745,7 @@ func TestBuildResolverMultiModeMapsSubjectsAcrossAccounts(t *testing.T) {
 
 // TestBuildResolverRefusesASubjectMappedToTwoAccounts ist der Gegenversuch
 // zum Pruefbefund: LoadConfig selbst laesst ein doppeltes Subject nie durch
-// (config.go, ladeKonten, cfg.subjectIndex-Kollisionspruefung), aber
+// (config.go, loadAccounts, cfg.subjectIndex-Kollisionspruefung), aber
 // buildResolver() ist exportiert-in-diesem-Paket und nimmt jede *config.Config
 // entgegen — eine von Hand gebaute Config mit demselben Subject in zwei
 // Konten muss deshalb selbst hier noch abgelehnt werden, statt still das

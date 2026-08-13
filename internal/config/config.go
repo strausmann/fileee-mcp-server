@@ -48,10 +48,10 @@ const (
 // beide Modi damit identisch — single ist ein Pool mit genau einem Eintrag.
 const defaultAccountKey = "default"
 
-// accountKeyMuster begrenzt Konto-Keys auf Zeichen, die als Dateiname sicher
+// accountKeyPattern begrenzt Konto-Keys auf Zeichen, die als Dateiname sicher
 // sind. Ohne diese Pruefung waere ein Key wie "../../etc/x" ein Schreibzugriff
 // ausserhalb des Session-Verzeichnisses.
-var accountKeyMuster = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+var accountKeyPattern = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
 // Account beschreibt ein Fileee-Konto samt der Identitaeten, die darauf zeigen.
 type Account struct {
@@ -147,7 +147,7 @@ type Config struct {
 	// dieser Konfiguration.
 	//
 	// MaxRequestBodyBytes ist davon unabhaengig abgeleitet
-	// (ladeZahlenwerte) und WUERDE den 4-MiB-Default des MCP-SDK
+	// (loadNumericValues) und WUERDE den 4-MiB-Default des MCP-SDK
 	// ueberschreiben, sobald ein Aufrufer sie liest — aber Gangway v0.2.0
 	// baut den Streamable-HTTP-Handler intern (serve.AttachMCP/
 	// AttachMCPSelector) mit einem fest verdrahteten
@@ -239,11 +239,11 @@ func LoadConfig(env Env) (*Config, error) {
 		// resolveProvider gesetzt — hier steht nur die ausdrueckliche Angabe.
 		OIDCSubjectClaim:     strings.TrimSpace(env("MCP_OIDC_SUBJECT_CLAIM")),
 		OIDCCapabilityClaim:  strings.TrimSpace(env("MCP_OIDC_CAPABILITY_CLAIM")),
-		OIDCRequiredScopes:   splitListe(env("MCP_OIDC_REQUIRED_SCOPES")),
-		OIDCAdvertisedScopes: splitListe(env("MCP_OIDC_ADVERTISED_SCOPES")),
+		OIDCRequiredScopes:   splitList(env("MCP_OIDC_REQUIRED_SCOPES")),
+		OIDCAdvertisedScopes: splitList(env("MCP_OIDC_ADVERTISED_SCOPES")),
 		ResourceURL:          strings.TrimSpace(env("MCP_RESOURCE_URL")),
 		APIToken:             env("MCP_API_TOKEN"),
-		AllowedSubjects:      splitListe(env("MCP_ALLOWED_SUBJECTS")),
+		AllowedSubjects:      splitList(env("MCP_ALLOWED_SUBJECTS")),
 		AccountMode:          AccountMode(orDefault(env("FILEEE_MODE"), string(ModeSingle))),
 		ListenAddr:           orDefault(env("MCP_LISTEN_ADDR"), ":8080"),
 		SessionDir:           orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
@@ -285,89 +285,89 @@ func LoadConfig(env Env) (*Config, error) {
 			"ist nicht true — Fileees Hard-DELETE ist unwiderruflich und braucht zwei bewusste Schalter")
 	}
 
-	if err := ladeZahlenwerte(cfg, env); err != nil {
+	if err := loadNumericValues(cfg, env); err != nil {
 		return nil, err
 	}
-	if err := ladeNetzwerk(cfg, env); err != nil {
+	if err := loadNetwork(cfg, env); err != nil {
 		return nil, err
 	}
-	if err := ladeAuth(cfg, env); err != nil {
+	if err := loadAuth(cfg, env); err != nil {
 		return nil, err
 	}
-	if err := ladeKonten(cfg, env); err != nil {
+	if err := loadAccounts(cfg, env); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-// ladeNetzwerk liest die beiden IP-Praefixlisten. Beide werden hier und nicht
+// loadNetwork liest die beiden IP-Praefixlisten. Beide werden hier und nicht
 // erst beim Bau des Gangway-Unterbaus geparst — ein unbrauchbares Praefix
 // soll den Start mit einer benannten Variable abbrechen, nicht irgendwo tief
 // in einer fremden Bibliothek.
-func ladeNetzwerk(cfg *Config, env Env) error {
+func loadNetwork(cfg *Config, env Env) error {
 	var err error
-	if cfg.TrustedProxies, err = praefixListe(env, "FILEEE_TRUSTED_PROXIES"); err != nil {
+	if cfg.TrustedProxies, err = prefixList(env, "FILEEE_TRUSTED_PROXIES"); err != nil {
 		return err
 	}
-	if cfg.AllowedOriginPrefixes, err = praefixListe(env, "FILEEE_ALLOWED_ORIGIN_PREFIXES"); err != nil {
+	if cfg.AllowedOriginPrefixes, err = prefixList(env, "FILEEE_ALLOWED_ORIGIN_PREFIXES"); err != nil {
 		return err
 	}
 	return nil
 }
 
-// praefixListe liest eine kommaseparierte Liste aus CIDR-Praefixen oder
+// prefixList liest eine kommaseparierte Liste aus CIDR-Praefixen oder
 // einzelnen IP-Adressen. Eine einzelne Adresse wird als Praefix mit voller
 // Bitlaenge behandelt (/32 bei IPv4, /128 bei IPv6) — wer eine einzelne
-// Maschine meint, tippt selten eine Maske dazu, und TestLoadConfigListenUndZahlenwerte
+// Maschine meint, tippt selten eine Maske dazu, und TestLoadConfigListenAndNumericValues
 // aus Aufgabe 1 verlangt genau das bereits fuer FILEEE_TRUSTED_PROXIES.
-func praefixListe(env Env, key string) ([]netip.Prefix, error) {
+func prefixList(env Env, key string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
-	for _, teil := range splitListe(env(key)) {
-		if p, err := netip.ParsePrefix(teil); err == nil {
+	for _, part := range splitList(env(key)) {
+		if p, err := netip.ParsePrefix(part); err == nil {
 			out = append(out, p)
 			continue
 		}
-		addr, err := netip.ParseAddr(teil)
+		addr, err := netip.ParseAddr(part)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %q ist weder eine IP-Adresse noch ein CIDR-Praefix", key, teil)
+			return nil, fmt.Errorf("%s: %q ist weder eine IP-Adresse noch ein CIDR-Praefix", key, part)
 		}
 		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
 	}
 	return out, nil
 }
 
-func ladeZahlenwerte(cfg *Config, env Env) error {
+func loadNumericValues(cfg *Config, env Env) error {
 	var err error
-	if cfg.MaxDownloadBytes, err = intWert(env, "FILEEE_MAX_DOWNLOAD_BYTES", 1<<20); err != nil {
+	if cfg.MaxDownloadBytes, err = intValue(env, "FILEEE_MAX_DOWNLOAD_BYTES", 1<<20); err != nil {
 		return err
 	}
-	if cfg.MaxUploadBytes, err = intWert(env, "FILEEE_MAX_UPLOAD_BYTES", 2<<20); err != nil {
+	if cfg.MaxUploadBytes, err = intValue(env, "FILEEE_MAX_UPLOAD_BYTES", 2<<20); err != nil {
 		return err
 	}
-	inflight, err := intWert(env, "FILEEE_MAX_INFLIGHT", 8)
+	inflight, err := intValue(env, "FILEEE_MAX_INFLIGHT", 8)
 	if err != nil {
 		return err
 	}
 	cfg.MaxInflight = int(inflight)
 
-	burst, err := intWert(env, "FILEEE_RATE_BURST", 3)
+	burst, err := intValue(env, "FILEEE_RATE_BURST", 3)
 	if err != nil {
 		return err
 	}
 	cfg.RateBurst = int(burst)
-	globalBurst, err := intWert(env, "FILEEE_RATE_GLOBAL_BURST", 3)
+	globalBurst, err := intValue(env, "FILEEE_RATE_GLOBAL_BURST", 3)
 	if err != nil {
 		return err
 	}
 	cfg.RateGlobalBurst = int(globalBurst)
 
-	if cfg.RateRPS, err = floatWert(env, "FILEEE_RATE_RPS", 1); err != nil {
+	if cfg.RateRPS, err = floatValue(env, "FILEEE_RATE_RPS", 1); err != nil {
 		return err
 	}
-	if cfg.RateGlobalRPS, err = floatWert(env, "FILEEE_RATE_GLOBAL_RPS", 1); err != nil {
+	if cfg.RateGlobalRPS, err = floatValue(env, "FILEEE_RATE_GLOBAL_RPS", 1); err != nil {
 		return err
 	}
-	if cfg.KeepaliveInterval, err = dauerWert(env, "FILEEE_KEEPALIVE_INTERVAL", 15*time.Minute); err != nil {
+	if cfg.KeepaliveInterval, err = durationValue(env, "FILEEE_KEEPALIVE_INTERVAL", 15*time.Minute); err != nil {
 		return err
 	}
 
@@ -582,11 +582,11 @@ func resolveGeneric(cfg *Config, env Env) error {
 	return nil
 }
 
-func ladeAuth(cfg *Config, env Env) error {
-	brauchtOIDC := cfg.AuthMode == AuthOIDC || cfg.AuthMode == AuthBoth
-	brauchtToken := cfg.AuthMode == AuthToken || cfg.AuthMode == AuthBoth
+func loadAuth(cfg *Config, env Env) error {
+	needsOIDC := cfg.AuthMode == AuthOIDC || cfg.AuthMode == AuthBoth
+	needsToken := cfg.AuthMode == AuthToken || cfg.AuthMode == AuthBoth
 
-	if brauchtOIDC {
+	if needsOIDC {
 		if err := resolveProvider(cfg, env); err != nil {
 			return err
 		}
@@ -624,7 +624,7 @@ func ladeAuth(cfg *Config, env Env) error {
 				"Adress-Freigabeliste verweigert Gangway den Start (ADR-0015)", cfg.AuthMode)
 		}
 	}
-	if !brauchtOIDC {
+	if !needsOIDC {
 		// Im reinen token-Modus wird keine Anbieter-Einstellung gelesen. Sie
 		// still zu ignorieren waere derselbe Fehler, den
 		// rejectForeignProviderVariables verhindert: Der Betreiber sucht an
@@ -638,11 +638,11 @@ func ladeAuth(cfg *Config, env Env) error {
 			cfg.OIDCSubjectClaim = defaultSubjectClaim(cfg.OIDCProvider)
 		}
 	}
-	if brauchtToken && cfg.APIToken == "" {
+	if needsToken && cfg.APIToken == "" {
 		return fmt.Errorf("MCP_API_TOKEN ist im Modus %q Pflicht", cfg.AuthMode)
 	}
 
-	if brauchtToken && cfg.ResourceURL != "" && !istLoopback(cfg.ResourceURL) {
+	if needsToken && cfg.ResourceURL != "" && !isLoopback(cfg.ResourceURL) {
 		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf(
 			"MCP_AUTH_MODE=%q auf der oeffentlich erreichbaren URL %s — der Zugriff auf die Dokumente "+
 				"haengt damit an einem einzigen statischen String. Fuer Produktion ist oidc vorgesehen.",
@@ -651,7 +651,7 @@ func ladeAuth(cfg *Config, env Env) error {
 	return nil
 }
 
-func ladeKonten(cfg *Config, env Env) error {
+func loadAccounts(cfg *Config, env Env) error {
 	cfg.subjectIndex = map[string]string{}
 
 	if cfg.AccountMode == ModeSingle {
@@ -679,7 +679,7 @@ func ladeKonten(cfg *Config, env Env) error {
 			"ein statisches Token traegt kein Subject, das auf ein Konto zeigen koennte")
 	}
 
-	keys := splitListe(env("FILEEE_ACCOUNTS"))
+	keys := splitList(env("FILEEE_ACCOUNTS"))
 	if len(keys) == 0 {
 		return fmt.Errorf("FILEEE_ACCOUNTS ist im Modus multi Pflicht")
 	}
@@ -688,137 +688,137 @@ func ladeKonten(cfg *Config, env Env) error {
 	// und das daraus abgeleitete Env-Praefix bestimmt, welche Variablen gelesen werden.
 	// "foo-bar" und "foo_bar" ergeben dasselbe Praefix und wuerden sich sonst
 	// unbemerkt dieselben Zugangsdaten teilen.
-	gesehen := map[string]bool{}
-	praefixe := map[string]string{}
+	seen := map[string]bool{}
+	prefixes := map[string]string{}
 
 	for _, key := range keys {
-		if gesehen[key] {
+		if seen[key] {
 			return fmt.Errorf("der Konto-Key %q steht mehrfach in FILEEE_ACCOUNTS", key)
 		}
-		gesehen[key] = true
+		seen[key] = true
 
-		if !accountKeyMuster.MatchString(key) {
+		if !accountKeyPattern.MatchString(key) {
 			return fmt.Errorf("der Konto-Key %q ist unzulaessig — erlaubt sind 1 bis 32 Zeichen aus "+
 				"[a-z0-9_-]; der Key wird als Dateiname der Session verwendet", key)
 		}
-		praefix := "FILEEE_ACCOUNT_" + strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
-		if anderer, kollision := praefixe[praefix]; kollision {
+		prefix := "FILEEE_ACCOUNT_" + strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
+		if other, collision := prefixes[prefix]; collision {
 			return fmt.Errorf("die Konto-Keys %q und %q lesen dieselben Variablen (%s_*) — "+
-				"Bindestrich und Unterstrich werden im Praefix gleich behandelt", anderer, key, praefix)
+				"Bindestrich und Unterstrich werden im Praefix gleich behandelt", other, key, prefix)
 		}
-		praefixe[praefix] = key
+		prefixes[prefix] = key
 
-		konto := Account{
+		account := Account{
 			Key:      key,
-			Username: env(praefix + "_USERNAME"),
-			Password: env(praefix + "_PASSWORD"),
-			TOTPSeed: env(praefix + "_TOTP_SEED"),
-			Subjects: splitListe(env(praefix + "_SUBJECTS")),
+			Username: env(prefix + "_USERNAME"),
+			Password: env(prefix + "_PASSWORD"),
+			TOTPSeed: env(prefix + "_TOTP_SEED"),
+			Subjects: splitList(env(prefix + "_SUBJECTS")),
 		}
-		if konto.Username == "" || konto.Password == "" {
-			return fmt.Errorf("%s_USERNAME und %s_PASSWORD sind Pflicht", praefix, praefix)
+		if account.Username == "" || account.Password == "" {
+			return fmt.Errorf("%s_USERNAME und %s_PASSWORD sind Pflicht", prefix, prefix)
 		}
 
-		if roh := env(praefix + "_CAPABILITIES"); roh != "" {
-			caps, err := ParseCapabilities(roh)
+		if raw := env(prefix + "_CAPABILITIES"); raw != "" {
+			caps, err := ParseCapabilities(raw)
 			if err != nil {
-				return fmt.Errorf("%s_CAPABILITIES: %w", praefix, err)
+				return fmt.Errorf("%s_CAPABILITIES: %w", prefix, err)
 			}
 			if caps.Intersect(cfg.Capabilities) != caps {
 				return fmt.Errorf("%s_CAPABILITIES = %q ueberschreitet die Obergrenze %q aus "+
 					"FILEEE_CAPABILITIES — ein Konto kann nur einschraenken, nie erweitern",
-					praefix, caps.String(), cfg.Capabilities.String())
+					prefix, caps.String(), cfg.Capabilities.String())
 			}
-			konto.Capabilities = caps
-			konto.HasCapabilities = true
+			account.Capabilities = caps
+			account.HasCapabilities = true
 		}
 
-		for _, subject := range konto.Subjects {
-			if vorhanden, doppelt := cfg.subjectIndex[subject]; doppelt {
+		for _, subject := range account.Subjects {
+			if existing, duplicate := cfg.subjectIndex[subject]; duplicate {
 				return fmt.Errorf("das Subject %q zeigt auf zwei Konten (%q und %q) — bei zwei plausiblen "+
 					"Zuordnungen gibt es keine richtige Wahl, deshalb kein first-match-wins",
-					subject, vorhanden, key)
+					subject, existing, key)
 			}
 			cfg.subjectIndex[subject] = key
 		}
-		cfg.Accounts = append(cfg.Accounts, konto)
+		cfg.Accounts = append(cfg.Accounts, account)
 	}
 	return nil
 }
 
-func orDefault(wert, fallback string) string {
-	if strings.TrimSpace(wert) == "" {
+func orDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
 		return fallback
 	}
-	return strings.TrimSpace(wert)
+	return strings.TrimSpace(value)
 }
 
-func splitListe(roh string) []string {
+func splitList(raw string) []string {
 	var out []string
-	for _, teil := range strings.Split(roh, ",") {
-		if t := strings.TrimSpace(teil); t != "" {
+	for _, part := range strings.Split(raw, ",") {
+		if t := strings.TrimSpace(part); t != "" {
 			out = append(out, t)
 		}
 	}
 	return out
 }
 
-func intWert(env Env, key string, fallback int64) (int64, error) {
-	roh := strings.TrimSpace(env(key))
-	if roh == "" {
+func intValue(env Env, key string, fallback int64) (int64, error) {
+	raw := strings.TrimSpace(env(key))
+	if raw == "" {
 		return fallback, nil
 	}
-	wert, err := strconv.ParseInt(roh, 10, 64)
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%s = %q ist keine ganze Zahl", key, roh)
+		return 0, fmt.Errorf("%s = %q ist keine ganze Zahl", key, raw)
 	}
 	// Negative Werte sind fuer jeden Konsumenten dieser Funktion unsinnig — Byte-Grenzen,
 	// Burst-Groessen, Nebenlaeufigkeit. Ohne diese Pruefung ergaebe ein negatives
 	// Upload-Limit ein negatives MaxRequestBodyBytes, und der Server startete damit.
-	if wert < 0 {
-		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	if value < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, raw)
 	}
-	return wert, nil
+	return value, nil
 }
 
-func floatWert(env Env, key string, fallback float64) (float64, error) {
-	roh := strings.TrimSpace(env(key))
-	if roh == "" {
+func floatValue(env Env, key string, fallback float64) (float64, error) {
+	raw := strings.TrimSpace(env(key))
+	if raw == "" {
 		return fallback, nil
 	}
-	wert, err := strconv.ParseFloat(roh, 64)
+	value, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%s = %q ist keine Zahl", key, roh)
+		return 0, fmt.Errorf("%s = %q ist keine Zahl", key, raw)
 	}
-	if wert < 0 {
-		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	if value < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, raw)
 	}
-	return wert, nil
+	return value, nil
 }
 
-func dauerWert(env Env, key string, fallback time.Duration) (time.Duration, error) {
-	roh := strings.TrimSpace(env(key))
-	if roh == "" {
+func durationValue(env Env, key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(env(key))
+	if raw == "" {
 		return fallback, nil
 	}
-	wert, err := time.ParseDuration(roh)
+	value, err := time.ParseDuration(raw)
 	if err != nil {
-		return 0, fmt.Errorf("%s = %q ist keine Dauer (erwartet z. B. 15m, 30s)", key, roh)
+		return 0, fmt.Errorf("%s = %q ist keine Dauer (erwartet z. B. 15m, 30s)", key, raw)
 	}
-	if wert < 0 {
-		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, roh)
+	if value < 0 {
+		return 0, fmt.Errorf("%s = %q darf nicht negativ sein", key, raw)
 	}
-	return wert, nil
+	return value, nil
 }
 
-// istLoopback erkennt lokale Adressen, bei denen der token-Modus unbedenklich ist.
+// isLoopback erkennt lokale Adressen, bei denen der token-Modus unbedenklich ist.
 //
 // Die Auswertung laeuft ueber url.Parse und Hostname(), nicht ueber eigenes
 // Zerschneiden: nur so wird die Klammer-Schreibweise von IPv6 ("http://[::1]:8080/")
 // korrekt aufgeloest. Eine selbstgebaute Trennung am ersten Doppelpunkt haette
 // dort "[" ergeben und faelschlich vor einer oeffentlichen URL gewarnt.
-func istLoopback(roh string) bool {
-	u, err := url.Parse(roh)
+func isLoopback(raw string) bool {
+	u, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
