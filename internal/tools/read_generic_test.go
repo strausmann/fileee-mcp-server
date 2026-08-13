@@ -130,16 +130,26 @@ func toolNamesOf(t *testing.T, s *mcp.Server) map[string]bool {
 // package) follow queryErr/getErr's own pattern: nil means "use the zero
 // value", set means "return this instead". Existing callers that never
 // set them are unaffected.
+// queryResult/getResult (added for Aufgabe 3b's own Erfolgsfall-Tests of
+// listFromService/getFromService — read_generic.go's Kernpfad, bisher nur
+// ueber den leeren Standardwert erreicht) follow the exact same
+// nil-means-zero-value, set-means-return-this pattern as diffResult — a
+// fourth field on the same fixture, not a second fake type.
 type fakeReadService[T any] struct {
-	queryErr   error
-	getErr     error
-	diffErr    error
-	diffResult *fileee.DiffResult[T]
+	queryErr    error
+	queryResult *fileee.QueryResult[T]
+	getErr      error
+	getResult   *T
+	diffErr     error
+	diffResult  *fileee.DiffResult[T]
 }
 
 func (f *fakeReadService[T]) Query(context.Context, fileee.QueryOptions) (*fileee.QueryResult[T], error) {
 	if f.queryErr != nil {
 		return nil, f.queryErr
+	}
+	if f.queryResult != nil {
+		return f.queryResult, nil
 	}
 	return &fileee.QueryResult[T]{}, nil
 }
@@ -157,6 +167,9 @@ func (f *fakeReadService[T]) Diff(context.Context, fileee.Cursor) (*fileee.DiffR
 func (f *fakeReadService[T]) Get(context.Context, string) (*T, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
+	}
+	if f.getResult != nil {
+		return f.getResult, nil
 	}
 	var zero T
 	return &zero, nil
@@ -193,6 +206,156 @@ func TestGenericGetHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testing.
 	}
 	if !strings.Contains(err.Error(), d.GetName) {
 		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), d.GetName)
+	}
+}
+
+// TestGetFromServiceLiefertZusammenfassungUndGerahmtenFremdtextBeiErfolg ist
+// getFromService's eigener Erfolgsfall — bislang lief kein Test je durch
+// diese Funktion mit einem echten Treffer, nur der Leerkennung-Test oben
+// (der getFromService gar nicht erreicht, weil er schon vorher abbricht)
+// und die Registrierungstests weiter unten (die nie einen Handler
+// aufrufen). fakeReadService.getResult liefert dafuer einen echten
+// fileee.Tag zurueck, dessen Name (das per tagDescriptor() gesetzte
+// UntrustedLine-Feld) ein unvorhersagbarer Erkennungswert ist —
+// newUntrustedBoundary (read.go), derselbe Mechanismus, den
+// mustNotLeakUntrustedLine fuer ihre eigene Registrierungspruefung nutzt
+// (siehe deren Kommentar in read_generic.go), hier zweckentfremdet als
+// kollisionsfreier Testwert statt als Sicherheitsmarker: er kann per
+// Konstruktion nicht zufaellig mit "t1" (der Struktur-ID) kollidieren.
+func TestGetFromServiceLiefertZusammenfassungUndGerahmtenFremdtextBeiErfolg(t *testing.T) {
+	marker, err := newUntrustedBoundary()
+	if err != nil {
+		t.Fatalf("newUntrustedBoundary: %v", err)
+	}
+	d := tagDescriptor()
+	service := &fakeReadService[fileee.Tag]{getResult: &fileee.Tag{ID: "t1", Name: marker}}
+
+	result, out, err := getFromService(context.Background(), d, service, "t1")
+	if err != nil {
+		t.Fatalf("getFromService: %v", err)
+	}
+
+	// Struktur-Teil: die Zusammenfassung kommt typisiert zurueck ...
+	if out.Entry.ID != "t1" {
+		t.Errorf("Entry.ID = %q, want %q", out.Entry.ID, "t1")
+	}
+	// ... und der fremdbestimmte Text steht NICHT darin — dieselbe Pruefung,
+	// die mustNotLeakUntrustedLine bei der Registrierung einmalig macht,
+	// hier gegen den tatsaechlichen Handler-Output eines echten Aufrufs.
+	for _, v := range summaryFieldValues(out.Entry) {
+		if strings.Contains(v, marker) {
+			t.Errorf("Struktur-Teil enthaelt den fremdbestimmten Text: Feldwert %q enthaelt den Erkennungswert", v)
+		}
+	}
+
+	// Text-Teil: der fremdbestimmte Text erscheint gerahmt im Textinhalt.
+	if len(result.Content) != 1 {
+		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+	}
+	if !strings.Contains(text.Text, marker) {
+		t.Errorf("Textinhalt enthaelt nicht den fremdbestimmten Text (Erkennungswert fehlt): %q", text.Text)
+	}
+	if !strings.Contains(text.Text, "<untrusted_external_content") {
+		t.Errorf("Textinhalt ist nicht gerahmt (kein <untrusted_external_content>-Tag): %q", text.Text)
+	}
+}
+
+// TestGetFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin ist
+// getFromService's Gegenstueck zu TestListFromServiceWickelt... oben — bis
+// hierhin gab es fuer getFromService nur den Leerkennungs-Test, der Get nie
+// erreicht; ein Fehler von service.Get selbst lief in keinem Test.
+func TestGetFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *testing.T) {
+	backendErr := errors.New("Gegenseite antwortet nicht")
+	d := tagDescriptor()
+	service := &fakeReadService[fileee.Tag]{getErr: backendErr}
+
+	_, _, err := getFromService(context.Background(), d, service, "t1")
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("Fehler wickelt %v nicht ein, bekam: %v", backendErr, err)
+	}
+	if !strings.Contains(err.Error(), d.GetName) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), d.GetName)
+	}
+}
+
+// TestListFromServiceLiefertMehrereEintraegeUndSammeltGerahmtenFremdtext ist
+// listFromService's eigener Erfolgsfall mit mehr als einer Zeile — der
+// einzige bisherige Test dieser Funktion (TestListFromServiceWickelt... oben)
+// deckt nur den Fehlerpfad ab; der Erfolgsfall lief bislang nie durch, immer
+// nur gegen fakeReadService's leeren Standardwert (kein Row, kein Text).
+func TestListFromServiceLiefertMehrereEintraegeUndSammeltGerahmtenFremdtext(t *testing.T) {
+	marker1, err := newUntrustedBoundary()
+	if err != nil {
+		t.Fatalf("newUntrustedBoundary: %v", err)
+	}
+	marker2, err := newUntrustedBoundary()
+	if err != nil {
+		t.Fatalf("newUntrustedBoundary: %v", err)
+	}
+	d := tagDescriptor()
+	service := &fakeReadService[fileee.Tag]{
+		queryResult: &fileee.QueryResult[fileee.Tag]{
+			Rows:      []fileee.Tag{{ID: "t1", Name: marker1}, {ID: "t2", Name: marker2}},
+			TotalRows: 2,
+		},
+	}
+
+	result, out, err := listFromService(context.Background(), d, service, genericListInput{})
+	if err != nil {
+		t.Fatalf("listFromService: %v", err)
+	}
+
+	// Alle Zeilen erscheinen, in der von der Gegenseite gelieferten Reihenfolge.
+	if len(out.Entries) != 2 {
+		t.Fatalf("Entries hat %d Eintraege, want 2", len(out.Entries))
+	}
+	if out.Entries[0].ID != "t1" || out.Entries[1].ID != "t2" {
+		t.Errorf("Entries = %+v, want IDs t1, t2 in dieser Reihenfolge", out.Entries)
+	}
+	if out.TotalRows != 2 {
+		t.Errorf("TotalRows = %d, want 2", out.TotalRows)
+	}
+
+	// Beide gerahmten Texte werden gesammelt und gemeinsam ausgeliefert.
+	if len(result.Content) != 1 {
+		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+	}
+	if !strings.Contains(text.Text, marker1) || !strings.Contains(text.Text, marker2) {
+		t.Errorf("Textinhalt enthaelt nicht beide fremdbestimmten Zeilen: %q", text.Text)
+	}
+	if !strings.Contains(text.Text, "<untrusted_external_content") {
+		t.Errorf("Textinhalt ist nicht gerahmt (kein <untrusted_external_content>-Tag): %q", text.Text)
+	}
+}
+
+// TestUntrustedLineOfLiefertLeereZeichenketteOhneUntrustedLine ist
+// untrustedLineOf's eigener Nil-Zweig. Die drei Erfolgsfall-Tests oben
+// rufen listFromService/getFromService ausschliesslich mit tagDescriptor()
+// auf, deren UntrustedLine gesetzt ist — sie decken also nur den
+// GESETZTEN Zweig ab. Der Nil-Zweig (dieser Typ traegt nie Fremdtext,
+// siehe UntrustedLine's eigener Kommentar auf readServiceDescriptor) lief
+// bislang durch keinen tatsaechlichen Aufruf: die Registrierungstests
+// weiter unten pruefen nur, DASS ein UntrustedLine-loser Deskriptor sauber
+// anmeldet (TestRegisterReadServiceStartetSauberOhneFremdbestimmtenText),
+// nie, was ein Aufruf gegen ihn zurueckgibt.
+func TestUntrustedLineOfLiefertLeereZeichenketteOhneUntrustedLine(t *testing.T) {
+	d := readServiceDescriptor[fileee.Tag, tagSummary]{
+		Summarize: func(tag *fileee.Tag) tagSummary { return tagSummary{ID: tag.ID} },
+		// UntrustedLine bewusst nicht gesetzt.
+	}
+	if line := untrustedLineOf(d, &fileee.Tag{ID: "t1"}); line != "" {
+		t.Errorf("untrustedLineOf ohne UntrustedLine = %q, want leere Zeichenkette", line)
 	}
 }
 
