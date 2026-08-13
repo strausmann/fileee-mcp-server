@@ -14,6 +14,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"sync"
@@ -154,15 +155,117 @@ func getRuntimeStatsHandler(logger *slog.Logger) mcp.ToolHandlerFor[getRuntimeSt
 }
 
 // --- get_tool_manifest -------------------------------------------------
-//
-// Wired in Aufgabe C2 — see that task's own commit for listMountedTools,
-// getToolManifestHandler and their registration.
 
-// registerOpsTools mounts get_runtime_stats onto s — called once from
-// RegisterRead (read.go). p is currently unused by get_runtime_stats
-// itself (see getRuntimeStatsHandler's own doc comment on why) but kept
-// in this signature to match every other registerXxxTools function in
-// this package; self_check (a later task, same file) needs it for its own
+// toolManifestEntry is get_tool_manifest's per-tool entry. Kind is
+// access.ToolKind's own string value ("read" today — Teil B, a later
+// phase of this project, would add "write"), taken from ReadToolKinds()
+// rather than re-derived here, so this can never disagree with what
+// Gangway's own authorization middleware actually enforces (server.go,
+// serve.WithToolKinds(tools.ReadToolKinds())).
+type toolManifestEntry struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+}
+
+// getToolManifestInput are get_tool_manifest's parameters — deliberately
+// empty, same reasoning as getRuntimeStatsInput above: the manifest
+// always covers every tool the calling instance currently has mounted.
+type getToolManifestInput struct{}
+
+// getToolManifestOutput is get_tool_manifest's structured result.
+type getToolManifestOutput struct {
+	Total int                 `json:"total"`
+	Tools []toolManifestEntry `json:"tools"`
+}
+
+// listMountedTools opens a throwaway, in-process client session against s
+// itself and reads back exactly the tools currently mounted on it — the
+// same in-memory round trip registeredReadTools() (names.go) already
+// uses against a disposable PROBE server, applied here instead to the
+// real, already-registered server instance a running get_tool_manifest
+// handler was given.
+//
+// Because get_tool_manifest and get_runtime_stats are themselves
+// registered on s before any request is ever served (registerOpsTools
+// runs inside RegisterRead, before s.Connect is ever called for a real
+// caller), this round trip counts both of them automatically — no
+// separate self-reference to remember, unlike Dockhand's hand-maintained
+// META_TOOL_NAMES list, which stayed a manually kept constant even after
+// its 292-vs-298 fix (Antrag #186 there, and the grundlage document this
+// task is based on, docs/research/2026-08-12-fileee-betriebswerkzeuge-
+// grundlage.md, Frage 2, in the homelab-management repo).
+//
+// This was flagged in that same document as plausible but NOT verified
+// by execution — a second, independent in-memory session on a server
+// that may already have live client sessions attached, opened from
+// inside one of that server's own handlers. TestGetToolManifest...
+// (ops_test.go) is that verification: it drives this function through a
+// live handler call against a server RegisterRead already fully wired,
+// and the result matches an independently taken toolNamesOf() reading of
+// the same server exactly. No problem was found.
+func listMountedTools(ctx context.Context, s *mcp.Server) ([]*mcp.Tool, error) {
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := s.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fileee-mcp: tools: %s: connect probe session: %w", ToolGetToolManifest, err)
+	}
+	defer func() { _ = serverSession.Close() }()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "tool-manifest-probe", Version: "0"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fileee-mcp: tools: %s: connect probe client: %w", ToolGetToolManifest, err)
+	}
+	defer func() { _ = clientSession.Close() }()
+
+	res, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fileee-mcp: tools: %s: list tools: %w", ToolGetToolManifest, err)
+	}
+	return res.Tools, nil
+}
+
+// getToolManifestHandler resolves get_tool_manifest. s is the same
+// *mcp.Server RegisterRead was given to mount every tool onto — this
+// handler closes over it so listMountedTools always asks the live
+// instance, never a separately built copy that could drift from it.
+//
+// No client resolution here either, same reasoning as
+// getRuntimeStatsHandler: introspecting s is entirely local, nothing
+// here ever talks to Fileee.
+func getToolManifestHandler(s *mcp.Server, logger *slog.Logger) mcp.ToolHandlerFor[getToolManifestInput, getToolManifestOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, _ getToolManifestInput) (*mcp.CallToolResult, getToolManifestOutput, error) {
+		start := time.Now()
+		logToolStart(ctx, logger, ToolGetToolManifest)
+
+		mounted, err := listMountedTools(ctx, s)
+		if err != nil {
+			logToolEnd(ctx, logger, ToolGetToolManifest, start, "", 0, err)
+			return nil, getToolManifestOutput{}, err
+		}
+
+		kinds := ReadToolKinds()
+		out := getToolManifestOutput{Total: len(mounted), Tools: make([]toolManifestEntry, 0, len(mounted))}
+		for _, tool := range mounted {
+			kind := ""
+			if k, ok := kinds[tool.Name]; ok {
+				kind = string(k)
+			}
+			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Description: tool.Description, Kind: kind})
+		}
+		sort.Slice(out.Tools, func(i, j int) bool { return out.Tools[i].Name < out.Tools[j].Name })
+
+		logToolEnd(ctx, logger, ToolGetToolManifest, start, "", len(out.Tools), nil)
+		return &mcp.CallToolResult{}, out, nil
+	}
+}
+
+// registerOpsTools mounts get_runtime_stats and get_tool_manifest onto s
+// — called once from RegisterRead (read.go). p is currently unused by
+// either tool (see their own handler doc comments on why) but kept in
+// this signature to match every other registerXxxTools function in this
+// package; self_check (a later task, same file) needs it for its own
 // dedicated login attempt.
 func registerOpsTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
@@ -176,4 +279,18 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"and does not include the outcome of the very call that returned this snapshot.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, getRuntimeStatsHandler(logger))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: ToolGetToolManifest,
+		Description: "List every tool actually mounted on the server instance answering this call, " +
+			"with each tool's name, description and permission group. Returns the total count and " +
+			"one entry per tool, always including get_runtime_stats and get_tool_manifest itself. " +
+			"Use it to see exactly which tools the calling identity's server instance offers right " +
+			"now, for example after a deployment. It does not report tools mounted on a different " +
+			"permission-group instance than the one serving this call — the server builds one such " +
+			"instance per reachable capability combination, and each caller only ever reaches its " +
+			"own — and it does not claim this set is everything this server will ever offer, only " +
+			"what is registered in the build answering this particular call.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, getToolManifestHandler(s, logger))
 }

@@ -202,3 +202,148 @@ func TestRegisterOpsToolsMeldetGetRuntimeStatsAn(t *testing.T) {
 		t.Errorf("Werkzeug %q wurde nicht angemeldet", ToolGetRuntimeStats)
 	}
 }
+
+// --- get_tool_manifest (Aufgabe C2) ----------------------------------------
+
+// TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind
+// ist C2's Kern-Test: die gemeldete Anzahl muss der Anzahl tatsaechlich
+// angemeldeter Werkzeuge entsprechen -- EINSCHLIESSLICH get_tool_manifest
+// selbst und get_runtime_stats. Genau dieser Selbstbezug fehlte beim
+// Dockhand-Server (292 statt 298 gemeldet, weil die dortige Liste von
+// Hand gepflegt wurde und nie automatisch abgeglichen wurde). Die
+// Referenzzahl kommt hier bewusst aus einem UNABHAENGIGEN zweiten
+// Hin-und-Rueckl-Lauf (toolNamesOf, dieselbe Maschinerie wie
+// registeredReadTools() in names.go) -- nicht aus der Anzahl der
+// AddTool-Aufrufe in RegisterRead abgezaehlt, sonst wuerde der Test genau
+// denselben blinden Fleck teilen, den er aufdecken soll.
+func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	RegisterRead(s, (*clientpool.Pool)(nil), discardLogger())
+
+	want := toolNamesOf(t, s)
+	if !want[ToolGetToolManifest] {
+		t.Fatal("Testaufbau fehlerhaft: get_tool_manifest selbst ist nicht angemeldet")
+	}
+
+	handler := getToolManifestHandler(s, discardLogger())
+	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
+	if err != nil {
+		t.Fatalf("getToolManifestHandler: %v", err)
+	}
+
+	if out.Total != len(want) {
+		t.Errorf("Total = %d, want %d (Anzahl tatsaechlich angemeldeter Werkzeuge)", out.Total, len(want))
+	}
+	if len(out.Tools) != len(want) {
+		t.Errorf("len(Tools) = %d, want %d", len(out.Tools), len(want))
+	}
+
+	got := make(map[string]bool, len(out.Tools))
+	for _, tool := range out.Tools {
+		got[tool.Name] = true
+	}
+	if !got[ToolGetToolManifest] {
+		t.Error("get_tool_manifest zaehlt sich nicht selbst mit -- genau der Dockhand-Fehler (292 statt 298)")
+	}
+	if !got[ToolGetRuntimeStats] {
+		t.Error("get_runtime_stats fehlt im eigenen Verzeichnis")
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("Werkzeug %q ist angemeldet, fehlt aber im Verzeichnis", name)
+		}
+	}
+	for name := range got {
+		if !want[name] {
+			t.Errorf("Verzeichnis nennt %q, aber kein Werkzeug dieses Namens ist angemeldet", name)
+		}
+	}
+}
+
+func TestGetToolManifestWaechstMitNeuAngemeldetenWerkzeugenMit(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	RegisterRead(s, (*clientpool.Pool)(nil), discardLogger())
+	handler := getToolManifestHandler(s, discardLogger())
+
+	_, before, err := handler(context.Background(), nil, getToolManifestInput{})
+	if err != nil {
+		t.Fatalf("getToolManifestHandler (vorher): %v", err)
+	}
+
+	// Versuchsaufbau: ein zusaetzliches, unabhaengiges Werkzeug auf
+	// demselben Wegwerf-Server anmelden -- s existiert nur fuer diesen
+	// Test und wird mit ihm verworfen, ein Entfernen danach ist deshalb
+	// nicht noetig (kein geteilter Zustand, keine Produktionsinstanz).
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "zusaetzliches_testwerkzeug_fuer_die_gegenprobe",
+		Description: descriptionFixture,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, struct{}, error) {
+		return &mcp.CallToolResult{}, struct{}{}, nil
+	})
+
+	_, after, err := handler(context.Background(), nil, getToolManifestInput{})
+	if err != nil {
+		t.Fatalf("getToolManifestHandler (nachher): %v", err)
+	}
+
+	if after.Total != before.Total+1 {
+		t.Errorf("Total nach zusaetzlicher Anmeldung = %d, want %d (vorher %d + 1)", after.Total, before.Total+1, before.Total)
+	}
+}
+
+func TestGetToolManifestOutputFeldlisteIstAbgeschlossen(t *testing.T) {
+	want := []string{"Total", "Tools"}
+	got := fieldNames(getToolManifestOutput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("getToolManifestOutput-Feldliste = %v, want %v", got, want)
+	}
+}
+
+func TestToolManifestEntryFeldlisteIstAbgeschlossen(t *testing.T) {
+	want := []string{"Name", "Description", "Kind"}
+	got := fieldNames(toolManifestEntry{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("toolManifestEntry-Feldliste = %v, want %v", got, want)
+	}
+}
+
+func TestGetToolManifestInputNimmtKeineParameterEntgegen(t *testing.T) {
+	got := fieldNames(getToolManifestInput{})
+	if len(got) != 0 {
+		t.Errorf("getToolManifestInput hat Felder %v, want keine", got)
+	}
+}
+
+// TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug belegt, dass
+// jeder Eintrag eine nicht-leere Kind-Angabe traegt -- ReadToolKinds()
+// deckt heute jedes ueber RegisterRead angemeldete Werkzeug ab
+// (descriptions_test.go's eigener TestJedesWerkzeugIstAlsLesendEingestuft
+// wuerde sonst schon fehlschlagen), get_tool_manifest darf diese
+// Information nicht verlieren.
+func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	RegisterRead(s, (*clientpool.Pool)(nil), discardLogger())
+	handler := getToolManifestHandler(s, discardLogger())
+
+	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
+	if err != nil {
+		t.Fatalf("getToolManifestHandler: %v", err)
+	}
+	for _, tool := range out.Tools {
+		if tool.Kind == "" {
+			t.Errorf("Werkzeug %q hat keine Berechtigungsgruppe im Verzeichnis", tool.Name)
+		}
+	}
+}
+
+func TestRegisterOpsToolsMeldetGetToolManifestAn(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+
+	registerOpsTools(s, (*clientpool.Pool)(nil), discardLogger())
+
+	names := toolNamesOf(t, s)
+	if !names[ToolGetToolManifest] {
+		t.Errorf("Werkzeug %q wurde nicht angemeldet", ToolGetToolManifest)
+	}
+}

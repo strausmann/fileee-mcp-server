@@ -101,6 +101,11 @@ const (
 	// C1, ops.go) — this server's own call-count/error diagnostics, not a
 	// Fileee-backed tool at all.
 	ToolGetRuntimeStats = "get_runtime_stats"
+
+	// ToolGetToolManifest is get_tool_manifest's registered name (Aufgabe
+	// C2, ops.go) — introspects the calling server instance's own live
+	// tool set, not a Fileee-backed tool either.
+	ToolGetToolManifest = "get_tool_manifest"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -193,6 +198,10 @@ var readToolNames = []string{
 	// in-memory counters, no Fileee access at all, still classified
 	// access.KindRead: it is a strict read of server-internal state.
 	ToolGetRuntimeStats,
+	// get_tool_manifest (Aufgabe C2, ops.go) — introspects the calling
+	// server instance's own live tool set, same reasoning as
+	// get_runtime_stats above: a strict read, no Fileee access.
+	ToolGetToolManifest,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
