@@ -68,6 +68,30 @@ jobs:
           # Die Liste waechst mit jedem Umsetzungsschritt mit. Jede neue Datei bekommt
           # ihre Schwelle im selben PR, in dem sie entsteht — nachtraeglich nachziehen
           # heisst, das Gate fuer diese Datei nie scharf zu schalten.
+          #
+          # internal/tools erweitert (Stand dieses PR, gemessen nach dem Zusammenfuehren der
+          # Dokument-/Personen-Werkzeuge): read.go war bereits gegattert (80, Business-Logik-
+          # Stufe wie oben). Vier weitere Dateien derselben Stufe erreichen 80% bereits mit
+          # Luft und werden hier scharf geschaltet:
+          #   read_sync.go      80,6%   read_people.go   83,3%
+          #   names.go          87,0%
+          # (Bei read_sync.go ist die Luft ueber der Schwelle knapp — 0,6 Punkte. Das ist die
+          # 80%-Business-Logik-Stufe selbst, keine eigens gewaehlte Marge; siehe PR-Beschreibung.)
+          #
+          # ZWEI Dateien derselben Stufe erreichen 80% NOCH NICHT und sind deshalb bewusst
+          # NICHT in der Liste unten — kein erfundener Ersatzwert, der die Schranke nur zum
+          # Schein scharf schaltet:
+          #   read_generic.go   79,3%   (genericListHandler 70%, genericGetHandler 50% — deren
+          #                              Erfolgspfad haengt an clientFor/einer verifizierten
+          #                              Identitaet aus dem Kontext und ist aus diesem
+          #                              White-Box-Paket heraus nicht ohne einen echten
+          #                              Gangway/HTTP-Rundlauf testbar, siehe deren eigene
+          #                              Doc-Kommentare)
+          #   read_reference.go 77,3%   (referenceTagDescriptor 33%, referenceDocumentType-
+          #                              Descriptor 67% — reine Deskriptor-Bauer, ueber
+          #                              registerReadService/Registrierungstests nur indirekt
+          #                              erreicht)
+          # Siehe Bericht zu diesem PR fuer die vollstaendige Funktionsaufschluesselung.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -79,6 +103,9 @@ jobs:
             internal/server/server.go:80 \
             internal/clientpool/pool.go:85 \
             internal/tools/read.go:80 \
+            internal/tools/read_sync.go:80 \
+            internal/tools/read_people.go:80 \
+            internal/tools/names.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
