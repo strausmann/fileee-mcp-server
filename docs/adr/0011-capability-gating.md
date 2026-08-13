@@ -61,3 +61,17 @@ Je ein Fall pro Rangfolgestufe, plus: Claim gesetzt aber leer (muss `read` ergeb
 - `README.md`, Abschnitt „Funktionsumfang festlegen"
 - `docs/idp/authentik.md` Abschnitt 4a, `docs/idp/entra-id.md` Abschnitt 3a
 - [go-fileee ADR-0007](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0007-ausschluss-destruktiver-operationen.md) — Ausgangslage: kategorischer Ausschluss in der Library
+
+## Nachtrag (2026-08-13): Punkt 6 — „derselben Sitzung" ist überholt
+
+Punkt 6 oben verlangt, dass die zu löschende ID „aus einer vorangegangenen Leseantwort derselben
+Sitzung" stammen muss. Diese Formulierung stammt aus der Zeit vor
+[ADR-0015](0015-gangway-als-unterbau.md) und ist überholt: Gangways erzwungene Statelessness öffnet
+und schließt pro Anfrage eine neue, temporäre Sitzung — es gibt keinen Sitzungsbegriff, der über den
+einzelnen Request hinaus etwas merken könnte. Die tatsächliche Bindung ist die geprüfte Identität aus
+`serve.IdentityFrom(ctx)`, nicht die MCP-Sitzung — bereits korrekt beschrieben in
+[ADR-0013](0013-prompt-injection-schutz.md) Punkt 3 und in `CONTRIBUTING.md`, Abschnitt „Destruktive
+Whitelist".
+
+Die ursprüngliche Fassung von Punkt 6 bleibt oben unverändert stehen, als Protokoll dessen, wie die
+Regel ursprünglich formuliert war.

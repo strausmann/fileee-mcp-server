@@ -134,7 +134,7 @@ Ist der Claim konfiguriert, der Benutzer hat aber keine passende Rolle oder Grup
 
 `destructive` ist über keinen Claim erreichbar und bleibt eine bewusste Entscheidung am Server.
 
-Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die zwei Schalter, ein Audit-Log vor jeder Löschung und die Regel, dass eine zu löschende ID aus einer vorangegangenen Leseantwort derselben Sitzung stammen muss.
+Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die zwei Schalter, ein Audit-Log vor jeder Löschung und die Regel, dass eine zu löschende ID aus einer vorangegangenen Leseantwort derselben geprüften Identität stammen muss — gebunden an `serve.IdentityFrom(ctx)`, nicht an die MCP-Sitzung, die es unter der erzwungenen Statelessness ohnehin nicht über den einzelnen Request hinaus gibt.
 
 ## Werkzeuge
 
