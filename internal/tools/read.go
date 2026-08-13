@@ -114,6 +114,10 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"and it does not search by document title.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, listDocumentConversationsHandler(p, logger))
+
+	registerBoxTools(s, p, logger)
+	registerBinaryTools(s, p, logger)
+	registerAccountTools(s, p, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current
