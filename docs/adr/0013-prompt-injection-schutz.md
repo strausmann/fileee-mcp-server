@@ -55,3 +55,20 @@ Diese Entscheidung senkt die Wahrscheinlichkeit, sie beseitigt das Problem nicht
 - [MCP Security Best Practices](https://modelcontextprotocol.io/specification/draft/basic/security_best_practices)
 - [go-fileee ADR-0007](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0007-ausschluss-destruktiver-operationen.md) — Hard-DELETE ist serverseitig endgültig, ohne Papierkorb
 - `CONTRIBUTING.md`, Abschnitt „Besondere Sorgfalt"
+
+## Nachtrag (2026-08-13): „Negativ" — „Sitzungszustand" ist überholt
+
+Der zweite Punkt im Abschnitt „Negativ" oben sagt „Die ID-Whitelist ist Sitzungszustand". Das
+war korrekt, bevor [ADR-0015](0015-gangway-als-unterbau.md) diesen Server auf zustandslosen
+Betrieb umgestellt hat, und ist seitdem überholt — Punkt 3 weiter oben wurde im Zuge dessen
+bereits korrigiert und sagt zutreffend: „gebunden an die geprüfte Identität, nicht an die
+MCP-Sitzung". Der Konsequenzen-Absatz wurde bei dieser Überarbeitung nicht mitgezogen und blieb
+stehen wie ursprünglich formuliert.
+
+Die tatsächliche Kosten-Aussage bleibt in der Sache unverändert richtig: Die ID-Whitelist ist
+zusätzlicher, dauerhafter Zustand im Server — sie hängt heute nur an der geprüften Identität
+(`serve.IdentityFrom(ctx)`, mit eigener Verfallsregelung) statt an einer MCP-Sitzung, die es
+unter Gangways erzwungener Statelessness ohnehin nicht über den einzelnen Request hinaus gibt.
+
+Die ursprüngliche Fassung des Punkts bleibt oben unverändert stehen, als Protokoll dessen, wie
+die Regel ursprünglich formuliert war.
