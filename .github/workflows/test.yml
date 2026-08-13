@@ -143,6 +143,16 @@ jobs:
           # "Coverage-Whitelist"). Gegenprobe (lokal, scripts/coverage-gate-strict.sh): eine
           # probeweise unerreichbar hohe Schwelle (99) liess das Gate fuer alle drei Dateien
           # FAILen; die hier eingetragenen Werte bestehen denselben Lauf.
+          #
+          # internal/tools/ops.go (Aufgabe C3, self_check): fehlte hier bisher, weil die Datei
+          # entstand, waehrend diese Schranke gebaut wurde (nur get_runtime_stats/
+          # get_tool_manifest, keiner der beiden ruehrt Fileee an). Mit self_check kommt die
+          # erste echte Anmeldeprobe in die Datei — gemessen 86,7%, komfortabel ueber 80: die
+          # Kernlogik (classifySelfCheckOutcome, selfCheckResultFor) liegt bei 100%, einzig
+          # getSelfCheckHandler (44,4%) zieht den Dateidurchschnitt, aus demselben Grund wie
+          # read_boxes.go/read_binary.go/read_account.go oben — die duenne Anmelde-Huelle haengt
+          # an clientFor-aequivalenter Identitaetsaufloesung aus dem Kontext, aus diesem
+          # White-Box-Paket heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -162,6 +172,7 @@ jobs:
             internal/tools/read_boxes.go:60 \
             internal/tools/read_binary.go:68 \
             internal/tools/read_account.go:50 \
+            internal/tools/ops.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |

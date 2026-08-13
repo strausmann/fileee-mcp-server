@@ -276,6 +276,86 @@ func (p *Pool) Close() {
 	}
 }
 
+// ResolveAccountKey resolves id's account and returns the same key For
+// itself uses to cache a client for it (see accountKey) — without
+// building a client or attempting a login. Built for self_check (Aufgabe
+// C3, internal/tools/ops.go), so it can decide WHICH account's rate limit
+// to check before deciding whether to call ProbeLogin at all — a pure,
+// local lookup through the configured accounts.Resolver, no network I/O.
+func (p *Pool) ResolveAccountKey(ctx context.Context, id *identity.Identity) (string, error) {
+	if id == nil || id.Subject == "" {
+		return "", fmt.Errorf("fileee-mcp: clientpool: no verified identity")
+	}
+	creds, err := p.resolver.Credentials(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return accountKey(creds)
+}
+
+// ProbeLogin resolves id's account and attempts a single, uncached login
+// against it — deliberately bypassing every mechanism For relies on
+// (bySubject/byAccount singleflight dedup, the pooled/cached client map).
+//
+// Built for self_check (Aufgabe C3): For (via clientFor, internal/tools/
+// read.go) couples reachability and login together — buildAndLogin calls
+// EnsureSession immediately on a cache miss and wraps whatever comes back
+// into one generic "resolve fileee client" failure, the exact coupling a
+// diagnostic tool must not reproduce (a wrong password and a network
+// outage must not look the same to whoever is troubleshooting). For also
+// answers instantly from its cache once an account has ever logged in
+// successfully, which is the wrong behaviour for a tool whose entire job
+// is "check right now" — a self-check answering from a connection that
+// has been sitting cached for hours proves nothing about this moment.
+//
+// The returned error is exactly what fileee.Client.Login returned, or an
+// error from this function's own resolution/client-construction steps —
+// never wrapped further here, so errors.Is/errors.As against go-fileee's
+// own sentinel values (fileee.ErrInvalidCredentials, fileee.
+// ErrTwoFactorInvalid, *fileee.APIError, *fileee.BlockedError) keeps
+// working on it exactly as it would straight off Login itself.
+//
+// The throwaway client this builds never persists a session — see
+// discardSessionStore's own doc comment for why a probe login must not
+// touch whatever session store the real, pooled clients use.
+func (p *Pool) ProbeLogin(ctx context.Context, id *identity.Identity) error {
+	if id == nil || id.Subject == "" {
+		return fmt.Errorf("fileee-mcp: clientpool: no verified identity")
+	}
+	creds, err := p.resolver.Credentials(ctx, id)
+	if err != nil {
+		return err
+	}
+	// Copy before appending, same reasoning as buildAndLogin's own
+	// identical pattern: p.clientOptions is shared by every account this
+	// pool serves, and append may otherwise reuse (and race on) its
+	// backing array across concurrent ProbeLogin/buildAndLogin calls.
+	opts := append(append([]fileee.Option{}, p.clientOptions...), fileee.WithSessionStore(discardSessionStore{}))
+	client, err := fileee.NewClient(creds, opts...)
+	if err != nil {
+		return fmt.Errorf("fileee-mcp: clientpool: build probe client: %w", err)
+	}
+	return client.Login(ctx)
+}
+
+// discardSessionStore never persists anything: Load always reports "no
+// stored session" (forcing ProbeLogin's client through a genuine,
+// from-scratch login every time — never a stale cookie loaded from disk,
+// which would let a probe "succeed" without actually checking anything),
+// and Save is a no-op. A probe login exists for exactly one attempt and
+// is discarded the instant ProbeLogin returns — persisting its session
+// would serve no purpose and risks colliding with the real pooled
+// client's own session file for the same account, if the caller
+// configured WithSessionStore on this Pool for its normal connections.
+type discardSessionStore struct{}
+
+// Load always reports "no stored session" — see discardSessionStore's own
+// doc comment for why that is the point.
+func (discardSessionStore) Load(context.Context) (*fileee.Session, error) { return nil, nil }
+
+// Save is a no-op — see discardSessionStore's own doc comment for why.
+func (discardSessionStore) Save(context.Context, *fileee.Session) error { return nil }
+
 // accountKey derives the pool's cache key from creds. It is the account's
 // Fileee username, not the short account key configured in FILEEE_ACCOUNTS
 // (ADR-0012, point 8) — accounts.Resolver returns credentials only, and

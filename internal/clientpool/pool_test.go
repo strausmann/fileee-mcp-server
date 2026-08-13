@@ -701,3 +701,182 @@ func TestBuildAndLoginStopsKeepaliveIfPoolClosedDuringLogin(t *testing.T) {
 		t.Errorf("keepalive pinged %d times after a login that started with the pool already closed, want 0", got)
 	}
 }
+
+// --- ResolveAccountKey / ProbeLogin (Aufgabe C3, self_check) ---------------
+//
+// self_check must not reuse For's own coupling of reachability and login
+// (buildAndLogin calls EnsureSession immediately on a cache miss and wraps
+// whatever comes back into one generic "resolve fileee client" failure,
+// see clientFor's own doc comment in internal/tools/read.go) — a
+// diagnostic tool needs to tell "wrong password" apart from "network
+// down", and needs to check RIGHT NOW rather than answer from a client
+// For already has cached and warm. These two methods are that separate,
+// uncached path: ResolveAccountKey is the cheap half (which account would
+// this identity check?), ProbeLogin is the one that actually attempts a
+// login, every time, against a throwaway client that never touches disk.
+
+// TestResolveAccountKeyNeverAttemptsANetworkCall proves the "cheap half"
+// claim directly: the base URL points at a closed local port, so any
+// attempt to actually reach Fileee would fail immediately — a passing
+// call therefore proves ResolveAccountKey never tried.
+func TestResolveAccountKeyNeverAttemptsANetworkCall(t *testing.T) {
+	t.Parallel()
+
+	r := newCountingResolver(map[string]fileee.Credentials{
+		"alice": {Username: "alice@example.invalid", Password: "pw"},
+	})
+	p := New(r, WithClientOptions(fileee.WithBaseURL("http://127.0.0.1:1")))
+
+	key, err := p.ResolveAccountKey(context.Background(), &identity.Identity{Subject: "alice"})
+	if err != nil {
+		t.Fatalf("ResolveAccountKey: %v", err)
+	}
+	if key != "alice@example.invalid" {
+		t.Errorf("key = %q, want %q", key, "alice@example.invalid")
+	}
+}
+
+func TestResolveAccountKeyRefusesANilIdentity(t *testing.T) {
+	t.Parallel()
+
+	p := New(newCountingResolver(nil))
+	if _, err := p.ResolveAccountKey(context.Background(), nil); err == nil {
+		t.Fatal("ResolveAccountKey with a nil identity: want an error, got nil")
+	}
+}
+
+func TestResolveAccountKeySurfacesANoAccountResolverError(t *testing.T) {
+	t.Parallel()
+
+	p := New(newCountingResolver(nil))
+	if _, err := p.ResolveAccountKey(context.Background(), &identity.Identity{Subject: "ghost"}); !errors.Is(err, accounts.ErrNoAccount) {
+		t.Errorf("err = %v, want errors.Is(err, accounts.ErrNoAccount)", err)
+	}
+}
+
+// TestProbeLoginDistinguishesInvalidCredentialsFromUnreachable is the
+// live check this task's own grounding document flagged as unverified —
+// whether fileee.ErrInvalidCredentials genuinely survives as something
+// errors.Is can still see once it comes back through ProbeLogin, checked
+// against a real (mocked) server exchange rather than assumed from
+// reading go-fileee's source. The mock account answers "does not exist"
+// on POST /api/f/existent (go-fileee's fileee/auth.go returns
+// ErrInvalidCredentials directly for that response, before any login
+// attempt is even sent) — chosen over a 401/403 on /api/f/login because
+// it needs one fewer mock route to reach the same sentinel.
+func TestProbeLoginDistinguishesInvalidCredentialsFromUnreachable(t *testing.T) {
+	t.Parallel()
+
+	routes := map[string]mockRoute{
+		"GET /api/f/start":     {status: 204},
+		"POST /api/f/existent": {status: 200, body: []byte(`{"existent":false,"twoFactorAuthEnabled":false}`)},
+	}
+	srv := newTestServer(t, mockHandler(t, routes))
+	r := newCountingResolver(map[string]fileee.Credentials{
+		"alice": {Username: "ghost@example.invalid", Password: "pw"},
+	})
+	p := New(r, WithClientOptions(fileee.WithBaseURL(srv), fileee.WithRateLimit(1000, 1000)))
+
+	err := p.ProbeLogin(context.Background(), &identity.Identity{Subject: "alice"})
+	if !errors.Is(err, fileee.ErrInvalidCredentials) {
+		t.Errorf("err = %v, want errors.Is(err, fileee.ErrInvalidCredentials)", err)
+	}
+}
+
+// TestProbeLoginDistinguishesTwoFactorInvalidFromUnreachable is the same
+// live check for the second sentinel this task names: an account that
+// requires 2FA but has no configured TOTP seed fails BEFORE any request
+// to POST /api/f/login (go-fileee's own fail-fast guard, fileee/auth.go)
+// — one mock route fewer again, same reasoning as above.
+func TestProbeLoginDistinguishesTwoFactorInvalidFromUnreachable(t *testing.T) {
+	t.Parallel()
+
+	routes := map[string]mockRoute{
+		"GET /api/f/start":     {status: 204},
+		"POST /api/f/existent": {status: 200, body: []byte(`{"existent":true,"twoFactorAuthEnabled":true}`)},
+	}
+	srv := newTestServer(t, mockHandler(t, routes))
+	r := newCountingResolver(map[string]fileee.Credentials{
+		"alice": {Username: "alice@example.invalid", Password: "pw"}, // kein TOTPSeed
+	})
+	p := New(r, WithClientOptions(fileee.WithBaseURL(srv), fileee.WithRateLimit(1000, 1000)))
+
+	err := p.ProbeLogin(context.Background(), &identity.Identity{Subject: "alice"})
+	if !errors.Is(err, fileee.ErrTwoFactorInvalid) {
+		t.Errorf("err = %v, want errors.Is(err, fileee.ErrTwoFactorInvalid)", err)
+	}
+}
+
+// TestProbeLoginSucceedsAgainstAWorkingAccount is ProbeLogin's own happy
+// path — belongs here as much as the two failure cases, since a self-check
+// tool that only ever gets exercised on its failure branches is only half
+// tested.
+func TestProbeLoginSucceedsAgainstAWorkingAccount(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t, mockHandler(t, loginRoutes()))
+	r := newCountingResolver(map[string]fileee.Credentials{
+		"alice": {Username: "alice@example.invalid", Password: "pw"},
+	})
+	p := New(r, WithClientOptions(fileee.WithBaseURL(srv), fileee.WithRateLimit(1000, 1000)))
+
+	if err := p.ProbeLogin(context.Background(), &identity.Identity{Subject: "alice"}); err != nil {
+		t.Errorf("ProbeLogin: %v, want nil", err)
+	}
+}
+
+// TestProbeLoginReportsANetworkFailureAsNeitherSentinel is the third of
+// self_check's three states: nothing at the far end at all (connection
+// refused) must classify as neither ErrInvalidCredentials nor
+// ErrTwoFactorInvalid — the "unreachable" bucket self_check's own
+// classifier (internal/tools/ops.go) falls back to.
+func TestProbeLoginReportsANetworkFailureAsNeitherSentinel(t *testing.T) {
+	t.Parallel()
+
+	r := newCountingResolver(map[string]fileee.Credentials{
+		"alice": {Username: "alice@example.invalid", Password: "pw"},
+	})
+	p := New(r, WithClientOptions(fileee.WithBaseURL("http://127.0.0.1:1"), fileee.WithRateLimit(1000, 1000)))
+
+	err := p.ProbeLogin(context.Background(), &identity.Identity{Subject: "alice"})
+	if err == nil {
+		t.Fatal("ProbeLogin against a closed port: want an error, got nil")
+	}
+	if errors.Is(err, fileee.ErrInvalidCredentials) || errors.Is(err, fileee.ErrTwoFactorInvalid) {
+		t.Errorf("err = %v, want neither sentinel for an unreachable server", err)
+	}
+}
+
+// TestProbeLoginNeverPersistsASession proves ProbeLogin's own throwaway
+// client never touches disk, even when the pool it belongs to WOULD
+// persist real sessions there — a probe login is discarded the moment
+// this call returns and has no business writing a cookie file for an
+// account it may not even own for long (id.Subject could resolve to a
+// different account on a later call in multi mode).
+func TestProbeLoginNeverPersistsASession(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t, mockHandler(t, loginRoutes()))
+	dir := t.TempDir()
+	r := newCountingResolver(map[string]fileee.Credentials{
+		"alice": {Username: "alice@example.invalid", Password: "pw"},
+	})
+	p := New(r,
+		WithClientOptions(fileee.WithBaseURL(srv), fileee.WithRateLimit(1000, 1000)),
+		WithSessionStore(func(accountKey string) fileee.SessionStore {
+			return fileee.NewFileSessionStore(filepath.Join(dir, accountKey+".json"))
+		}),
+	)
+
+	if err := p.ProbeLogin(context.Background(), &identity.Identity{Subject: "alice"}); err != nil {
+		t.Fatalf("ProbeLogin: %v", err)
+	}
+
+	entries, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("session directory has %d file(s) after ProbeLogin, want 0: %v", len(entries), entries)
+	}
+}
