@@ -77,6 +77,12 @@ const (
 	ToolGetDocument               = "get_document"
 	ToolSyncDocuments             = "sync_documents"
 	ToolListDocumentConversations = "list_document_conversations"
+
+	// ToolListBoxes and ToolGetBox are list_boxes'/get_box's registered
+	// names (Aufgabe 8, read_boxes.go) — bespoke handlers, BoxService is
+	// not a fileee.ReadService[T].
+	ToolListBoxes = "list_boxes"
+	ToolGetBox    = "get_box"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -155,6 +161,9 @@ var readToolNames = []string{
 	ToolGetDocument,
 	ToolSyncDocuments,
 	ToolListDocumentConversations,
+	// list_boxes/get_box (Aufgabe 8, read_boxes.go) — same reasoning.
+	ToolListBoxes,
+	ToolGetBox,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool

@@ -14,12 +14,38 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/go-fileee/fileee"
 )
+
+// TestGetDocumentOutputFeldlisteIstAbgeschlossen ist Aufgabe 8-11's neue,
+// rueckwirkend auf Aufgabe 5-7 angewandte Pflicht: getDocumentOutput ist
+// ein handgeschriebenes Werkzeug ohne automatisches PoisonProbe-Netz (die
+// Gegenprobe in Antrag #53 hat genau das belegt — ein zweites
+// fremdbestimmtes Feld lief unbemerkt durch die gesamte damalige
+// Testsuite). Diese feste Feldliste faengt jedes zusaetzliche Feld ab,
+// unabhaengig davon, ob es fremdbestimmten Text traegt oder nicht.
+func TestGetDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
+	want := []string{"ID", "Status", "Type", "Created", "Modified", "PageCount", "TagIDs"}
+	got := fieldNames(getDocumentOutput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("getDocumentOutput-Feldliste = %v, want %v — ein neues Feld ist ein moeglicher Fremdtext-Leck und braucht eine bewusste Pruefung, nicht nur eine Anpassung dieser Liste", got, want)
+	}
+}
+
+// TestListDocumentConversationsOutputFeldlisteIstAbgeschlossen ist
+// dasselbe fuer list_document_conversations' Ausgabe-Struktur.
+func TestListDocumentConversationsOutputFeldlisteIstAbgeschlossen(t *testing.T) {
+	want := []string{"Conversations"}
+	got := fieldNames(listDocumentConversationsOutput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("listDocumentConversationsOutput-Feldliste = %v, want %v", got, want)
+	}
+}
 
 // TestGetDocumentGibtTitelNichtStrukturiertZurueck ist Aufgabe 5's eigener
 // Test aus dem Auftrag: der Titel darf an keiner Stelle im Ausgabe-Struct
