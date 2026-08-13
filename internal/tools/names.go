@@ -106,6 +106,13 @@ const (
 	// C2, ops.go) — introspects the calling server instance's own live
 	// tool set, not a Fileee-backed tool either.
 	ToolGetToolManifest = "get_tool_manifest"
+
+	// ToolSelfCheck is self_check's registered name (Aufgabe C3, ops.go)
+	// — the one operational tool that DOES reach Fileee, deliberately: a
+	// single, self-limited login attempt, kept apart from clientFor's own
+	// resolution path so a login failure and a network failure are never
+	// reported as the same thing (see ops.go's own doc comment section).
+	ToolSelfCheck = "self_check"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -202,6 +209,12 @@ var readToolNames = []string{
 	// server instance's own live tool set, same reasoning as
 	// get_runtime_stats above: a strict read, no Fileee access.
 	ToolGetToolManifest,
+	// self_check (Aufgabe C3, ops.go) — reaches Fileee (one self-limited
+	// login attempt), but stays access.KindRead: it authenticates as the
+	// caller's own already-resolved account, the same identity every
+	// other read tool here already resolves, and mutates nothing on
+	// Fileee's side.
+	ToolSelfCheck,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool

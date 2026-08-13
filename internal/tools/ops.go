@@ -1,9 +1,9 @@
 // ops.go carries this server's operational tools — get_runtime_stats
-// (Aufgabe C1) and get_tool_manifest (Aufgabe C2), a third,
-// self_check, follows in a later task. All three are read-only
-// (ReadOnlyHint: true) and never touch Fileee account data, unlike every
-// other tool RegisterRead mounts — see each tool's own doc comment for
-// why.
+// (Aufgabe C1), get_tool_manifest (Aufgabe C2) and self_check (Aufgabe
+// C3). All three are read-only (ReadOnlyHint: true); the first two never
+// touch Fileee account data at all, self_check is the one exception —
+// see its own doc comment section below for why, and for how it avoids
+// the coupling bug clientFor (read.go) has by design.
 //
 // The counters get_runtime_stats reports hang off logToolEnd
 // (read.go) — the one place all three registration families
@@ -14,6 +14,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -21,7 +22,12 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/strausmann/gangway/identity"
+	"github.com/strausmann/gangway/serve"
+	"github.com/strausmann/go-fileee/fileee"
+	"golang.org/x/sync/singleflight"
 
+	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 )
 
@@ -261,12 +267,264 @@ func getToolManifestHandler(s *mcp.Server, logger *slog.Logger) mcp.ToolHandlerF
 	}
 }
 
-// registerOpsTools mounts get_runtime_stats and get_tool_manifest onto s
-// — called once from RegisterRead (read.go). p is currently unused by
-// either tool (see their own handler doc comments on why) but kept in
-// this signature to match every other registerXxxTools function in this
-// package; self_check (a later task, same file) needs it for its own
-// dedicated login attempt.
+// --- self_check ---------------------------------------------------------
+//
+// clientFor (read.go) — and the Pool.For/buildAndLogin it resolves
+// through — deliberately couples reachability and login together: a
+// cache miss calls EnsureSession immediately, and a login failure comes
+// back wrapped into the same generic "resolve fileee client" error a
+// network failure would produce. That is the right behaviour for every
+// OTHER tool in this package (a caller of list_documents does not care
+// WHY its data is unavailable, only that it is), but it is exactly wrong
+// for a diagnostic tool whose entire purpose is telling those two things
+// apart — a self-check built on clientFor would reproduce the Dockhand
+// bug this task exists to avoid: a wrong password reported as "not
+// reachable" (Aufgabe C3 auftrag).
+//
+// self_check therefore never calls clientFor/Pool.For. It resolves the
+// caller's account key the same way clientFor does (ResolveAccountKey,
+// clientpool/pool.go — a pure, local lookup, no network I/O) and then
+// attempts a single, dedicated, uncached login (ProbeLogin, same file) —
+// bypassing Pool.For's own cache entirely, since a self-check answering
+// from a connection that has been sitting cached for hours would prove
+// nothing about the account's state right now.
+//
+// The result is classified into exactly three states (classifySelfCheckOutcome)
+// and self-limited to at most one real login attempt per account per
+// selfCheckMinInterval (selfCheckResultFor) — Fileee's own account lock
+// on repeated failed logins is the risk that limit exists to avoid
+// (auftrag: "Fileee kennt eine eigene Sperre bei zu vielen
+// Anmeldeversuchen").
+
+// selfCheckMinInterval bounds how often self_check may attempt a fresh
+// login for the SAME resolved account. A call for an account whose last
+// real attempt happened less than this ago gets that attempt's own
+// result back (Cached: true) instead of triggering a second one — the
+// self-limiting behaviour the auftrag requires ("höchstens ein echter
+// Versuch je Zeitfenster, danach das zwischengespeicherte Ergebnis mit
+// Zeitstempel"). A minute is short enough that a caller re-checking after
+// fixing a credential sees a fresh result well within the same
+// troubleshooting session, and long enough that no plausible polling
+// interval turns this into repeated live login attempts against Fileee.
+const selfCheckMinInterval = time.Minute
+
+// probeLoginEndpoint is the Fileee wire endpoint a self_check attempt
+// ultimately reaches on failure or success alike — go-fileee's
+// Client.Login ends at POST /api/f/login for an account that exists and
+// is not blocked (fileee/auth.go); logged as fixed, per-tool metadata,
+// the same convention every other endpoint constant in this package
+// follows (see read.go's own doc comment on listDocumentsEndpoint).
+const probeLoginEndpoint = "POST /api/f/login"
+
+// getSelfCheckInput are self_check's parameters — deliberately empty,
+// same reasoning as getRuntimeStatsInput/getToolManifestInput above:
+// there is exactly one Fileee account per caller, nothing to select.
+type getSelfCheckInput struct{}
+
+// getSelfCheckOutput is self_check's structured result. Reachable and
+// AuthValid are deliberately two independent booleans rather than one
+// combined flag — collapsing "reachable but the login was rejected" and
+// "not reachable at all" into a single bit is exactly the Dockhand bug
+// this tool exists to avoid reproducing (see this section's own doc
+// comment above). Detail is fixed, human-readable text drawn from
+// classifySelfCheckOutcome's own small vocabulary — never the
+// counterparty's own error text; that boundary is a dedicated,
+// adversarial test (TestSelfCheckGibtNieDenFehlertextDerGegenseiteWeiter,
+// ops_test.go), the same guarantee logToolEnd already gives
+// get_runtime_stats' own output.
+type getSelfCheckOutput struct {
+	Overall   string `json:"overall"`
+	Reachable bool   `json:"reachable"`
+	AuthValid bool   `json:"authValid"`
+	Detail    string `json:"detail"`
+	CheckedAt string `json:"checkedAt"`
+	Cached    bool   `json:"cached"`
+}
+
+// classifySelfCheckOutcome maps the error a login attempt returned (or
+// nil, on success) onto self_check's three states. It never reads err's
+// own message — only errors.Is against go-fileee's own exported
+// sentinels — so nothing Fileee's backend chose to put in an error
+// string can ever reach an output field; a network failure, an
+// unexpected 5xx, or any other error this function does not specifically
+// recognise all fall into the same "down" bucket rather than leaking
+// their own text through a default case.
+//
+//	ok        reachable, login succeeded
+//	degraded  reachable, login rejected (wrong password, invalid/expired
+//	          two-factor secret) — the case Dockhand itself got wrong
+//	down      not reachable at all — network problem, or Fileee itself
+//	          unavailable
+//
+// *fileee.BlockedError (Fileee's own account lockout after too many
+// attempts, the risk selfCheckResultFor's own self-limiting exists to
+// avoid) is deliberately NOT one of these states, even though its own
+// error text would be perfectly safe to inspect. It is structurally
+// unreachable from the path ProbeLogin actually calls: BlockedError is
+// only ever constructed inside go-fileee's authClient.ensureSession
+// (auth.go:301), reached through a stored, already-authorized session's
+// user-session check — a path Client.Login (ProbeLogin's own call)
+// never touches at all; login() (auth.go:157) runs the full
+// start/existent/login handshake and has no reference to BlockedError
+// anywhere in it. Advertising a "blocked" outcome here would describe a
+// capability self_check does not actually have on its current probe
+// path — verified against go-fileee v0.2.0's source, not assumed.
+// Distinguishing an account lockout would need ProbeLogin to probe
+// through something that reaches ensureSession/userSession instead of
+// (or in addition to) a raw Login call — a bigger design change, an
+// open follow-up, not built into this pass.
+//
+// A SHARPER, UNRESOLVED version of the same gap (flagged in review,
+// 2026-08-13, after the paragraph above was already written): even
+// without a dedicated "blocked" state, a genuine account lockout hit
+// DURING login()'s own POST /api/f/login call is likely to come back
+// misclassified as "degraded" (wrong credentials), not "down". login()'s
+// own switch (auth.go:236-246) only recognises 200/401/403/default —
+// on 401 or 403 it returns ErrInvalidCredentials/ErrTwoFactorInvalid
+// unconditionally, with no branch for "this 401/403 means blocked, not
+// wrong password". Whether Fileee's real backend actually answers a
+// blocked account's login attempt with 401/403 (making this a real,
+// live bug) or with something else entirely (a distinct status, an
+// APIError body login() would fall through to instead) is NOT decidable
+// from go-fileee's source alone, and testing it against the real
+// service would mean deliberately triggering the very lockout self_check
+// exists to help avoid — so it stays a documented, honest suspicion, not
+// a verified fact and not something silently patched over here. A
+// caller acting on "degraded" should not treat it as certainly a wrong
+// password for that reason; go-fileee itself would need a distinguishing
+// signal from that HTTP response before this classifier could act on it.
+func classifySelfCheckOutcome(err error) getSelfCheckOutput {
+	switch {
+	case err == nil:
+		return getSelfCheckOutput{Overall: "ok", Reachable: true, AuthValid: true, Detail: "reachable, login valid"}
+	case errors.Is(err, fileee.ErrInvalidCredentials), errors.Is(err, fileee.ErrTwoFactorInvalid):
+		return getSelfCheckOutput{Overall: "degraded", Reachable: true, AuthValid: false, Detail: "reachable, login invalid"}
+	default:
+		return getSelfCheckOutput{Overall: "down", Reachable: false, AuthValid: false, Detail: "not reachable"}
+	}
+}
+
+// probeLoginFunc matches (*clientpool.Pool).ProbeLogin's own signature —
+// a method value (p.ProbeLogin) is directly assignable to it with no
+// adapter needed, letting selfCheckResultFor's own tests substitute a
+// fake login attempt instead (the auftrag's own constraint: no test may
+// ever attempt a real Fileee login).
+type probeLoginFunc func(ctx context.Context, id *identity.Identity) error
+
+// selfCheckCacheEntry is one account's most recent REAL self_check
+// result (never a result already served from cache itself — see
+// selfCheckResultFor) together with the time that attempt ran. Kept
+// separate from getSelfCheckOutput's own wire shape so the interval
+// comparison in selfCheckResultFor works against an actual time.Time,
+// not a reparsed copy of formatTime's own (sub-second-lossy) RFC 3339
+// string.
+type selfCheckCacheEntry struct {
+	result getSelfCheckOutput
+	at     time.Time
+}
+
+// selfCheckCache holds the most recent self_check result per resolved
+// account — package-level and mutex-protected, same reasoning as
+// runtimeStats above: this belongs to the PROCESS, not to any one
+// *mcp.Server instance (ADR-0011, up to sixteen such instances share one
+// process), and keyed on the resolved ACCOUNT rather than the caller's
+// subject, because Fileee's own login-attempt limit tracks the account,
+// not whichever verified identity happened to trigger the check.
+var selfCheckCache = struct {
+	mu        sync.Mutex
+	byAccount map[string]selfCheckCacheEntry
+}{byAccount: make(map[string]selfCheckCacheEntry)}
+
+// selfCheckGroup deduplicates concurrent self_check calls for the same
+// account onto a single in-flight probe attempt — the same
+// singleflight.Group pattern clientpool.Pool already uses for exactly
+// this reason (pool.go, bySubject/byAccount). Without it, two callers
+// racing in the same instant, both finding no cache entry yet, could
+// each start a real login attempt for the same account — precisely the
+// "at most one real attempt per window" guarantee selfCheckMinInterval
+// alone cannot give under concurrency, since checking the cache and
+// writing to it are two separate steps.
+var selfCheckGroup singleflight.Group
+
+// selfCheckResultFor is self_check's own logic below identity/account
+// resolution — probe is called through this function rather than
+// directly by the handler so a test can drive it against a fake
+// probeLoginFunc (see this file's own doc comment on probeLoginFunc)
+// instead of a live *clientpool.Pool, the same split
+// accountStatusFromService (read_account.go) already uses for the same
+// reason.
+//
+// Enforces the self-limit: at most one call to probe per account within
+// selfCheckMinInterval, serialised through selfCheckGroup so concurrent
+// callers for the same account cannot each trigger their own attempt.
+// TestSelfCheckBegrenztSichSelbst (ops_test.go) is the property this
+// exists for — two calls in quick succession for the same account must
+// produce exactly one call to probe.
+func selfCheckResultFor(ctx context.Context, probe probeLoginFunc, id *identity.Identity, account string) getSelfCheckOutput {
+	v, _, _ := selfCheckGroup.Do(account, func() (any, error) {
+		selfCheckCache.mu.Lock()
+		entry, ok := selfCheckCache.byAccount[account]
+		selfCheckCache.mu.Unlock()
+
+		now := time.Now()
+		if ok && now.Sub(entry.at) < selfCheckMinInterval {
+			cached := entry.result
+			cached.Cached = true
+			return cached, nil
+		}
+
+		err := probe(ctx, id)
+		result := classifySelfCheckOutcome(err)
+		result.CheckedAt = formatTime(now)
+		result.Cached = false
+
+		selfCheckCache.mu.Lock()
+		selfCheckCache.byAccount[account] = selfCheckCacheEntry{result: result, at: now}
+		selfCheckCache.mu.Unlock()
+
+		return result, nil
+	})
+	return v.(getSelfCheckOutput)
+}
+
+// getSelfCheckHandler resolves self_check. Unlike every other tool in
+// this package it does not call clientFor — see this section's own doc
+// comment above for why — but it mirrors clientFor's own error-wording
+// convention exactly (a caller genuinely unknown to the account resolver
+// is reported as access denied; any other resolution failure is a plain,
+// neutral one), so a caller cannot tell from the wording alone which of
+// the two resolution paths served a given failure.
+func getSelfCheckHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[getSelfCheckInput, getSelfCheckOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, _ getSelfCheckInput) (*mcp.CallToolResult, getSelfCheckOutput, error) {
+		start := time.Now()
+		logToolStart(ctx, logger, ToolSelfCheck)
+
+		id, ok := serve.IdentityFrom(ctx)
+		if !ok {
+			err := fmt.Errorf("fileee-mcp: tools: no verified identity in context")
+			logToolEnd(ctx, logger, ToolSelfCheck, start, "", 0, err)
+			return nil, getSelfCheckOutput{}, err
+		}
+
+		account, err := p.ResolveAccountKey(ctx, id)
+		if err != nil {
+			if errors.Is(err, accounts.ErrNoAccount) {
+				err = fmt.Errorf("fileee-mcp: tools: access denied: %w", err)
+			} else {
+				err = fmt.Errorf("fileee-mcp: tools: resolve fileee account: %w", err)
+			}
+			logToolEnd(ctx, logger, ToolSelfCheck, start, "", 0, err)
+			return nil, getSelfCheckOutput{}, err
+		}
+
+		out := selfCheckResultFor(ctx, p.ProbeLogin, id, account)
+		logToolEnd(ctx, logger, ToolSelfCheck, start, probeLoginEndpoint, 1, nil)
+		return &mcp.CallToolResult{}, out, nil
+	}
+}
+
+// registerOpsTools mounts get_runtime_stats, get_tool_manifest and
+// self_check onto s — called once from RegisterRead (read.go).
 func registerOpsTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetRuntimeStats,
@@ -293,4 +551,22 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"what is registered in the build answering this particular call.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, getToolManifestHandler(s, logger))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: ToolSelfCheck,
+		Description: "Check whether this server can currently reach Fileee and log in with the " +
+			"calling identity's configured credentials, reporting reachability and login validity " +
+			"as two independent signals instead of one combined yes/no. Returns one of three " +
+			"outcomes: ok (reachable, login valid), degraded (reachable, but the login itself was " +
+			"rejected — a wrong or expired password or two-factor secret, not a network problem), " +
+			"or down (not reachable at all) — plus a fixed detail text, when the underlying real " +
+			"check last ran, and whether this call reused that result. Use it to tell a broken " +
+			"credential apart from a network or Fileee outage without guessing. It attempts at " +
+			"most one real login per resolved account within a short window to avoid triggering " +
+			"Fileee's own account lock, and never runs concurrently with an ordinary Fileee-backed " +
+			"tool call's own login for the same account either — reusing the cached result for " +
+			"calls inside that window, and it never returns the counterparty's own error text — " +
+			"only this fixed classification.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, getSelfCheckHandler(p, logger))
 }

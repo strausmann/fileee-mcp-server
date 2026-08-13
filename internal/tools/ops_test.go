@@ -17,10 +17,13 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/strausmann/gangway/identity"
+	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 )
@@ -345,5 +348,277 @@ func TestRegisterOpsToolsMeldetGetToolManifestAn(t *testing.T) {
 	names := toolNamesOf(t, s)
 	if !names[ToolGetToolManifest] {
 		t.Errorf("Werkzeug %q wurde nicht angemeldet", ToolGetToolManifest)
+	}
+}
+
+// --- self_check (Aufgabe C3) ------------------------------------------
+
+// resetSelfCheckCache clears selfCheckCache so each test starts from an
+// empty cache -- same reasoning as resetRuntimeStats above: the cache is
+// deliberately process-wide (see its own doc comment in ops.go).
+func resetSelfCheckCache(t *testing.T) {
+	t.Helper()
+	selfCheckCache.mu.Lock()
+	selfCheckCache.byAccount = make(map[string]selfCheckCacheEntry)
+	selfCheckCache.mu.Unlock()
+}
+
+// TestClassifySelfCheckOutcomeUnterscheidetUngueltigeZugangsdatenVonNichtErreichbar
+// ist der Kern-Test dieser Aufgabe (Schritt 1): bei ungueltigen
+// Zugangsdaten muss das Werkzeug "erreichbar, Anmeldung ungueltig"
+// melden -- NICHT "nicht erreichbar", der Fall, den Dockhand falsch
+// gemeldet hatte.
+func TestClassifySelfCheckOutcomeUnterscheidetUngueltigeZugangsdatenVonNichtErreichbar(t *testing.T) {
+	out := classifySelfCheckOutcome(fileee.ErrInvalidCredentials)
+	if out.Overall != "degraded" || !out.Reachable || out.AuthValid {
+		t.Errorf("classifySelfCheckOutcome(ErrInvalidCredentials) = %+v, want Overall=degraded Reachable=true AuthValid=false", out)
+	}
+	if out.Detail != "reachable, login invalid" {
+		t.Errorf("Detail = %q, want %q", out.Detail, "reachable, login invalid")
+	}
+}
+
+func TestClassifySelfCheckOutcomeUnterscheidetUngueltigenZweitenFaktorVonNichtErreichbar(t *testing.T) {
+	out := classifySelfCheckOutcome(fileee.ErrTwoFactorInvalid)
+	if out.Overall != "degraded" || !out.Reachable || out.AuthValid {
+		t.Errorf("classifySelfCheckOutcome(ErrTwoFactorInvalid) = %+v, want Overall=degraded Reachable=true AuthValid=false", out)
+	}
+}
+
+func TestClassifySelfCheckOutcomeMeldetErfolgAlsOk(t *testing.T) {
+	out := classifySelfCheckOutcome(nil)
+	if out.Overall != "ok" || !out.Reachable || !out.AuthValid {
+		t.Errorf("classifySelfCheckOutcome(nil) = %+v, want Overall=ok Reachable=true AuthValid=true", out)
+	}
+	if out.Detail != "reachable, login valid" {
+		t.Errorf("Detail = %q, want %q", out.Detail, "reachable, login valid")
+	}
+}
+
+// TestClassifySelfCheckOutcomeMeldetEinenUnbekanntenFehlerAlsNichtErreichbar
+// deckt den dritten Zustand ab: ein Fehler, der keinem der beiden
+// bekannten Anmelde-Fehlerwerte entspricht (ein Netzwerkfehler, ein
+// 5xx von Fileee, o.ae.), faellt auf "nicht erreichbar".
+func TestClassifySelfCheckOutcomeMeldetEinenUnbekanntenFehlerAlsNichtErreichbar(t *testing.T) {
+	out := classifySelfCheckOutcome(errors.New("dial tcp: connection refused"))
+	if out.Overall != "down" || out.Reachable || out.AuthValid {
+		t.Errorf("classifySelfCheckOutcome(Netzwerkfehler) = %+v, want Overall=down Reachable=false AuthValid=false", out)
+	}
+	if out.Detail != "not reachable" {
+		t.Errorf("Detail = %q, want %q", out.Detail, "not reachable")
+	}
+}
+
+func TestSelfCheckResultForMeldetOkBeiErfolgreicherAnmeldung(t *testing.T) {
+	resetSelfCheckCache(t)
+	probe := func(context.Context, *identity.Identity) error { return nil }
+	id := &identity.Identity{Subject: "alice"}
+
+	out := selfCheckResultFor(context.Background(), probe, id, "alice-account")
+	if out.Overall != "ok" || out.Cached {
+		t.Errorf("selfCheckResultFor = %+v, want Overall=ok Cached=false", out)
+	}
+	if out.CheckedAt == "" {
+		t.Error("CheckedAt ist leer, obwohl ein echter Versuch stattfand")
+	}
+}
+
+// TestSelfCheckResultForBegrenztSichSelbst ist Schritt 5's
+// Selbstbegrenzungs-Test: zwei Aufrufe kurz hintereinander fuer dasselbe
+// Konto duerfen nur EINEN echten Versuch ausloesen -- der zweite bekommt
+// das zwischengespeicherte Ergebnis mit demselben Zeitstempel zurueck.
+func TestSelfCheckResultForBegrenztSichSelbst(t *testing.T) {
+	resetSelfCheckCache(t)
+	var calls int32
+	probe := func(context.Context, *identity.Identity) error {
+		atomic.AddInt32(&calls, 1)
+		return fileee.ErrInvalidCredentials
+	}
+	id := &identity.Identity{Subject: "alice"}
+
+	first := selfCheckResultFor(context.Background(), probe, id, "alice-account")
+	second := selfCheckResultFor(context.Background(), probe, id, "alice-account")
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("probe wurde %d mal aufgerufen, want genau 1 (zwei Aufrufe kurz hintereinander duerfen nur einen echten Versuch ausloesen)", got)
+	}
+	if first.Cached {
+		t.Error("erster Aufruf: Cached = true, want false (das war der echte Versuch)")
+	}
+	if !second.Cached {
+		t.Error("zweiter Aufruf: Cached = false, want true (das Zeitfenster war noch nicht abgelaufen)")
+	}
+	if second.CheckedAt != first.CheckedAt {
+		t.Errorf("second.CheckedAt = %q, want gleich first.CheckedAt = %q (der Zeitstempel des echten Versuchs, nicht des Cache-Treffers)", second.CheckedAt, first.CheckedAt)
+	}
+	if second.Overall != first.Overall || second.AuthValid != first.AuthValid || second.Reachable != first.Reachable {
+		t.Errorf("second = %+v weicht inhaltlich von first = %+v ab, obwohl es aus dem Cache kam", second, first)
+	}
+}
+
+// TestSelfCheckResultForBegrenztSichSelbstUnterNebenlaeufigkeit belegt,
+// dass die Selbstbegrenzung auch unter echter Nebenlaeufigkeit haelt --
+// nicht nur bei zwei sequenziellen Aufrufen. Ohne selfCheckGroup
+// (singleflight) koennten mehrere gleichzeitige Aufrufe, die alle noch
+// keinen Cache-Eintrag vorfinden, jeder fuer sich einen echten Versuch
+// ausloesen.
+func TestSelfCheckResultForBegrenztSichSelbstUnterNebenlaeufigkeit(t *testing.T) {
+	resetSelfCheckCache(t)
+	var calls int32
+	probe := func(context.Context, *identity.Identity) error {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(10 * time.Millisecond)
+		return nil
+	}
+	id := &identity.Identity{Subject: "alice"}
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			selfCheckResultFor(context.Background(), probe, id, "alice-account")
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("probe wurde unter %d gleichzeitigen Aufrufen %d mal ausgefuehrt, want genau 1", goroutines, got)
+	}
+}
+
+// TestSelfCheckResultForFuehrtNachAblaufDesFenstersErneutEinenEchtenVersuchAus
+// belegt die Gegenprobe zur Selbstbegrenzung: nach Ablauf des
+// Zeitfensters loest ein weiterer Aufruf sehr wohl einen neuen echten
+// Versuch aus -- die Begrenzung ist zeitlich befristet, keine dauerhafte
+// Sperre. Das Fenster wird direkt im Cache-Eintrag zurueckdatiert statt
+// eine Minute lang zu warten.
+func TestSelfCheckResultForFuehrtNachAblaufDesFenstersErneutEinenEchtenVersuchAus(t *testing.T) {
+	resetSelfCheckCache(t)
+	var calls int32
+	probe := func(context.Context, *identity.Identity) error {
+		atomic.AddInt32(&calls, 1)
+		return nil
+	}
+	id := &identity.Identity{Subject: "alice"}
+
+	selfCheckResultFor(context.Background(), probe, id, "alice-account")
+
+	selfCheckCache.mu.Lock()
+	entry := selfCheckCache.byAccount["alice-account"]
+	entry.at = entry.at.Add(-2 * selfCheckMinInterval)
+	selfCheckCache.byAccount["alice-account"] = entry
+	selfCheckCache.mu.Unlock()
+
+	out := selfCheckResultFor(context.Background(), probe, id, "alice-account")
+	if out.Cached {
+		t.Error("Cached = true, want false -- das Zeitfenster war abgelaufen, ein neuer echter Versuch war faellig")
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("probe wurde %d mal aufgerufen, want 2 (einmal vor, einmal nach Ablauf des Fensters)", got)
+	}
+}
+
+// TestSelfCheckResultForBegrenztSichSelbstJeKontoUnabhaengig belegt, dass
+// die Selbstbegrenzung pro KONTO gilt, nicht global -- zwei verschiedene
+// Konten duerfen sich nicht gegenseitig blockieren.
+func TestSelfCheckResultForBegrenztSichSelbstJeKontoUnabhaengig(t *testing.T) {
+	resetSelfCheckCache(t)
+	var calls int32
+	probe := func(context.Context, *identity.Identity) error {
+		atomic.AddInt32(&calls, 1)
+		return nil
+	}
+
+	selfCheckResultFor(context.Background(), probe, &identity.Identity{Subject: "alice"}, "alice-account")
+	selfCheckResultFor(context.Background(), probe, &identity.Identity{Subject: "bob"}, "bob-account")
+
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("probe wurde %d mal aufgerufen, want 2 -- zwei verschiedene Konten duerfen sich nicht gegenseitig begrenzen", got)
+	}
+}
+
+// TestSelfCheckGibtNieDenFehlertextDerGegenseiteWeiter ist Schritt 6:
+// selbst wenn die Anmeldeprobe einen Fehler mit geheimnisartigem Text
+// liefert, darf dieser Text in der GESAMTEN Ausgabe nirgends auftauchen
+// -- nur classifySelfCheckOutcome's feste Einordnung. Gleiche Bauart wie
+// TestLogToolEndVerzeichnetNieDenFehlertextNurDieEinordnung oben: die
+// gesamte Ausgabe wird als Zeichenkette geprueft, nicht nur ein
+// einzelnes Feld.
+func TestSelfCheckGibtNieDenFehlertextDerGegenseiteWeiter(t *testing.T) {
+	resetSelfCheckCache(t)
+	geheimnisartig := errors.New("login failed for password Sonnenblumenkern-Zweitausendsechsundzwanzig")
+	probe := func(context.Context, *identity.Identity) error { return geheimnisartig }
+	id := &identity.Identity{Subject: "alice"}
+
+	out := selfCheckResultFor(context.Background(), probe, id, "leak-account")
+
+	voll := fmt.Sprintf("%+v", out)
+	if strings.Contains(voll, "Sonnenblumenkern") {
+		t.Fatalf("self_check-Ausgabe enthaelt den Fehlertext der Gegenseite: %s", voll)
+	}
+	if out.Overall != "down" {
+		t.Errorf("Overall = %q, want %q (unbekannter Fehler faellt auf 'nicht erreichbar')", out.Overall, "down")
+	}
+}
+
+func TestGetSelfCheckOutputFeldlisteIstAbgeschlossen(t *testing.T) {
+	want := []string{"Overall", "Reachable", "AuthValid", "Detail", "CheckedAt", "Cached"}
+	got := fieldNames(getSelfCheckOutput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("getSelfCheckOutput-Feldliste = %v, want %v", got, want)
+	}
+}
+
+// TestClassifySelfCheckOutcomeBehandeltEineKontosperreAlsNichtErreichbar
+// dokumentiert eine bewusste Entscheidung, keine Luecke: *fileee.BlockedError
+// ist auf dem Weg, den ProbeLogin tatsaechlich nutzt (Client.Login ->
+// login(), NICHT EnsureSession/ensureSession), strukturell unerreichbar --
+// gegen go-fileee v0.2.0 selbst geprueft (auth.go:157-247 vs. auth.go:301).
+// Ein eigener "blocked"-Zustand wurde deshalb kurzzeitig ergaenzt
+// (Nachtrag nach einer Rueckmeldung, die den Fehlertyp nannte, ohne den
+// erzeugenden Pfad zu pruefen) und wieder entfernt, statt eine
+// Faehigkeit vorzutaeuschen, die self_check auf diesem Pfad nicht hat.
+// Sollte BlockedError trotzdem einmal ankommen (z.B. weil sich
+// go-fileee's login() aendert), faellt er bewusst auf "down" -- korrekt
+// im Sinn von "nicht auswertbar", nicht falsch im Sinn von "degraded"
+// (das wuerde einen Aufrufer dazu verleiten, ein korrektes Passwort zu
+// ersetzen und die Sperre damit zu verlaengern).
+func TestClassifySelfCheckOutcomeBehandeltEineKontosperreAlsNichtErreichbar(t *testing.T) {
+	out := classifySelfCheckOutcome(&fileee.BlockedError{SecondsBlocked: 42})
+	if out.Overall != "down" {
+		t.Errorf("classifySelfCheckOutcome(BlockedError) = %+v, want Overall=down (kein eigener Zustand -- siehe Testkommentar)", out)
+	}
+}
+
+func TestGetSelfCheckInputNimmtKeineParameterEntgegen(t *testing.T) {
+	got := fieldNames(getSelfCheckInput{})
+	if len(got) != 0 {
+		t.Errorf("getSelfCheckInput hat Felder %v, want keine", got)
+	}
+}
+
+// TestGetSelfCheckHandlerVerweigertOhneVerifizierteIdentitaet belegt den
+// ersten Ausstiegspunkt des Handlers: ohne Identitaet im Context (die
+// serve.IdentityFrom liefern wuerde) gibt es keinen Anmeldeversuch --
+// derselbe erste Schritt, den clientFor (read.go) fuer jedes andere
+// Werkzeug in diesem Paket auch macht.
+func TestGetSelfCheckHandlerVerweigertOhneVerifizierteIdentitaet(t *testing.T) {
+	handler := getSelfCheckHandler((*clientpool.Pool)(nil), discardLogger())
+	_, _, err := handler(context.Background(), nil, getSelfCheckInput{})
+	if err == nil {
+		t.Fatal("getSelfCheckHandler ohne Identitaet im Context: err = nil, want Fehler")
+	}
+}
+
+func TestRegisterOpsToolsMeldetSelfCheckAn(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+
+	registerOpsTools(s, (*clientpool.Pool)(nil), discardLogger())
+
+	names := toolNamesOf(t, s)
+	if !names[ToolSelfCheck] {
+		t.Errorf("Werkzeug %q wurde nicht angemeldet", ToolSelfCheck)
 	}
 }
