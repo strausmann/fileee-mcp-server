@@ -57,6 +57,17 @@ const (
 	ToolGetDocumentType         = "get_document_type"
 	ToolListDocumentTypeSchemes = "list_document_type_schemes"
 	ToolGetDocumentTypeScheme   = "get_document_type_scheme"
+
+	// ToolListContacts through ToolGetConversation are the three
+	// people-data services' registered list/get tool names
+	// (read_people.go, Aufgabe 4) — readServiceDescriptor's own list/get
+	// pair, this time for Contacts, Reminders and Conversations.
+	ToolListContacts      = "list_contacts"
+	ToolGetContact        = "get_contact"
+	ToolListReminders     = "list_reminders"
+	ToolGetReminder       = "get_reminder"
+	ToolListConversations = "list_conversations"
+	ToolGetConversation   = "get_conversation"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -120,6 +131,15 @@ var readToolNames = []string{
 	ToolGetDocumentType,
 	ToolListDocumentTypeSchemes,
 	ToolGetDocumentTypeScheme,
+	// The three people-data list/get pairs (Aufgabe 4, read_people.go) —
+	// all pure reads (fileee.ReadService[T].Query/Get), same reasoning as
+	// every entry above.
+	ToolListContacts,
+	ToolGetContact,
+	ToolListReminders,
+	ToolGetReminder,
+	ToolListConversations,
+	ToolGetConversation,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
