@@ -83,6 +83,14 @@ const (
 	// not a fileee.ReadService[T].
 	ToolListBoxes = "list_boxes"
 	ToolGetBox    = "get_box"
+
+	// ToolGetDocumentPDF, ToolGetPageImage and ToolGetPageOCR are the
+	// three binary/OCR tools' registered names (Aufgabe 9-10,
+	// read_binary.go) — bespoke handlers, DownloadPDF/DownloadPageImage/
+	// PageOCR have no Query/Diff/Get shape.
+	ToolGetDocumentPDF = "get_document_pdf"
+	ToolGetPageImage   = "get_page_image"
+	ToolGetPageOCR     = "get_page_ocr"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -164,6 +172,11 @@ var readToolNames = []string{
 	// list_boxes/get_box (Aufgabe 8, read_boxes.go) — same reasoning.
 	ToolListBoxes,
 	ToolGetBox,
+	// get_document_pdf/get_page_image/get_page_ocr (Aufgabe 9-10,
+	// read_binary.go) — same reasoning.
+	ToolGetDocumentPDF,
+	ToolGetPageImage,
+	ToolGetPageOCR,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
