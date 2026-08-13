@@ -68,6 +68,15 @@ const (
 	ToolGetReminder       = "get_reminder"
 	ToolListConversations = "list_conversations"
 	ToolGetConversation   = "get_conversation"
+
+	// ToolGetDocument, ToolSyncDocuments and ToolListDocumentConversations
+	// are the three document-detail tools' registered names
+	// (Aufgabe 5-7, read.go) — bespoke handlers, not registered through
+	// registerReadService/registerSync, since Document's Get/Diff and
+	// Documents.Conversations don't fit either generic helper's signature.
+	ToolGetDocument               = "get_document"
+	ToolSyncDocuments             = "sync_documents"
+	ToolListDocumentConversations = "list_document_conversations"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -140,6 +149,12 @@ var readToolNames = []string{
 	ToolGetReminder,
 	ToolListConversations,
 	ToolGetConversation,
+	// The three document-detail tools (Aufgabe 5-7, read.go) — all pure
+	// reads (fileee.DocumentService.Get/Diff/Conversations), same
+	// reasoning as every entry above.
+	ToolGetDocument,
+	ToolSyncDocuments,
+	ToolListDocumentConversations,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
