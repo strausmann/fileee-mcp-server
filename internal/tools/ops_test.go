@@ -564,10 +564,40 @@ func TestSelfCheckGibtNieDenFehlertextDerGegenseiteWeiter(t *testing.T) {
 }
 
 func TestGetSelfCheckOutputFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"Overall", "Reachable", "AuthValid", "Detail", "CheckedAt", "Cached"}
+	want := []string{"Overall", "Reachable", "AuthValid", "Detail", "SecondsBlocked", "CheckedAt", "Cached"}
 	got := fieldNames(getSelfCheckOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("getSelfCheckOutput-Feldliste = %v, want %v", got, want)
+	}
+}
+
+// TestClassifySelfCheckOutcomeUnterscheidetKontosperreVonUngueltigenZugangsdaten
+// deckt den vierten Zustand ab (Nachtrag nach der Gegenpruefung durch
+// team-lead/Pruefer): *fileee.BlockedError -- Fileee's eigene Sperre bei
+// zu vielen Anmeldeversuchen -- muss ALS EIGENER Zustand ("blocked")
+// erscheinen, NICHT als "degraded" (ungueltige Zugangsdaten). Wer eine
+// Kontosperre als falsches Passwort gemeldet bekommt, faengt an ein
+// korrektes Passwort zu ersetzen -- und verlaengert die Sperre damit nur.
+func TestClassifySelfCheckOutcomeUnterscheidetKontosperreVonUngueltigenZugangsdaten(t *testing.T) {
+	out := classifySelfCheckOutcome(&fileee.BlockedError{SecondsBlocked: 42})
+	if out.Overall != "blocked" || !out.Reachable || out.AuthValid {
+		t.Errorf("classifySelfCheckOutcome(BlockedError) = %+v, want Overall=blocked Reachable=true AuthValid=false", out)
+	}
+	if out.SecondsBlocked != 42 {
+		t.Errorf("SecondsBlocked = %d, want 42 -- der einzig brauchbare Handlungshinweis in dieser Lage", out.SecondsBlocked)
+	}
+}
+
+// TestClassifySelfCheckOutcomeLaesstSecondsBlockedBeiJedemAnderenZustandLeer
+// belegt die Gegenprobe: SecondsBlocked ist ein Ausnahmefeld nur fuer
+// "blocked" -- bei jedem anderen Zustand bleibt es 0 (omitempty in der
+// JSON-Ausgabe).
+func TestClassifySelfCheckOutcomeLaesstSecondsBlockedBeiJedemAnderenZustandLeer(t *testing.T) {
+	for _, err := range []error{nil, fileee.ErrInvalidCredentials, errors.New("dial tcp: connection refused")} {
+		out := classifySelfCheckOutcome(err)
+		if out.SecondsBlocked != 0 {
+			t.Errorf("classifySelfCheckOutcome(%v).SecondsBlocked = %d, want 0", err, out.SecondsBlocked)
+		}
 	}
 }
 

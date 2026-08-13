@@ -147,7 +147,7 @@ jobs:
           # internal/tools/ops.go (Aufgabe C3, self_check): fehlte hier bisher, weil die Datei
           # entstand, waehrend diese Schranke gebaut wurde (nur get_runtime_stats/
           # get_tool_manifest, keiner der beiden ruehrt Fileee an). Mit self_check kommt die
-          # erste echte Anmeldeprobe in die Datei — gemessen 86,7%, komfortabel ueber 80: die
+          # erste echte Anmeldeprobe in die Datei — gemessen 87,1%, komfortabel ueber 80: die
           # Kernlogik (classifySelfCheckOutcome, selfCheckResultFor) liegt bei 100%, einzig
           # getSelfCheckHandler (44,4%) zieht den Dateidurchschnitt, aus demselben Grund wie
           # read_boxes.go/read_binary.go/read_account.go oben — die duenne Anmelde-Huelle haengt
