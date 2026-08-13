@@ -331,47 +331,48 @@ type getSelfCheckInput struct{}
 // counterparty's own error text; that boundary is a dedicated,
 // adversarial test (TestSelfCheckGibtNieDenFehlertextDerGegenseiteWeiter,
 // ops_test.go), the same guarantee logToolEnd already gives
-// get_runtime_stats' own output. SecondsBlocked is the one exception to
-// "fixed vocabulary only" — a structured, safe integer straight from
-// Fileee's own *fileee.BlockedError, not counterparty text, and the only
-// actionable number self_check can give a caller stuck in that state
-// (omitted for every other outcome).
+// get_runtime_stats' own output.
 type getSelfCheckOutput struct {
-	Overall        string `json:"overall"`
-	Reachable      bool   `json:"reachable"`
-	AuthValid      bool   `json:"authValid"`
-	Detail         string `json:"detail"`
-	SecondsBlocked int    `json:"secondsBlocked,omitempty"`
-	CheckedAt      string `json:"checkedAt"`
-	Cached         bool   `json:"cached"`
+	Overall   string `json:"overall"`
+	Reachable bool   `json:"reachable"`
+	AuthValid bool   `json:"authValid"`
+	Detail    string `json:"detail"`
+	CheckedAt string `json:"checkedAt"`
+	Cached    bool   `json:"cached"`
 }
 
 // classifySelfCheckOutcome maps the error a login attempt returned (or
-// nil, on success) onto self_check's four states. It never reads err's
-// own message — only errors.Is/errors.As against go-fileee's own
-// exported sentinels and error types — so nothing Fileee's backend chose
-// to put in an error string can ever reach an output field; a network
-// failure, an unexpected 5xx, or any other error this function does not
-// specifically recognise all fall into the same "down" bucket rather
-// than leaking their own text through a default case.
+// nil, on success) onto self_check's three states. It never reads err's
+// own message — only errors.Is against go-fileee's own exported
+// sentinels — so nothing Fileee's backend chose to put in an error
+// string can ever reach an output field; a network failure, an
+// unexpected 5xx, or any other error this function does not specifically
+// recognise all fall into the same "down" bucket rather than leaking
+// their own text through a default case.
 //
 //	ok        reachable, login succeeded
 //	degraded  reachable, login rejected (wrong password, invalid/expired
 //	          two-factor secret) — the case Dockhand itself got wrong
-//	blocked   reachable, but Fileee has temporarily locked the account
-//	          out after too many attempts (*fileee.BlockedError) —
-//	          SecondsBlocked carries how much longer, straight from
-//	          Fileee's own response; this must never be reported as
-//	          "degraded" (wrong credentials), since a caller told that
-//	          would try replacing a correct password, which only makes a
-//	          temporary lockout longer
 //	down      not reachable at all — network problem, or Fileee itself
 //	          unavailable
 //
-// Deliberately not implemented here: using SecondsBlocked as the actual
-// wait time before selfCheckResultFor allows another real attempt
-// (selfCheckMinInterval stays fixed regardless of a reported lockout) —
-// flagged as an open follow-up, not built into this pass.
+// *fileee.BlockedError (Fileee's own account lockout after too many
+// attempts, the risk selfCheckResultFor's own self-limiting exists to
+// avoid) is deliberately NOT one of these states, even though its own
+// error text would be perfectly safe to inspect. It is structurally
+// unreachable from the path ProbeLogin actually calls: BlockedError is
+// only ever constructed inside go-fileee's authClient.ensureSession
+// (auth.go:301), reached through a stored, already-authorized session's
+// user-session check — a path Client.Login (ProbeLogin's own call)
+// never touches at all; login() (auth.go:157) runs the full
+// start/existent/login handshake and has no reference to BlockedError
+// anywhere in it. Advertising a "blocked" outcome here would describe a
+// capability self_check does not actually have on its current probe
+// path — verified against go-fileee v0.2.0's source, not assumed.
+// Distinguishing an account lockout would need ProbeLogin to probe
+// through something that reaches ensureSession/userSession instead of
+// (or in addition to) a raw Login call — a bigger design change, an
+// open follow-up, not built into this pass.
 func classifySelfCheckOutcome(err error) getSelfCheckOutput {
 	switch {
 	case err == nil:
@@ -379,16 +380,6 @@ func classifySelfCheckOutcome(err error) getSelfCheckOutput {
 	case errors.Is(err, fileee.ErrInvalidCredentials), errors.Is(err, fileee.ErrTwoFactorInvalid):
 		return getSelfCheckOutput{Overall: "degraded", Reachable: true, AuthValid: false, Detail: "reachable, login invalid"}
 	default:
-		var blocked *fileee.BlockedError
-		if errors.As(err, &blocked) {
-			return getSelfCheckOutput{
-				Overall:        "blocked",
-				Reachable:      true,
-				AuthValid:      false,
-				Detail:         "reachable, account temporarily blocked by fileee",
-				SecondsBlocked: blocked.SecondsBlocked,
-			}
-		}
 		return getSelfCheckOutput{Overall: "down", Reachable: false, AuthValid: false, Detail: "not reachable"}
 	}
 }
@@ -545,17 +536,15 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 		Name: ToolSelfCheck,
 		Description: "Check whether this server can currently reach Fileee and log in with the " +
 			"calling identity's configured credentials, reporting reachability and login validity " +
-			"as two independent signals instead of one combined yes/no. Returns one of four " +
+			"as two independent signals instead of one combined yes/no. Returns one of three " +
 			"outcomes: ok (reachable, login valid), degraded (reachable, but the login itself was " +
 			"rejected — a wrong or expired password or two-factor secret, not a network problem), " +
-			"blocked (reachable, but Fileee has temporarily locked the account out after too many " +
-			"attempts — secondsBlocked tells you how much longer), or down (not reachable at all) " +
-			"— plus a fixed detail text, when the underlying real check last ran, and whether this " +
-			"call reused that result. Use it to tell a broken credential apart from a temporary " +
-			"account lockout or a network/Fileee outage without guessing — do not treat a blocked " +
-			"result as a wrong credential, retrying with a different password only extends the " +
-			"lockout. It attempts at most one real login per resolved account within a short " +
-			"window to avoid triggering Fileee's own account lock, reusing the cached result for " +
+			"or down (not reachable at all) — plus a fixed detail text, when the underlying real " +
+			"check last ran, and whether this call reused that result. Use it to tell a broken " +
+			"credential apart from a network or Fileee outage without guessing. It attempts at " +
+			"most one real login per resolved account within a short window to avoid triggering " +
+			"Fileee's own account lock, and never runs concurrently with an ordinary Fileee-backed " +
+			"tool call's own login for the same account either — reusing the cached result for " +
 			"calls inside that window, and it never returns the counterparty's own error text — " +
 			"only this fixed classification.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},

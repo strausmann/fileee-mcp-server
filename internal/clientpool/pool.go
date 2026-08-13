@@ -75,9 +75,10 @@ type Pool struct {
 	sessionStoreFor   func(accountKey string) fileee.SessionStore
 	keepaliveInterval time.Duration
 
-	mu      sync.Mutex
-	clients map[string]*pooledClient
-	closed  bool
+	mu         sync.Mutex
+	clients    map[string]*pooledClient
+	closed     bool
+	loginLocks map[string]*sync.Mutex
 }
 
 // Option configures a Pool built by New.
@@ -218,6 +219,19 @@ func (p *Pool) buildAndLogin(ctx context.Context, key string, creds fileee.Crede
 		return client, nil
 	}
 
+	// Serializes the EnsureSession call below against any concurrent
+	// ProbeLogin for the SAME account — see loginLock's own doc comment
+	// for why byAccount.Do alone (which already serializes concurrent
+	// buildAndLogin executions among themselves) is not enough. No
+	// further cache recheck is needed after acquiring it: only
+	// buildAndLogin ever writes to p.clients, byAccount.Do already keeps
+	// its own executions serial, and ProbeLogin never touches the cache
+	// — so nothing new could have populated it while this call waited
+	// for loginMu.
+	loginMu := p.loginLock(key)
+	loginMu.Lock()
+	defer loginMu.Unlock()
+
 	opts := p.clientOptions
 	if p.sessionStoreFor != nil {
 		// Copy before appending: p.clientOptions is shared by every
@@ -276,6 +290,49 @@ func (p *Pool) Close() {
 	}
 }
 
+// loginLock returns the mutex that serializes every REAL login attempt
+// against key — one per account, created lazily, guarded by p.mu the
+// same as p.clients.
+//
+// byAccount (singleflight) already prevents two concurrent buildAndLogin
+// executions for the same account among For's own callers — but it says
+// nothing about ProbeLogin, which deliberately bypasses byAccount
+// entirely (see ProbeLogin's own doc comment) so it always runs its own
+// fresh, uncached attempt rather than sharing For's result. Without this
+// lock, a self_check call and an ordinary Fileee-backed tool call racing
+// for the same account could each start a real login at the very same
+// instant — exactly the pattern this package's own doc comment names as
+// what trips Fileee's account lockout (ADR-0012 point 6), and exactly
+// the risk self_check exists to report on, not cause (found in review,
+// 2026-08-13: ProbeLogin's addition had silently broken the "at most
+// once per account" guarantee this doc comment already claimed).
+//
+// Both buildAndLogin and ProbeLogin acquire this lock around their own
+// actual network login call. It is deliberately a mutex, not a shared
+// singleflight key: the two callers need genuinely independent,
+// correctly-typed results (buildAndLogin returns a cached *fileee.Client,
+// ProbeLogin returns a bare error from a throwaway client) — sharing one
+// singleflight execution between them would either type-assert-panic on
+// the loser's side or hand a caller a stale/foreign result. A mutex only
+// ever affects TIMING (a probe may have to wait for an in-flight
+// ordinary login to finish, or vice versa); it never substitutes one
+// call's real, freshly-executed outcome for the other's — so self_check
+// stays an honest, always-executed check even when it had to queue
+// behind someone else's login for the same account.
+func (p *Pool) loginLock(key string) *sync.Mutex {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.loginLocks == nil {
+		p.loginLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := p.loginLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		p.loginLocks[key] = mu
+	}
+	return mu
+}
+
 // ResolveAccountKey resolves id's account and returns the same key For
 // itself uses to cache a client for it (see accountKey) — without
 // building a client or attempting a login. Built for self_check (Aufgabe
@@ -294,8 +351,11 @@ func (p *Pool) ResolveAccountKey(ctx context.Context, id *identity.Identity) (st
 }
 
 // ProbeLogin resolves id's account and attempts a single, uncached login
-// against it — deliberately bypassing every mechanism For relies on
-// (bySubject/byAccount singleflight dedup, the pooled/cached client map).
+// against it — deliberately bypassing every mechanism For relies on to
+// SHARE or CACHE a result (bySubject/byAccount singleflight dedup, the
+// pooled/cached client map). It does NOT bypass the mutual exclusion
+// that prevents a real login from running at all while another one is
+// already in flight for the same account — see loginLock.
 //
 // Built for self_check (Aufgabe C3): For (via clientFor, internal/tools/
 // read.go) couples reachability and login together — buildAndLogin calls
@@ -312,8 +372,14 @@ func (p *Pool) ResolveAccountKey(ctx context.Context, id *identity.Identity) (st
 // error from this function's own resolution/client-construction steps —
 // never wrapped further here, so errors.Is/errors.As against go-fileee's
 // own sentinel values (fileee.ErrInvalidCredentials, fileee.
-// ErrTwoFactorInvalid, *fileee.APIError, *fileee.BlockedError) keeps
-// working on it exactly as it would straight off Login itself.
+// ErrTwoFactorInvalid, *fileee.APIError) keeps working on it exactly as
+// it would straight off Login itself. *fileee.BlockedError is
+// deliberately NOT among these — Client.Login's own call chain
+// (auth.go:157-247) never constructs one; go-fileee only ever returns it
+// from EnsureSession's session-freshness check (auth.go:301), a path
+// this function does not call (checked against go-fileee v0.2.0's own
+// source, not assumed — see classifySelfCheckOutcome's own doc comment,
+// internal/tools/ops.go, for the caller-side consequence of that).
 //
 // The throwaway client this builds never persists a session — see
 // discardSessionStore's own doc comment for why a probe login must not
@@ -326,6 +392,21 @@ func (p *Pool) ProbeLogin(ctx context.Context, id *identity.Identity) error {
 	if err != nil {
 		return err
 	}
+	key, err := accountKey(creds)
+	if err != nil {
+		return err
+	}
+
+	// Serializes this probe's real login attempt against any concurrent
+	// buildAndLogin (a Pool.For call for the same account) — see
+	// loginLock's own doc comment. Without this, a self_check call
+	// landing on exactly the same instant as an ordinary tool's cache
+	// miss for the same account would run two real logins at once, the
+	// exact pattern this package exists to prevent.
+	loginMu := p.loginLock(key)
+	loginMu.Lock()
+	defer loginMu.Unlock()
+
 	// Copy before appending, same reasoning as buildAndLogin's own
 	// identical pattern: p.clientOptions is shared by every account this
 	// pool serves, and append may otherwise reuse (and race on) its

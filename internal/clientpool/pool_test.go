@@ -880,3 +880,76 @@ func TestProbeLoginNeverPersistsASession(t *testing.T) {
 		t.Errorf("session directory has %d file(s) after ProbeLogin, want 0: %v", len(entries), entries)
 	}
 }
+
+// concurrencyTrackingHandler wraps handler and tracks the maximum number
+// of requests it was serving AT THE SAME TIME across the whole test — used
+// by TestProbeLoginUndBuildAndLoginLaufenNieGleichzeitigFuerDasselbeKonto to
+// prove that two real login handshakes for the same account never overlap.
+// A short sleep on POST /api/f/existent (the first request either
+// EnsureSession's or Login's handshake makes, see loginRoutes) widens the
+// race window a real concurrency bug would need to hit — without it, two
+// genuinely racing goroutines could still happen to run their few, fast
+// HTTP round trips one after another by pure scheduling luck, and the test
+// would pass for the wrong reason.
+func concurrencyTrackingHandler(t *testing.T, routes map[string]mockRoute) (http.HandlerFunc, *atomic.Int32) {
+	t.Helper()
+	inner := mockHandler(t, routes)
+	var inFlight atomic.Int32
+	var peak atomic.Int32
+	return func(w http.ResponseWriter, r *http.Request) {
+		n := inFlight.Add(1)
+		for {
+			cur := peak.Load()
+			if n <= cur || peak.CompareAndSwap(cur, n) {
+				break
+			}
+		}
+		if r.Method+" "+r.URL.Path == "POST /api/f/existent" {
+			time.Sleep(20 * time.Millisecond)
+		}
+		inner(w, r)
+		inFlight.Add(-1)
+	}, &peak
+}
+
+// TestProbeLoginUndBuildAndLoginLaufenNieGleichzeitigFuerDasselbeKonto
+// deckt einen Fund aus der Gegenpruefung ab (2026-08-13): ProbeLogin ging
+// -- absichtlich, siehe seine eigene Doku -- nie durch p.byAccount, aber
+// das nahm damit auch die MUTUAL-EXCLUSION-Eigenschaft mit, die
+// byAccount fuer buildAndLogin sicherstellt. Ein Pool.For-Aufruf (echter
+// Cache-Fehlschlag) und ein self_check-ProbeLogin fuer DASSELBE Konto
+// konnten dadurch gleichzeitig echte Logins ausloesen -- exakt das
+// Muster, das ADR-0012 Punkt 6 als Ausloeser fuer Fileee's eigene
+// Kontosperre nennt, und exakt das Risiko, wegen dem self_check sich
+// selbst begrenzt. loginLock schliesst diese Luecke: beide Pfade
+// serialisieren jetzt gegeneinander, nicht nur jeder fuer sich (siehe
+// TestSelfCheckResultForBegrenztSichSelbstUnterNebenlaeufigkeit in
+// internal/tools/ops_test.go fuer die "gegen sich selbst"-Haelfte).
+func TestProbeLoginUndBuildAndLoginLaufenNieGleichzeitigFuerDasselbeKonto(t *testing.T) {
+	t.Parallel()
+
+	handler, peak := concurrencyTrackingHandler(t, loginRoutes())
+	srv := newTestServer(t, handler)
+	r := newCountingResolver(map[string]fileee.Credentials{
+		"alice": {Username: "alice@example.invalid", Password: "pw"},
+	})
+	p := testPool(t, srv, r)
+	id := &identity.Identity{Subject: "alice"}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = p.For(context.Background(), id)
+	}()
+	go func() {
+		defer wg.Done()
+		_ = p.ProbeLogin(context.Background(), id)
+	}()
+	wg.Wait()
+
+	if got := peak.Load(); got > 1 {
+		t.Errorf("gleichzeitig laufende Anfragen an den Mock-Server = %d, want hoechstens 1 -- "+
+			"Pool.For (buildAndLogin) und ProbeLogin liefen gleichzeitig fuer dasselbe Konto", got)
+	}
+}

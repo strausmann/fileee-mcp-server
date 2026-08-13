@@ -564,40 +564,31 @@ func TestSelfCheckGibtNieDenFehlertextDerGegenseiteWeiter(t *testing.T) {
 }
 
 func TestGetSelfCheckOutputFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"Overall", "Reachable", "AuthValid", "Detail", "SecondsBlocked", "CheckedAt", "Cached"}
+	want := []string{"Overall", "Reachable", "AuthValid", "Detail", "CheckedAt", "Cached"}
 	got := fieldNames(getSelfCheckOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("getSelfCheckOutput-Feldliste = %v, want %v", got, want)
 	}
 }
 
-// TestClassifySelfCheckOutcomeUnterscheidetKontosperreVonUngueltigenZugangsdaten
-// deckt den vierten Zustand ab (Nachtrag nach der Gegenpruefung durch
-// team-lead/Pruefer): *fileee.BlockedError -- Fileee's eigene Sperre bei
-// zu vielen Anmeldeversuchen -- muss ALS EIGENER Zustand ("blocked")
-// erscheinen, NICHT als "degraded" (ungueltige Zugangsdaten). Wer eine
-// Kontosperre als falsches Passwort gemeldet bekommt, faengt an ein
-// korrektes Passwort zu ersetzen -- und verlaengert die Sperre damit nur.
-func TestClassifySelfCheckOutcomeUnterscheidetKontosperreVonUngueltigenZugangsdaten(t *testing.T) {
+// TestClassifySelfCheckOutcomeBehandeltEineKontosperreAlsNichtErreichbar
+// dokumentiert eine bewusste Entscheidung, keine Luecke: *fileee.BlockedError
+// ist auf dem Weg, den ProbeLogin tatsaechlich nutzt (Client.Login ->
+// login(), NICHT EnsureSession/ensureSession), strukturell unerreichbar --
+// gegen go-fileee v0.2.0 selbst geprueft (auth.go:157-247 vs. auth.go:301).
+// Ein eigener "blocked"-Zustand wurde deshalb kurzzeitig ergaenzt
+// (Nachtrag nach einer Rueckmeldung, die den Fehlertyp nannte, ohne den
+// erzeugenden Pfad zu pruefen) und wieder entfernt, statt eine
+// Faehigkeit vorzutaeuschen, die self_check auf diesem Pfad nicht hat.
+// Sollte BlockedError trotzdem einmal ankommen (z.B. weil sich
+// go-fileee's login() aendert), faellt er bewusst auf "down" -- korrekt
+// im Sinn von "nicht auswertbar", nicht falsch im Sinn von "degraded"
+// (das wuerde einen Aufrufer dazu verleiten, ein korrektes Passwort zu
+// ersetzen und die Sperre damit zu verlaengern).
+func TestClassifySelfCheckOutcomeBehandeltEineKontosperreAlsNichtErreichbar(t *testing.T) {
 	out := classifySelfCheckOutcome(&fileee.BlockedError{SecondsBlocked: 42})
-	if out.Overall != "blocked" || !out.Reachable || out.AuthValid {
-		t.Errorf("classifySelfCheckOutcome(BlockedError) = %+v, want Overall=blocked Reachable=true AuthValid=false", out)
-	}
-	if out.SecondsBlocked != 42 {
-		t.Errorf("SecondsBlocked = %d, want 42 -- der einzig brauchbare Handlungshinweis in dieser Lage", out.SecondsBlocked)
-	}
-}
-
-// TestClassifySelfCheckOutcomeLaesstSecondsBlockedBeiJedemAnderenZustandLeer
-// belegt die Gegenprobe: SecondsBlocked ist ein Ausnahmefeld nur fuer
-// "blocked" -- bei jedem anderen Zustand bleibt es 0 (omitempty in der
-// JSON-Ausgabe).
-func TestClassifySelfCheckOutcomeLaesstSecondsBlockedBeiJedemAnderenZustandLeer(t *testing.T) {
-	for _, err := range []error{nil, fileee.ErrInvalidCredentials, errors.New("dial tcp: connection refused")} {
-		out := classifySelfCheckOutcome(err)
-		if out.SecondsBlocked != 0 {
-			t.Errorf("classifySelfCheckOutcome(%v).SecondsBlocked = %d, want 0", err, out.SecondsBlocked)
-		}
+	if out.Overall != "down" {
+		t.Errorf("classifySelfCheckOutcome(BlockedError) = %+v, want Overall=down (kein eigener Zustand -- siehe Testkommentar)", out)
 	}
 }
 
