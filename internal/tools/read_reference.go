@@ -117,8 +117,8 @@ func referenceCompanyDescriptor() readServiceDescriptor[fileee.Company, companyS
 			"list_companies exposes, plus the company name as clearly marked, untrusted text for the " +
 			"same reason list_companies frames it — an automatically extracted company's name comes " +
 			"from whoever sent the document, not from the account holder. Use it when another tool " +
-			"handed you a company ID and you need its details. It does not return the contacts or " +
-			"documents linked to the company.",
+			"handed you a company ID and you need its details. It does not search by company name and " +
+			"does not return the contacts or documents linked to the company.",
 		Service: func(c *fileee.Client) fileee.ReadService[fileee.Company] { return c.Companies },
 		Summarize: func(c *fileee.Company) companySummary {
 			return companySummary{
@@ -150,8 +150,8 @@ func referenceDocumentTypeDescriptor() readServiceDescriptor[fileee.DocumentType
 		GetDescription: "Load a single document type by its ID. Returns the same fields " +
 			"list_document_types exposes: display name, the ID of the document-type scheme it uses, " +
 			"and its document counter. Use it when another tool handed you a document type ID and " +
-			"you need its name or scheme reference. It does not return the scheme's own field " +
-			"definitions.",
+			"you need its name or scheme reference. It does not search by name and does not return " +
+			"the scheme's own field definitions.",
 		Service: func(c *fileee.Client) fileee.ReadService[fileee.DocumentType] { return c.DocumentTypes },
 		Summarize: func(dt *fileee.DocumentType) documentTypeSummary {
 			return documentTypeSummary{
@@ -179,8 +179,8 @@ func referenceDocumentTypeSchemeDescriptor() readServiceDescriptor[fileee.Docume
 		GetDescription: "Load a single document-type scheme by its ID. Returns the same fields " +
 			"list_document_type_schemes exposes: the scheme's ID and the keys of the metadata " +
 			"fields it composes. Use it when a document type's own scheme reference handed you a " +
-			"scheme ID and you need its field list. It does not return which document types " +
-			"reference this scheme.",
+			"scheme ID and you need its field list. It does not search by field key and does not " +
+			"return which document types reference this scheme.",
 		Service: func(c *fileee.Client) fileee.ReadService[fileee.DocumentTypeScheme] {
 			return c.DocumentTypeSchemes
 		},
