@@ -91,6 +91,11 @@ const (
 	ToolGetDocumentPDF = "get_document_pdf"
 	ToolGetPageImage   = "get_page_image"
 	ToolGetPageOCR     = "get_page_ocr"
+
+	// ToolGetAccountStatus is get_account_status' registered name
+	// (Aufgabe 11, read_account.go) — bespoke handler, no ReadService[T]
+	// shape and no input parameters.
+	ToolGetAccountStatus = "get_account_status"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -177,6 +182,8 @@ var readToolNames = []string{
 	ToolGetDocumentPDF,
 	ToolGetPageImage,
 	ToolGetPageOCR,
+	// get_account_status (Aufgabe 11, read_account.go) — same reasoning.
+	ToolGetAccountStatus,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool

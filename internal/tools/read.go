@@ -117,6 +117,7 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 
 	registerBoxTools(s, p, logger)
 	registerBinaryTools(s, p, logger)
+	registerAccountTools(s, p, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current
