@@ -1,3 +1,18 @@
+## [0.6.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.5.1...v0.6.0) (2026-08-13)
+
+### Features
+
+* **server:** Diagnose-Protokoll für Werkzeugaufrufe und Fähigkeits-Auflösung ([#43](https://github.com/strausmann/fileee-mcp-server/issues/43)) ([e90d49c](https://github.com/strausmann/fileee-mcp-server/commit/e90d49cfe178546732b36e565f8b63e2886a2379))
+* **tools:** Abgleich fuer alle sieben generischen Dienste ([#46](https://github.com/strausmann/fileee-mcp-server/issues/46)) ([85a0ae5](https://github.com/strausmann/fileee-mcp-server/commit/85a0ae553ac9bb891b70a159f0916f6ce9644f12)), closes [#26](https://github.com/strausmann/fileee-mcp-server/issues/26)
+* **tools:** boxen, binaerdaten mit obergrenze, seiten-ocr, kontostand ([#55](https://github.com/strausmann/fileee-mcp-server/issues/55)) ([02b0ba9](https://github.com/strausmann/fileee-mcp-server/commit/02b0ba9821c63adbd9320d8edc9eae9126baebb3)), closes [#53](https://github.com/strausmann/fileee-mcp-server/issues/53) [#53](https://github.com/strausmann/fileee-mcp-server/issues/53) [#26](https://github.com/strausmann/fileee-mcp-server/issues/26)
+* **tools:** generischer Registrierungs-Helfer fuer ReadService ([#45](https://github.com/strausmann/fileee-mcp-server/issues/45)) ([ed6c807](https://github.com/strausmann/fileee-mcp-server/commit/ed6c807bb60855b34711b3d02fe5c14f9ec4d0be)), closes [#26](https://github.com/strausmann/fileee-mcp-server/issues/26)
+* **tools:** get_document, sync_documents und Konversationen je Dokument ([#53](https://github.com/strausmann/fileee-mcp-server/issues/53)) ([a0c323c](https://github.com/strausmann/fileee-mcp-server/commit/a0c323c73ae202b0ca06a9c4fa755f6783835925)), closes [#26](https://github.com/strausmann/fileee-mcp-server/issues/26)
+* **tools:** get_runtime_stats und get_tool_manifest (Aufgabe C1+C2) ([#57](https://github.com/strausmann/fileee-mcp-server/issues/57)) ([10047a2](https://github.com/strausmann/fileee-mcp-server/commit/10047a27b8c62b18b91f46127fc027bc03e66fdb)), closes [#47](https://github.com/strausmann/fileee-mcp-server/issues/47) [#186](https://github.com/strausmann/fileee-mcp-server/issues/186) [#48](https://github.com/strausmann/fileee-mcp-server/issues/48)
+* **tools:** logger durch registerReadService und registerSync reichen ([#47](https://github.com/strausmann/fileee-mcp-server/issues/47)) ([553f9bb](https://github.com/strausmann/fileee-mcp-server/commit/553f9bb04cb93ebcd2c705bc6bb0e95a781af327)), closes [strausmann/fileee-mcp-server#45](https://github.com/strausmann/fileee-mcp-server/issues/45) [strausmann/fileee-mcp-server#46](https://github.com/strausmann/fileee-mcp-server/issues/46)
+* **tools:** self_check -- selbsttest mit getrennten zustaenden (Aufgabe C3) ([ea44711](https://github.com/strausmann/fileee-mcp-server/commit/ea44711f74d1f0f6810d1bb9ee023a653ce23d17)), closes [#26](https://github.com/strausmann/fileee-mcp-server/issues/26)
+* **tools:** stammdaten-Werkzeuge fuer Schlagworte, Firmen, Dokumenttypen ([#48](https://github.com/strausmann/fileee-mcp-server/issues/48)) ([a3a7f33](https://github.com/strausmann/fileee-mcp-server/commit/a3a7f339077eb90b8cdd5084680eb54eabd0f0bd)), closes [#26](https://github.com/strausmann/fileee-mcp-server/issues/26)
+* **tools:** werkzeuge fuer Kontakte, Erinnerungen und Konversationen ([#52](https://github.com/strausmann/fileee-mcp-server/issues/52)) ([7513c73](https://github.com/strausmann/fileee-mcp-server/commit/7513c73882b4710e285ccb479ec524020ad84d09)), closes [#26](https://github.com/strausmann/fileee-mcp-server/issues/26)
+
 ## [0.5.1](https://github.com/strausmann/fileee-mcp-server/compare/v0.5.0...v0.5.1) (2026-08-11)
 
 ### Bug Fixes
