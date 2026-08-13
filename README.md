@@ -4,7 +4,7 @@
 
 Ein **inoffizieller** MCP-Server für [Fileee](https://www.fileee.com), der die eigenen Dokumente für AI-Clients zugänglich macht — als lokaler Server über einen statischen Token oder als **Remote-Connector mit OAuth-Anmeldung**, etwa in der Claude.ai-Web-UI.
 
-> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto und die ersten lesenden Werkzeuge sind eingerichtet. Weitere Werkzeuge und Capability-Gruppen (`write`, `share`, `destructive`) entstehen in den folgenden Umsetzungsschritten.
+> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die Capability-Gruppe `read` ist vollständig: **32 lesende Werkzeuge**, siehe [`docs/tools.md`](docs/tools.md). Die Capability-Gruppen `write`, `share` und `destructive` entstehen in den folgenden Umsetzungsschritten.
 
 Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/strausmann/go-fileee) und ist damit Geschwisterprojekt von [`strausmann/fileee-server`](https://github.com/strausmann/fileee-server) (REST-API für n8n/CI). Der Unterschied: `fileee-server` kennt genau ein Fileee-Konto und ein statisches Token; dieser Server bindet die **Identität des anfragenden Benutzers** an ein Fileee-Konto.
 
@@ -138,7 +138,13 @@ Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die 
 
 ## Werkzeuge
 
-Der Katalog entsteht schrittweise. Was heute existiert (`read`: `list_documents`, `search_documents`) steht in [`docs/tools.md`](docs/tools.md), inklusive der Absicherung gegen präparierte Dokumenttitel.
+Der Katalog entsteht schrittweise. Die Capability-Gruppe `read` ist vollständig — **32 Werkzeuge**
+über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dokumenttyp-Schemata), Kontakte/
+Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
+Seiten-OCR und Kontostand — vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert,
+inklusive der Absicherung gegen präparierte, fremdbestimmte Inhalte (Dokumenttitel, Firmen-/
+Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text). `write`, `share` und
+`destructive` entstehen in den folgenden Umsetzungsschritten.
 
 ## Sicherheit
 
@@ -157,7 +163,11 @@ Jeder Aufruf eines Werkzeugs (`tools/call`) muss drei unabhängige Kontingente p
 | `FILEEE_RATE_GLOBAL_RPS` / `FILEEE_RATE_GLOBAL_BURST` | Anfragerate **über alle Anrufer hinweg** — das globale Kontingent, das die README bereits vor dieser Einstellung beschrieb, tatsächlich durchgesetzt | `1` RPS, Burst `3` |
 | `FILEEE_MAX_INFLIGHT` | Obergrenze **gleichzeitig laufender** Werkzeugaufrufe, über alle Anrufer hinweg — schützt die eine, je Fileee-Konto geteilte Verbindung ([`internal/clientpool`](internal/clientpool)) vor Überlastung durch Parallelität, unabhängig von der Rate | `8` |
 
-`FILEEE_MAX_DOWNLOAD_BYTES` und `FILEEE_MAX_UPLOAD_BYTES` werden geladen, aber **noch nicht durchgesetzt** — nicht weil die Fähigkeit fehlt (`go-fileee`s `DocumentService.Upload`/`DownloadPDF`/`DownloadPageImage` sowie die freigabe-seitigen Gegenstücke in `ShareClient` existieren bereits), sondern weil dieser Server noch kein Werkzeug registriert, das sie aufruft — die Grenze bekommt ihren Platz um den `io.Reader`/`io.ReadCloser` dieser Methoden herum, sobald das erste Upload-/Download-Werkzeug entsteht. Die davon unabhängig abgeleitete `MaxRequestBodyBytes` bleibt aus einem anderen Grund offen: Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
+`FILEEE_MAX_UPLOAD_BYTES` wird geladen, aber **noch nicht durchgesetzt** — es gibt noch kein Upload-Werkzeug (Teil B, `write`), das es aufrufen könnte.
+
+`FILEEE_MAX_DOWNLOAD_BYTES` wird ebenfalls geladen, ist aber **nicht mit den beiden inzwischen existierenden Download-Werkzeugen verbunden**: `get_document_pdf` und `get_page_image` (siehe [`docs/tools.md`](docs/tools.md)) begrenzen ihren jeweiligen Datenstrom über eine eigene, im Code fest verdrahtete Obergrenze von 8 MiB (`maxBinaryBytes`, `internal/tools/read_binary.go`), unabhängig vom konfigurierten Wert dieser Variable (Default 1 MiB) — wer `FILEEE_MAX_DOWNLOAD_BYTES` setzt, ändert damit **nichts** am tatsächlichen Verhalten dieser beiden Werkzeuge. Das ist eine offene Inkonsistenz, keine bewusste Entscheidung; bis sie aufgelöst ist (entweder `maxBinaryBytes` auf `cfg.MaxDownloadBytes` umstellen oder die Variable als für diese Werkzeuge nicht zuständig dokumentieren), gilt für einen Betreiber: **die tatsächliche Grenze ist die feste 8-MiB-Konstante im Code, nicht `FILEEE_MAX_DOWNLOAD_BYTES`.**
+
+Die von `FILEEE_MAX_UPLOAD_BYTES` abgeleitete `MaxRequestBodyBytes` bleibt aus einem unabhängigen Grund offen: Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
 
 ## Diagnose
 

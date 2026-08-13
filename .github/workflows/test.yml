@@ -103,6 +103,46 @@ jobs:
           #     Weg zum Ziel: gezielte Tests je Deskriptor-Funktion (Muster: tagDescriptor() in
           #     read_generic_test.go).
           #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          # internal/tools nochmal erweitert (Boxen/Binaerdaten/OCR/Kontostand, #55): DREI weitere
+          # Dateien derselben Business-Logik-Stufe erreichen 80% NOCH NICHT — derselbe Grund wie
+          # bei read_generic.go/read_reference.go oben, hier noch ausgepraegter, weil jede Datei
+          # mehrere duenne Werkzeug-Anmelde-Huellen (getXxxHandler) traegt, die alle an
+          # clientFor/einer verifizierten Identitaet aus dem Kontext haengen und aus diesem
+          # White-Box-Paket heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar sind:
+          #
+          #   read_boxes.go:60 — gemessen 61,9%. listBoxesHandler (10%) und getBoxHandler (50%)
+          #     ziehen die Datei unter 80. Die Logik-Ebene darunter (boxesFromService/
+          #     boxFromService/boxSummaryOf/boxDetailOf) liegt bereits bei 100%.
+          #     Weg zum Ziel: Integrationstest nach dem Muster von internal/server/server_test.go
+          #     fuer beide Handler.
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          #   read_binary.go:68 — gemessen 71,3%. getDocumentPDFHandler/getPageImageHandler
+          #     (63,2%) und getPageOCRHandler (50%) ziehen die Datei unter 80; parsePDFMode/
+          #     parseImageSize selbst liegen bei 50% (nur der Ablehnungspfad eines unbekannten
+          #     Werts ist ueber den Handler getestet, kein eigener Erfolgstest fuer den
+          #     benannten Zweitwert "print"/"smedium"). Die Kernlogik (readLimited,
+          #     documentPDFFromService, documentPageImageFromService,
+          #     documentPageOCRFromService) liegt bei 87,5-92,9%.
+          #     Weg zum Ziel: Integrationstest fuer die drei Handler; je ein expliziter
+          #     Erfolgstest fuer parsePDFMode("print") und parseImageSize("smedium").
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          #   read_account.go:50 — gemessen 52,6%. getAccountStatusHandler (10%) zieht die Datei
+          #     unter 80 — derselbe Grund, staerker ausgepraegt, weil die Datei sonst nur aus
+          #     bereits vollstaendig getesteter Logik besteht (accountStatusDetail,
+          #     accountStatusFromService, formatTimePtr, registerAccountTools: alle 100%) und
+          #     ein einzelner duenner Handler den ganzen Dateidurchschnitt traegt.
+          #     Weg zum Ziel: Integrationstest nach demselben Muster.
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          # Alle drei Schwellen liegen unter dem gemessenen Ist-Stand (nicht darauf) — eine
+          # Schranke exakt auf dem Ist-Stand faerbt beim naechsten Commit rot und wird dann nur
+          # entschaerft statt eingehalten (test-coverage-pflicht.md, Abschnitt
+          # "Coverage-Whitelist"). Gegenprobe (lokal, scripts/coverage-gate-strict.sh): eine
+          # probeweise unerreichbar hohe Schwelle (99) liess das Gate fuer alle drei Dateien
+          # FAILen; die hier eingetragenen Werte bestehen denselben Lauf.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -119,6 +159,9 @@ jobs:
             internal/tools/names.go:80 \
             internal/tools/read_generic.go:75 \
             internal/tools/read_reference.go:75 \
+            internal/tools/read_boxes.go:60 \
+            internal/tools/read_binary.go:68 \
+            internal/tools/read_account.go:50 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
