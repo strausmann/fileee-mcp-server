@@ -68,6 +68,41 @@ jobs:
           # Die Liste waechst mit jedem Umsetzungsschritt mit. Jede neue Datei bekommt
           # ihre Schwelle im selben PR, in dem sie entsteht — nachtraeglich nachziehen
           # heisst, das Gate fuer diese Datei nie scharf zu schalten.
+          #
+          # internal/tools erweitert (Stand dieses PR, gemessen nach dem Zusammenfuehren der
+          # Dokument-/Personen-Werkzeuge): read.go war bereits gegattert (80, Business-Logik-
+          # Stufe wie oben). Vier weitere Dateien derselben Stufe erreichen 80% bereits mit
+          # Luft und werden hier scharf geschaltet:
+          #   read_sync.go      80,6%   read_people.go   83,3%
+          #   names.go          87,0%
+          # (Bei read_sync.go ist die Luft ueber der Schwelle knapp — 0,6 Punkte. Das ist die
+          # 80%-Business-Logik-Stufe selbst, keine eigens gewaehlte Marge; siehe PR-Beschreibung.)
+          #
+          # ZWEI Dateien derselben Stufe erreichen 80% NOCH NICHT: read_generic.go (79,3%) und
+          # read_reference.go (77,3%). Kontrollierte Ausnahme statt Luecke oder erfundenem
+          # Ersatzwert (test-coverage-pflicht.md, Abschnitt "Coverage-Whitelist") — Begruendung,
+          # Weg zum Ziel und Verfallsdatum je Datei:
+          #
+          #   read_generic.go:75 — Begruendung: genericListHandler (70%) und genericGetHandler
+          #     (50%) ziehen die Datei unter 80. Deren Erfolgspfad haengt an clientFor/einer
+          #     verifizierten Identitaet aus dem Kontext und ist aus diesem White-Box-Paket
+          #     heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar (siehe deren eigene
+          #     Doc-Kommentare) — keine vergessene Zeile, sondern eine strukturelle Grenze des
+          #     Unit-Tests. Die Logik-Ebene darunter (getFromService/listFromService/
+          #     untrustedLineOf) liegt bereits bei 87,5%/92,9%/100% (#51). 75 statt 80 laesst
+          #     Raum fuer eine weitere Funktion, ohne beim naechsten Commit rot zu faerben, und
+          #     faengt trotzdem ein Absinken unter den heutigen Stand ab.
+          #     Weg zum Ziel: Integrationstest nach dem Muster von internal/server/server_test.go
+          #     (echter Gangway/HTTP-Rundlauf mit verifizierter Identitaet) fuer beide Handler.
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          #   read_reference.go:75 — Begruendung: referenceTagDescriptor (33%) und
+          #     referenceDocumentTypeDescriptor (67%) ziehen die Datei unter 80 — reine
+          #     Deskriptor-Bauer, die nur indirekt ueber registerReadService/Registrierungstests
+          #     erreicht werden, nicht ueber eigene Tests ihrer Summarize/UntrustedLine-Closures.
+          #     Weg zum Ziel: gezielte Tests je Deskriptor-Funktion (Muster: tagDescriptor() in
+          #     read_generic_test.go).
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -79,6 +114,11 @@ jobs:
             internal/server/server.go:80 \
             internal/clientpool/pool.go:85 \
             internal/tools/read.go:80 \
+            internal/tools/read_sync.go:80 \
+            internal/tools/read_people.go:80 \
+            internal/tools/names.go:80 \
+            internal/tools/read_generic.go:75 \
+            internal/tools/read_reference.go:75 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
