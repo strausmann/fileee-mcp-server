@@ -304,6 +304,30 @@ func tagSyncDescriptorMitFremdtext() syncDescriptor[fileee.Tag, syncTagSummary] 
 
 // --- Platzhalter-Zusammenfassungsstrukturen: keine Ueberschneidung mit Summarize-Feldern ---
 
+// TestSyncCompanySummaryEnthaeltKeinenFirmennamen ist die Regression fuer
+// Aufgabe 3's eigenen Fund: companySyncDescriptor trug bis dahin weder
+// UntrustedLine noch PoisonProbe, obwohl eine automatisch aus einem
+// Dokument extrahierte Company (FromUserDB == false) ihren Namen vom
+// Absender dieses Dokuments erbt, nicht vom Kontoinhaber — dieselbe
+// Einstufung wie bei Contact. Siehe read_sync.go, syncCompanySummary's
+// eigener Kommentar.
+func TestSyncCompanySummaryEnthaeltKeinenFirmennamen(t *testing.T) {
+	d := companySyncDescriptor()
+	marker := "poison-marker-fuer-diesen-test"
+	entry := d.PoisonProbe(marker)
+
+	if !strings.Contains(d.UntrustedLine(entry), marker) {
+		t.Fatalf("UntrustedLine liest nicht das von PoisonProbe gesetzte Feld")
+	}
+	summary := d.Summarize(entry)
+	v := reflect.ValueOf(summary)
+	for i := 0; i < v.NumField(); i++ {
+		if s, ok := v.Field(i).Interface().(string); ok && strings.Contains(s, marker) {
+			t.Fatalf("Feld %q enthaelt fremdbestimmten Text", v.Type().Field(i).Name)
+		}
+	}
+}
+
 func TestSyncContactSummaryEnthaeltKeinenAnzeigenamen(t *testing.T) {
 	d := contactSyncDescriptor()
 	marker := "poison-marker-fuer-diesen-test"

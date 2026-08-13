@@ -36,21 +36,24 @@ const (
 	maxLimit     = 100
 )
 
-// RegisterRead adds list_documents, search_documents, and — since Aufgabe
-// 2b — the seven generic sync tools (registerSyncTools, read_sync.go) to
-// s. All resolve their Fileee connection through p — see clientFor.
+// RegisterRead adds list_documents, search_documents, the seven generic
+// sync tools (registerSyncTools, read_sync.go, Aufgabe 2b), and — since
+// Aufgabe 3 — the four reference-data list/get pairs (registerReferenceTools,
+// read_reference.go: tags, companies, document types, document-type
+// schemes) to s. All resolve their Fileee connection through p — see
+// clientFor.
 //
 // logger receives this server's diagnostic log for every tool this
-// function mounts, directly or through registerSyncTools — arguments at
-// FILEEE_LOG_LEVEL=debug (logToolStart), outcome and duration at info
-// (logToolEnd) — through internal/diag's masking guarantee regardless of
-// which package built logger (see internal/diag's own doc comment); it
-// must never be nil, since every call to any of these tools logs through
-// it unconditionally. Aufgabe 2c closed the one remaining gap here:
-// neither registerReadService (read_generic.go — not yet wired into this
-// function, Aufgabe 3/4) nor registerSyncTools threaded logger through
-// before it (#45/#46 both shipped without it); both now take it and pass
-// it on to their own handlers the same way
+// function mounts, directly or through registerSyncTools/
+// registerReferenceTools — arguments at FILEEE_LOG_LEVEL=debug
+// (logToolStart), outcome and duration at info (logToolEnd) — through
+// internal/diag's masking guarantee regardless of which package built
+// logger (see internal/diag's own doc comment); it must never be nil,
+// since every call to any of these tools logs through it
+// unconditionally. Aufgabe 2c closed the one remaining gap here: neither
+// registerReadService (read_generic.go) nor registerSyncTools threaded
+// logger through before it (#45/#46 both shipped without it); both now
+// take it and pass it on to their own handlers the same way
 // listDocumentsHandler/searchDocumentsHandler already did.
 func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
@@ -72,6 +75,7 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	}, searchDocumentsHandler(p, logger))
 
 	registerSyncTools(s, p, logger)
+	registerReferenceTools(s, p, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current
