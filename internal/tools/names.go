@@ -113,6 +113,11 @@ const (
 	// resolution path so a login failure and a network failure are never
 	// reported as the same thing (see ops.go's own doc comment section).
 	ToolSelfCheck = "self_check"
+
+	// ToolWhoami is whoami's registered name (Task 3, whoami.go) — reports
+	// the caller's verified identity, its mapped fileee account (masked)
+	// and the server's mode/capabilities. Not Fileee-backed either.
+	ToolWhoami = "whoami"
 )
 
 // readToolNames is the hand-maintained list of tool names ReadToolKinds
@@ -215,6 +220,10 @@ var readToolNames = []string{
 	// other read tool here already resolves, and mutates nothing on
 	// Fileee's side.
 	ToolSelfCheck,
+	// whoami (Task 3, whoami.go) — reads only this server's own already-
+	// resolved identity/account/capability facts, no Fileee access at all,
+	// same reasoning as get_runtime_stats/get_tool_manifest above.
+	ToolWhoami,
 }
 
 // ReadToolKinds returns the access.ToolKind classification for every tool
@@ -264,7 +273,7 @@ func registeredReadTools() []*mcp.Tool {
 	ctx := context.Background()
 
 	probe := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(probe, (*clientpool.Pool)(nil), slog.New(slog.DiscardHandler))
+	RegisterRead(probe, (*clientpool.Pool)(nil), ServerInfo{}, slog.New(slog.DiscardHandler))
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := probe.Connect(ctx, serverTransport, nil)
