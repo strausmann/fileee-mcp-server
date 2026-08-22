@@ -198,7 +198,7 @@ func TestGetRuntimeStatsHandlerLiefertEinenSchnappschuss(t *testing.T) {
 func TestRegisterOpsToolsMeldetGetRuntimeStatsAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerOpsTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerOpsTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolGetRuntimeStats] {
@@ -221,7 +221,7 @@ func TestRegisterOpsToolsMeldetGetRuntimeStatsAn(t *testing.T) {
 // denselben blinden Fleck teilen, den er aufdecken soll.
 func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), discardLogger())
+	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	want := toolNamesOf(t, s)
 	if !want[ToolGetToolManifest] {
@@ -265,7 +265,7 @@ func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind
 
 func TestGetToolManifestWaechstMitNeuAngemeldetenWerkzeugenMit(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), discardLogger())
+	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, before, err := handler(context.Background(), nil, getToolManifestInput{})
@@ -326,7 +326,7 @@ func TestGetToolManifestInputNimmtKeineParameterEntgegen(t *testing.T) {
 // Information nicht verlieren.
 func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), discardLogger())
+	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
@@ -343,7 +343,7 @@ func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 func TestRegisterOpsToolsMeldetGetToolManifestAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerOpsTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerOpsTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolGetToolManifest] {
@@ -615,7 +615,7 @@ func TestGetSelfCheckHandlerVerweigertOhneVerifizierteIdentitaet(t *testing.T) {
 func TestRegisterOpsToolsMeldetSelfCheckAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerOpsTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerOpsTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolSelfCheck] {

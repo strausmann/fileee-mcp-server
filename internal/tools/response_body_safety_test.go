@@ -108,6 +108,7 @@ var registeredResponseBodyTypes = []reflect.Type{
 	reflect.TypeOf(getRuntimeStatsOutput{}),                            // get_runtime_stats
 	reflect.TypeOf(getToolManifestOutput{}),                            // get_tool_manifest
 	reflect.TypeOf(getSelfCheckOutput{}),                               // self_check
+	reflect.TypeOf(whoamiOutput{}),                                     // whoami
 }
 
 // jsonMarshalerType is the reflect.Type of the standard library's

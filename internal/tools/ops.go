@@ -525,7 +525,7 @@ func getSelfCheckHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandle
 
 // registerOpsTools mounts get_runtime_stats, get_tool_manifest and
 // self_check onto s — called once from RegisterRead (read.go).
-func registerOpsTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+func registerOpsTools(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetRuntimeStats,
 		Description: "Report how many times each of this server's tools has been called since " +
@@ -569,4 +569,6 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"only this fixed classification.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, getSelfCheckHandler(p, logger))
+
+	registerWhoami(s, p, info, logger)
 }
