@@ -350,6 +350,20 @@ func (p *Pool) ResolveAccountKey(ctx context.Context, id *identity.Identity) (st
 	return accountKey(creds)
 }
 
+// AccountUsername returns the username of the fileee account resolved for
+// id. Like ResolveAccountKey it maps identity to one account fact and does
+// not log in — the underlying resolver returns the configured credentials
+// without a network call. It returns only the username, never the password
+// or TOTP seed, and returns an error wrapping accounts.ErrNoAccount when id
+// has no mapped account.
+func (p *Pool) AccountUsername(ctx context.Context, id *identity.Identity) (string, error) {
+	creds, err := p.resolver.Credentials(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return creds.Username, nil
+}
+
 // ProbeLogin resolves id's account and attempts a single, uncached login
 // against it — deliberately bypassing every mechanism For relies on to
 // SHARE or CACHE a result (bySubject/byAccount singleflight dedup, the
