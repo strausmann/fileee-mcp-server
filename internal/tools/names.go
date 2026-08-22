@@ -115,8 +115,9 @@ const (
 	ToolSelfCheck = "self_check"
 
 	// ToolWhoami is whoami's registered name (Task 3, whoami.go) — reports
-	// the caller's verified identity, its mapped fileee account (masked)
-	// and the server's mode/capabilities. Not Fileee-backed either.
+	// the caller's verified identity, its mapped fileee account
+	// (its plain login email) and the server's mode/capabilities. Not
+	// Fileee-backed either.
 	ToolWhoami = "whoami"
 )
 
