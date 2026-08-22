@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -12,28 +13,6 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 )
-
-func TestMaskUsername(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"email", "bjoern@strausmann.net", "b***n@strausmann.net"},
-		{"email short local", "a@strausmann.net", "*@strausmann.net"},
-		{"email two-char local", "ab@x.de", "a***b@x.de"},
-		{"no at", "operator", "o***r"},
-		{"single char", "x", "*"},
-		{"empty", "", ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := maskUsername(c.in); got != c.want {
-				t.Fatalf("maskUsername(%q) = %q, want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
 
 // --- whoamiResultFor / getWhoamiHandler / registerWhoami (Task 3) ---------
 
@@ -49,14 +28,21 @@ func TestWhoamiResultForHappyPath(t *testing.T) {
 	if !out.Account.Configured {
 		t.Fatalf("Account.Configured = false, want true")
 	}
-	if out.Account.Username != "b***n@strausmann.net" {
-		t.Fatalf("Account.Username = %q, want masked", out.Account.Username)
+	if out.Account.Username != "bjoern@strausmann.net" {
+		t.Fatalf("Account.Username = %q, want the account's plain email", out.Account.Username)
 	}
 	if out.Mode != "single" || out.Capabilities != "read" {
 		t.Fatalf("Mode/Capabilities = %q/%q", out.Mode, out.Capabilities)
 	}
-	if strings.Contains(out.Account.Username, "bjoern@strausmann.net") {
-		t.Fatalf("output leaked the full username")
+
+	// The password must never appear anywhere in the marshaled output, even
+	// though the account email is shown plainly.
+	marshaled, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	if strings.Contains(string(marshaled), "\"x\"") {
+		t.Fatalf("output leaked the password: %s", marshaled)
 	}
 }
 

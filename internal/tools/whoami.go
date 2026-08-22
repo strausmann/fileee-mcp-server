@@ -1,7 +1,6 @@
-// whoami.go carries this server's whoami meta-tool (maskUsername here
-// since Task 1) — reports the caller's verified identity, the fileee
-// account it maps to (masked), and the server's mode/capabilities, without
-// ever touching Fileee itself.
+// whoami.go carries this server's whoami meta-tool — reports the caller's
+// verified identity, the fileee account it maps to, and the server's
+// mode/capabilities, without ever touching Fileee itself.
 package tools
 
 import (
@@ -9,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -19,31 +17,6 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 )
-
-// maskUsername masks a fileee login (an e-mail address) so a caller can
-// recognise their own account without the full value appearing in output.
-// It never returns the password or TOTP seed — only a reduced form of the
-// username.
-func maskUsername(username string) string {
-	if username == "" {
-		return ""
-	}
-	if at := strings.IndexByte(username, '@'); at >= 0 {
-		return maskPart(username[:at]) + username[at:]
-	}
-	return maskPart(username)
-}
-
-func maskPart(s string) string {
-	switch {
-	case len(s) == 0:
-		return ""
-	case len(s) == 1:
-		return "*"
-	default:
-		return string(s[0]) + "***" + string(s[len(s)-1])
-	}
-}
 
 // ServerInfo carries the per-instance facts whoami reports that are not
 // derivable from the request: the calling identity's resolved capability
@@ -60,18 +33,18 @@ type ServerInfo struct {
 type whoamiInput struct{}
 
 // whoamiAccount is the fileee account whoami resolved for the caller.
-// Configured is false when the caller's subject maps to no account; Key and
-// Username are then empty. Username is always masked (maskUsername); the
-// password and TOTP seed are never included.
+// Configured is false when the caller's subject maps to no account;
+// Username is then empty. Username is the account's own fileee login email
+// — the caller is that account's owner, so showing it plainly (never
+// masked) is acceptable; the password and TOTP seed are never included.
 type whoamiAccount struct {
 	Configured bool   `json:"configured"`
-	Key        string `json:"key,omitempty"`
 	Username   string `json:"username,omitempty"`
 }
 
 // whoamiOutput is whoami's structured result: the verified identity subject,
-// the mapped account (masked), the server's account mode and the caller's
-// resolved capabilities.
+// the mapped account, the server's account mode and the caller's resolved
+// capabilities.
 type whoamiOutput struct {
 	Identity     string        `json:"identity"`
 	Account      whoamiAccount `json:"account"`
@@ -88,7 +61,7 @@ type whoamiOutput struct {
 func whoamiResultFor(ctx context.Context, p *clientpool.Pool, info ServerInfo, id *identity.Identity) (whoamiOutput, error) {
 	out := whoamiOutput{Identity: id.Subject, Mode: info.Mode, Capabilities: info.Capabilities}
 
-	key, err := p.ResolveAccountKey(ctx, id)
+	username, err := p.AccountUsername(ctx, id)
 	if err != nil {
 		if errors.Is(err, accounts.ErrNoAccount) {
 			out.Account = whoamiAccount{Configured: false}
@@ -97,16 +70,7 @@ func whoamiResultFor(ctx context.Context, p *clientpool.Pool, info ServerInfo, i
 		return whoamiOutput{}, fmt.Errorf("fileee-mcp: tools: resolve fileee account: %w", err)
 	}
 
-	username, uerr := p.AccountUsername(ctx, id)
-	if uerr != nil {
-		if errors.Is(uerr, accounts.ErrNoAccount) {
-			out.Account = whoamiAccount{Configured: false}
-			return out, nil
-		}
-		return whoamiOutput{}, fmt.Errorf("fileee-mcp: tools: resolve fileee account: %w", uerr)
-	}
-
-	out.Account = whoamiAccount{Configured: true, Key: key, Username: maskUsername(username)}
+	out.Account = whoamiAccount{Configured: true, Username: username}
 	return out, nil
 }
 
@@ -145,8 +109,8 @@ func registerWhoami(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *
 			"fileee account it maps to on this server, plus the server's account mode and the " +
 			"capability set the calling identity resolves to. Returns the caller's identity " +
 			"subject, whether a fileee account is configured for it and — if so — that account's " +
-			"key and a masked form of its username (never the password or two-factor secret), " +
-			"the account mode (single or multi), and the resolved capabilities. Use it to confirm " +
+			"username (its fileee login email; never the password or two-factor secret), the " +
+			"account mode (single or multi), and the resolved capabilities. Use it to confirm " +
 			"who the server thinks you are and what this identity is allowed to do. It makes no " +
 			"call to fileee and reflects only what this server already knows about the calling identity.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
