@@ -161,6 +161,14 @@ const (
 	// informative success rather than a failure — see write_documents.go's
 	// own package doc comment.
 	ToolUploadDocument = "upload_document"
+
+	// ToolUpdateDocument is update_document's registered name (Task 6,
+	// write_documents.go) — the eighth and final write-class tool from
+	// this spec, over *fileee.Client.Documents.Get/Update: a
+	// Get/apply/Update patch/merge, the same shape ToolUpdateContact/
+	// ToolUpdateReminder already establish, scoped by this spec's own
+	// YAGNI note to just the document's Title field.
+	ToolUpdateDocument = "update_document"
 )
 
 // registeredReadTools mounts RegisterAll onto a throwaway server and reads

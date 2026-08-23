@@ -34,18 +34,17 @@
 // time (35) — found no go-fileee Marshaler type reachable from any
 // response body, directly or transitively. registeredReadTools() mounts
 // 43 tools today (32 fileee-backed read tools, 4 operational tools:
-// get_runtime_stats, get_tool_manifest, self_check, whoami, plus seven
-// write-class tools so far: update_contact and create_contact (Task
+// get_runtime_stats, get_tool_manifest, self_check, whoami, plus eight
+// write-class tools: update_contact and create_contact (Task
 // 1/2, write.go), create_reminder and update_reminder (Task 3,
 // write_people.go), box_add_document and box_remove_document (Task 4,
-// write_boxes.go), upload_document (Task 5, write_documents.go) — the
-// count grew after that audit, registeredResponseBodyTypes below
-// reflects the current set. The same guardrail applies to write tools'
-// response bodies unchanged:
+// write_boxes.go), upload_document and update_document (Task 5/6,
+// write_documents.go) — the count grew after that audit,
+// registeredResponseBodyTypes below reflects the current set. The same
+// guardrail applies to write tools' response bodies unchanged:
 // updateContactOutput/createContactOutput/reminderOutput/boxDocumentOutput/
-// uploadDocumentOutput are exactly as much hand-written, all-primitive
-// DTOs as any read tool's
-// output.
+// uploadDocumentOutput/updateDocumentOutput are exactly as much
+// hand-written, all-primitive DTOs as any read tool's output.
 //
 // A hand audit is a snapshot, not a standing guarantee. This test is the
 // mechanical guardrail that keeps that finding true going forward: it
@@ -129,6 +128,7 @@ var registeredResponseBodyTypes = []reflect.Type{
 	reflect.TypeOf(boxDocumentOutput{}),                                // box_add_document
 	reflect.TypeOf(boxDocumentOutput{}),                                // box_remove_document
 	reflect.TypeOf(uploadDocumentOutput{}),                             // upload_document
+	reflect.TypeOf(updateDocumentOutput{}),                             // update_document
 }
 
 // jsonMarshalerType is the reflect.Type of the standard library's

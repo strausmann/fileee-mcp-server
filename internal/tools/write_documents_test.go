@@ -1,9 +1,9 @@
-// write_documents_test.go tests write_documents.go's one document write
-// tool, upload_document (Task 5) — the same template
-// write_boxes_test.go already establishes: a narrow fake drives the
-// client-resolution-free logic directly, and thin handler-level tests
-// exercise the branches reachable without a real gangway/HTTP round
-// trip.
+// write_documents_test.go tests write_documents.go's two document write
+// tools, upload_document (Task 5) and update_document (Task 6) — the
+// same template write_boxes_test.go already establishes: a narrow fake
+// drives the client-resolution-free logic directly, and thin
+// handler-level tests exercise the branches reachable without a real
+// gangway/HTTP round trip.
 //
 // Mutations-Test-Pflicht (test-coverage-pflicht.md, homelab-management
 // repo): upload_document gets Happy-Path + Duplicate + Invalid-base64 +
@@ -16,12 +16,24 @@
 // (TestUploadDocumentFromServiceGegenprobeRohesBase64StattDekodierterBytesWuerdeDenTestRotFaerben)
 // proves the reader passed to Upload carries the DECODED bytes, not the
 // base64 string itself.
+//
+// update_document (Task 6) gets Happy-Path (Title set) + Title-nil
+// (patch/merge "leave unchanged") + Backend-error (4xx/5xx) +
+// Network-error coverage — the same triad write.go's own
+// TestUpdateContact... tests establish for update_contact, since
+// update_document follows the identical Get/apply/Update patch/merge
+// shape (write.go's own doc comment). TestUpdateDocumentTitleNilLaesstTitelUnveraendert
+// is this task's own required Gegenprobe: it fails if Title==nil were
+// mishandled as "clear the title" (a nil-pointer deref on
+// applyDocumentTitlePatch) or "overwrite with the zero value" instead
+// of "leave the current title alone".
 package tools
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -314,5 +326,325 @@ func TestUploadDocumentHandlerLaesstGueltigesBase64BisZuClientForDurch(t *testin
 	}
 	if strings.Contains(err.Error(), "base64") {
 		t.Errorf("gueltiges base64 wurde faelschlich als ungueltig abgewiesen: %v", err)
+	}
+}
+
+func TestUpdateDocumentInputFeldlisteIstAbgeschlossen(t *testing.T) {
+	want := []string{"ID", "Title"}
+	got := fieldNames(updateDocumentInput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("updateDocumentInput-Feldliste = %v, want %v", got, want)
+	}
+}
+
+func TestUpdateDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
+	// KEIN Title-/Fremdtext-Feld hier — der neue Titel landet
+	// ausschliesslich gerahmt in CallToolResult.Content (siehe
+	// TestUpdateDocumentPatchMerge unten), nie strukturiert in
+	// CallToolResult.StructuredContent.
+	want := []string{"ID"}
+	got := fieldNames(updateDocumentOutput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("updateDocumentOutput-Feldliste = %v, want %v", got, want)
+	}
+}
+
+func TestRegisterWriteToolsMeldetUpdateDocumentAn(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+
+	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+
+	names := toolNamesOf(t, s)
+	if !names[ToolUpdateDocument] {
+		t.Errorf("Werkzeug %q wurde nicht angemeldet", ToolUpdateDocument)
+	}
+}
+
+// TestUpdateDocumentWerkzeugIstAlsSchreibendUndDestruktivAnnotiert belegt
+// den Auftrag woertlich: update_document traegt ReadOnlyHint:false (es
+// ist KEIN Lesewerkzeug), DestructiveHint:true (ein Update kann den
+// bestehenden Titel ueberschreiben) und IdempotentHint:true (derselbe
+// Patch zweimal angewendet aendert das Dokument kein zweites Mal).
+func TestUpdateDocumentWerkzeugIstAlsSchreibendUndDestruktivAnnotiert(t *testing.T) {
+	var found *mcp.Tool
+	for _, tool := range registeredReadTools() {
+		if tool.Name == ToolUpdateDocument {
+			found = tool
+		}
+	}
+	if found == nil {
+		t.Fatalf("Werkzeug %q wurde nicht angemeldet", ToolUpdateDocument)
+	}
+	if found.Annotations == nil {
+		t.Fatalf("Werkzeug %q hat keine Annotations", ToolUpdateDocument)
+	}
+	if found.Annotations.Title != "Update document" {
+		t.Errorf("Title = %q, want %q", found.Annotations.Title, "Update document")
+	}
+	if found.Annotations.ReadOnlyHint {
+		t.Error("ReadOnlyHint = true, want false — update_document schreibt")
+	}
+	if found.Annotations.DestructiveHint == nil || !*found.Annotations.DestructiveHint {
+		t.Errorf("DestructiveHint = %v, want a pointer to true — ein Update kann den bestehenden Titel ueberschreiben",
+			found.Annotations.DestructiveHint)
+	}
+	if !found.Annotations.IdempotentHint {
+		t.Error("IdempotentHint = false, want true — derselbe Patch zweimal aendert nichts zusaetzlich")
+	}
+}
+
+// fakeDocumentUpdateService is documentUpdateService's test double — the
+// same shape fakeContactWriteService establishes (write_test.go) for
+// update_contact.
+type fakeDocumentUpdateService struct {
+	getCalled bool
+	getResult *fileee.Document
+	getErr    error
+
+	updateCalledWith *fileee.Document
+	updateResult     *fileee.Document
+	updateErr        error
+}
+
+func (f *fakeDocumentUpdateService) Get(_ context.Context, _ string) (*fileee.Document, error) {
+	f.getCalled = true
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.getResult == nil {
+		return &fileee.Document{}, nil
+	}
+	// A copy, not the fixture's own pointer — the same reasoning
+	// fakeContactWriteService's own Get gives (write_test.go): a real
+	// HTTP round trip hands back a freshly decoded value too, and
+	// applyDocumentTitlePatch mutating a shared fixture pointer would
+	// make later assertions on getResult itself unreliable.
+	cp := *f.getResult
+	return &cp, nil
+}
+
+func (f *fakeDocumentUpdateService) Update(_ context.Context, doc *fileee.Document) (*fileee.Document, error) {
+	f.updateCalledWith = doc
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
+	if f.updateResult != nil {
+		return f.updateResult, nil
+	}
+	return doc, nil
+}
+
+// TestApplyDocumentTitlePatchAendertTitelNurWennGesetzt prueft die
+// Merge-Logik isoliert von jedem Backend-Aufruf: ein Patch ohne
+// gesetztes Title-Feld darf den bestehenden Titel nicht anfassen, ein
+// Patch mit gesetztem Title-Feld muss ihn aendern.
+func TestApplyDocumentTitlePatchAendertTitelNurWennGesetzt(t *testing.T) {
+	cur := &fileee.Document{ID: "doc-1", Attributes: fileee.DocumentAttributes{Title: "Alt"}}
+
+	applyDocumentTitlePatch(cur, updateDocumentInput{ID: "doc-1"})
+	if cur.Attributes.Title != "Alt" {
+		t.Errorf("Title = %q nach Patch ohne gesetztes Feld, want unveraendert %q", cur.Attributes.Title, "Alt")
+	}
+
+	applyDocumentTitlePatch(cur, updateDocumentInput{ID: "doc-1", Title: ptr("Neu")})
+	if cur.Attributes.Title != "Neu" {
+		t.Errorf("Title = %q nach Patch mit gesetztem Feld, want %q", cur.Attributes.Title, "Neu")
+	}
+}
+
+// TestUpdateDocumentPatchMerge is the task's own named case: Title set
+// → Get loads the current document, Update receives the merged
+// document carrying the NEW title, the output carries the ID, and the
+// new title appears — framed, in CallToolResult.Content, exactly the
+// way TestUpdateContactPatchMerge (write_test.go) already proves for a
+// contact's display name, NEVER as a field of the returned
+// updateDocumentOutput.
+func TestUpdateDocumentPatchMerge(t *testing.T) {
+	service := &fakeDocumentUpdateService{
+		getResult:    &fileee.Document{ID: "doc-1", Attributes: fileee.DocumentAttributes{Title: "Alter Titel"}},
+		updateResult: &fileee.Document{ID: "doc-1", Attributes: fileee.DocumentAttributes{Title: "Neuer Titel"}},
+	}
+	in := updateDocumentInput{ID: "doc-1", Title: ptr("Neuer Titel")}
+
+	result, out, err := updateDocumentFromService(context.Background(), service, in)
+	if err != nil {
+		t.Fatalf("updateDocumentFromService: %v", err)
+	}
+
+	if !service.getCalled {
+		t.Error("Get wurde nicht aufgerufen — Patch/Merge braucht das aktuelle Dokument zuerst")
+	}
+	if service.updateCalledWith == nil {
+		t.Fatal("Update wurde nicht aufgerufen")
+	}
+	if service.updateCalledWith.Attributes.Title != "Neuer Titel" {
+		t.Errorf("Update erhielt Title = %q, want %q (die angeforderte Aenderung)",
+			service.updateCalledWith.Attributes.Title, "Neuer Titel")
+	}
+
+	if out.ID != "doc-1" {
+		t.Errorf("out.ID = %q, want %q", out.ID, "doc-1")
+	}
+	// Struktur-Teil (CallToolResult.StructuredContent) bleibt frei vom
+	// fremdbestimmten Titel — dieselbe Pruefung wie
+	// TestUpdateContactPatchMerge (write_test.go) fuer den Anzeigenamen.
+	if strings.Contains(fmt.Sprint(out), "Neuer Titel") {
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Titel strukturiert — der gehoert "+
+			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+	}
+
+	if len(result.Content) != 1 {
+		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+	}
+	if !strings.Contains(text.Text, "Neuer Titel") {
+		t.Errorf("Content enthaelt nicht den neuen Titel %q: %q", "Neuer Titel", text.Text)
+	}
+	if !strings.Contains(text.Text, "<untrusted_external_content") {
+		t.Errorf("Content ist nicht als fremdbestimmter Text gerahmt (ADR-0013): %q", text.Text)
+	}
+}
+
+// TestUpdateDocumentTitleNilLaesstTitelUnveraendert is this task's own
+// required Gegenprobe: Title == nil (der Aufrufer setzt das Feld gar
+// nicht) darf den bestehenden Titel NICHT anfassen — weder loeschen
+// noch mit einem leeren Wert ueberschreiben. Update wird trotzdem
+// aufgerufen, dieselbe Semantik wie updateContactFromService (write.go)
+// sie fuer einen Patch ohne gesetzte Felder etabliert: der Aufruf
+// short-circuited nicht auf "nichts zu tun", er sendet den (in diesem
+// Fall unveraenderten) Ausgangszustand zurueck.
+func TestUpdateDocumentTitleNilLaesstTitelUnveraendert(t *testing.T) {
+	service := &fakeDocumentUpdateService{
+		getResult: &fileee.Document{ID: "doc-1", Attributes: fileee.DocumentAttributes{Title: "Bestehender Titel"}},
+	}
+	in := updateDocumentInput{ID: "doc-1"} // Title bewusst nicht gesetzt
+
+	result, out, err := updateDocumentFromService(context.Background(), service, in)
+	if err != nil {
+		t.Fatalf("updateDocumentFromService: %v", err)
+	}
+
+	if !service.getCalled {
+		t.Error("Get wurde nicht aufgerufen")
+	}
+	if service.updateCalledWith == nil {
+		t.Fatal("Update wurde nicht aufgerufen — dieselbe Semantik wie update_contact: auch ohne " +
+			"gesetztes Patch-Feld wird Update aufgerufen (write.go, updateContactFromService)")
+	}
+	if service.updateCalledWith.Attributes.Title != "Bestehender Titel" {
+		t.Errorf("Update erhielt Title = %q, want unveraendert %q — ein Title==nil-Patch darf den "+
+			"bestehenden Titel nicht anfassen", service.updateCalledWith.Attributes.Title, "Bestehender Titel")
+	}
+
+	if out.ID != "doc-1" {
+		t.Errorf("out.ID = %q, want %q", out.ID, "doc-1")
+	}
+
+	if len(result.Content) != 1 {
+		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+	}
+	if !strings.Contains(text.Text, "Bestehender Titel") {
+		t.Errorf("Content enthaelt nicht den unveraenderten Titel %q: %q", "Bestehender Titel", text.Text)
+	}
+}
+
+// TestUpdateDocumentFromServiceWickeltEinenNetzwerkfehlerBeimLadenMitDemWerkzeugnamenEin
+// ist die Network-Error-Haelfte der Mutations-Test-Pflicht: Get selbst
+// scheitert, Update wird gar nicht erst aufgerufen — der Ausgangszustand
+// des Dokuments bleibt unangetastet.
+func TestUpdateDocumentFromServiceWickeltEinenNetzwerkfehlerBeimLadenMitDemWerkzeugnamenEin(t *testing.T) {
+	networkErr := errors.New("dial tcp: connection refused")
+	service := &fakeDocumentUpdateService{getErr: networkErr}
+
+	_, out, err := updateDocumentFromService(context.Background(), service, updateDocumentInput{ID: "doc-1"})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !errors.Is(err, networkErr) {
+		t.Errorf("Fehler wickelt %v nicht ein, bekam: %v", networkErr, err)
+	}
+	if !strings.Contains(err.Error(), ToolUpdateDocument) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolUpdateDocument)
+	}
+	if service.updateCalledWith != nil {
+		t.Error("Update wurde aufgerufen, obwohl Get bereits scheiterte — keine Mutation ohne geladenen Ausgangszustand")
+	}
+	if (out != updateDocumentOutput{}) {
+		t.Errorf("out = %+v, want den Nullwert — kein Teilerfolg bei einem gescheiterten Get", out)
+	}
+}
+
+// TestUpdateDocumentFromServiceWickeltEinenGegenseitenFehlerBeimSpeichernMitDemWerkzeugnamenEin
+// ist die Backend-error(4xx/5xx)-Haelfte: Get liefert das aktuelle
+// Dokument, Update scheitert an der Gegenseite (fileee.APIError). Der
+// Auftrag ist eindeutig: "no partial-state claim" — das Ergebnis
+// behauptet an keiner Stelle, der Titel sei (teilweise) geaendert
+// worden.
+func TestUpdateDocumentFromServiceWickeltEinenGegenseitenFehlerBeimSpeichernMitDemWerkzeugnamenEin(t *testing.T) {
+	backendErr := &fileee.APIError{HTTPStatus: 409, Code: "CONFLICT", Message: "version mismatch"}
+	service := &fakeDocumentUpdateService{
+		getResult: &fileee.Document{ID: "doc-1", Attributes: fileee.DocumentAttributes{Title: "Titel"}},
+		updateErr: backendErr,
+	}
+
+	_, out, err := updateDocumentFromService(context.Background(), service, updateDocumentInput{ID: "doc-1", Title: ptr("Neu")})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("Fehler wickelt %v nicht ein, bekam: %v", backendErr, err)
+	}
+	if !strings.Contains(err.Error(), ToolUpdateDocument) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolUpdateDocument)
+	}
+	if !service.getCalled {
+		t.Error("Get wurde nicht aufgerufen")
+	}
+	if service.updateCalledWith == nil {
+		t.Fatal("Update wurde nicht aufgerufen, obwohl Get erfolgreich war")
+	}
+	if (out != updateDocumentOutput{}) {
+		t.Errorf("out = %+v, want den Nullwert — Update scheiterte, kein Teilerfolg zu behaupten", out)
+	}
+}
+
+func TestUpdateDocumentHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testing.T) {
+	handler := updateDocumentHandler(nil, discardLogger())
+
+	_, _, err := handler(context.Background(), nil, updateDocumentInput{ID: "  "})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !strings.Contains(err.Error(), ToolUpdateDocument) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolUpdateDocument)
+	}
+}
+
+// TestUpdateDocumentHandlerLaesstEineGueltigeKennungBisZuClientForDurch is
+// the Gegenprobe to the previous test — the same pattern
+// TestUploadDocumentHandlerLaesstGueltigesBase64BisZuClientForDurch
+// establishes above: a valid (non-empty) ID must NOT be rejected by the
+// pre-clientFor empty-ID check — the error it does get (clientFor
+// failing without a verified identity in ctx) must not mention "id" at
+// all, only that no identity was found.
+func TestUpdateDocumentHandlerLaesstEineGueltigeKennungBisZuClientForDurch(t *testing.T) {
+	handler := updateDocumentHandler(nil, discardLogger())
+
+	_, _, err := handler(context.Background(), nil, updateDocumentInput{ID: "doc-1"})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus (clientFor ohne verifizierte Identitaet muss scheitern)")
+	}
+	if strings.Contains(err.Error(), "must not be empty") {
+		t.Errorf("eine gueltige Kennung wurde faelschlich als leer abgewiesen: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no verified identity") {
+		t.Errorf("Fehlermeldung %q nennt nicht, dass keine verifizierte Identitaet im Kontext war", err.Error())
 	}
 }
