@@ -1,13 +1,15 @@
 // This file covers what AttachMCPSelector's closure (New, server.go) logs
-// through the diagnostic logger internal/diag builds — the resolved
-// capability set and tool count on a normal call, and the missing scope
-// name(s) when scopesSatisfied rejects a caller. Both driven through New()
-// itself (WithLogOutput redirects the logger to a buffer this file can
-// read) rather than calling the selector closure directly, since it is an
-// unexported func value with no name of its own to test against —
-// TestNewRegistersReadToolsUsableThroughTheRealWiring above is the
-// precedent for exercising New()'s own wiring end-to-end instead of
-// rebuilding it by hand.
+// through the diagnostic logger internal/diag builds — the missing scope
+// name(s) when scopesSatisfied rejects a caller. Since the swap to
+// access.AllowAll() (Task 1 of the tool-exposure-foundation refactor) the
+// closure no longer logs anything on the success path — there is no
+// per-caller capability set left to resolve and report, only the single
+// scope check below. Driven through New() itself (WithLogOutput redirects
+// the logger to a buffer this file can read) rather than calling the
+// selector closure directly, since it is an unexported func value with no
+// name of its own to test against — TestNewRegistersReadToolsUsableThroughTheRealWiring
+// above is the precedent for exercising New()'s own wiring end-to-end
+// instead of rebuilding it by hand.
 package server
 
 import (
@@ -77,61 +79,6 @@ func callAsSubject(
 	}
 	defer func() { _ = session.Close() }()
 	return session.CallTool(ctx, &mcp.CallToolParams{Name: tools.ToolListDocuments})
-}
-
-// TestSelectorLogsResolvedCapabilitiesAndToolCount is the acceptance test
-// for "die aufgeloeste Faehigkeitsmenge und die Werkzeuganzahl erscheinen"
-// (info level): a caller resolving to the default read-only ceiling gets
-// a log line naming "read" and a tool_count of 2 — exactly
-// len(tools.ReadToolKinds()), see toolCountFor's own doc comment on why
-// that count is never a hand-maintained literal.
-func TestSelectorLogsResolvedCapabilitiesAndToolCount(t *testing.T) {
-	fileeeMock := newFileeeMock(t)
-	cfg, idp := testConfigWithIDP(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	var buf bytes.Buffer
-	s, err := New(ctx, cfg,
-		WithLogOutput(&buf),
-		WithPoolOptions(
-			clientpool.WithClientOptions(fileee.WithBaseURL(fileeeMock), fileee.WithRateLimit(1000, 1000)),
-			clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
-				return fileee.NewFileSessionStore(filepath.Join(t.TempDir(), accountKey+".json"))
-			}),
-		))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	httpSrv := httptest.NewServer(s.Handler())
-	t.Cleanup(httpSrv.Close)
-
-	// "abc123" is testConfigWithIDP's MCP_ALLOWED_SUBJECTS entry.
-	res, err := callAsSubject(t, ctx, httpSrv, idp, "abc123", nil)
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("CallTool: IsError = true, content = %+v", res.Content)
-	}
-
-	var selectorLine map[string]any
-	for _, line := range decodeSelectorLogLines(t, &buf) {
-		if line["msg"] == "mcp selector: resolved capabilities" {
-			selectorLine = line
-			break
-		}
-	}
-	if selectorLine == nil {
-		t.Fatalf("no \"mcp selector: resolved capabilities\" line in the diagnostic log: %s", buf.String())
-	}
-	if selectorLine["capabilities"] != "read" {
-		t.Errorf(`capabilities = %v, want "read" (testConfigWithIDP's default FILEEE_CAPABILITIES)`, selectorLine["capabilities"])
-	}
-	if selectorLine["tool_count"] != float64(len(tools.ReadToolKinds())) {
-		t.Errorf("tool_count = %v, want %d", selectorLine["tool_count"], len(tools.ReadToolKinds()))
-	}
 }
 
 // TestSelectorLogsMissingScopeOnRejection is the acceptance test for "eine

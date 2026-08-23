@@ -3,8 +3,6 @@ package tools
 import (
 	"strings"
 	"testing"
-
-	"github.com/strausmann/gangway/access"
 )
 
 // minDescriptionLength ist die Untergrenze, ab der eine Beschreibung die vier
@@ -25,37 +23,42 @@ func TestJedesWerkzeugHatEineVollstaendigeBeschreibung(t *testing.T) {
 	}
 }
 
-func TestJedesWerkzeugIstAlsLesendEingestuft(t *testing.T) {
-	kinds := ReadToolKinds()
+// TestEveryMountedToolHasAnnotations replaces the two classification tests
+// the tool-exposure foundation refactor's Task 3 removed
+// (TestJedesWerkzeugIstAlsLesendEingestuft/
+// TestReadToolKindsEnthaeltKeineUnbekanntenNamen, which cross-checked the
+// now-deleted readToolNames/ReadToolKinds() KindRead map against this same
+// live tool set). It asserts the weaker property that classification map
+// leaves behind: every mounted tool still carries SOME Annotations value
+// at all — mcp.AddTool never defaults one in. Task 4 strengthens this to
+// checking Annotations.Title specifically, once every tool sets one.
+func TestEveryMountedToolHasAnnotations(t *testing.T) {
 	for _, tool := range registeredReadTools() {
-		kind, ok := kinds[tool.Name]
-		if !ok {
-			t.Errorf("Werkzeug %q fehlt in ReadToolKinds — Gangway stuft es dann als KindWrite ein und lehnt jeden Aufruf ab", tool.Name)
-			continue
-		}
-		if kind != access.KindRead {
-			t.Errorf("Werkzeug %q ist als %v eingestuft, erwartet KindRead", tool.Name, kind)
+		if tool.Annotations == nil {
+			t.Errorf("tool %q has no annotations", tool.Name)
 		}
 	}
 }
 
-func TestReadToolKindsEnthaeltKeineUnbekanntenNamen(t *testing.T) {
-	registered := make(map[string]bool)
+// TestEveryMountedToolHasATitle strengthens TestEveryMountedToolHasAnnotations
+// above (Task 3's own doc comment already announced this): per the MCP
+// connector standard, every tool needs a Title a client can show/gate on,
+// not merely a non-nil Annotations value. Task 4 (tool-exposure foundation
+// refactor) is what actually sets Title on every tool below — this test
+// fails until it does.
+func TestEveryMountedToolHasATitle(t *testing.T) {
 	for _, tool := range registeredReadTools() {
-		registered[tool.Name] = true
-	}
-	for name := range ReadToolKinds() {
-		if !registered[name] {
-			t.Errorf("ReadToolKinds nennt %q, aber kein Werkzeug dieses Namens wird angemeldet", name)
+		if tool.Annotations == nil || tool.Annotations.Title == "" {
+			t.Errorf("tool %q is missing a Title annotation", tool.Name)
 		}
 	}
 }
 
 // TestStammdatenWerkzeugeSindAngemeldet ist Aufgabe 3's eigener Test: alle
 // acht Stammdaten-Werkzeuge (vier Dienste, je Liste+Detail) muessen unter
-// RegisterRead auftauchen. Der Beschreibungs- und Einstufungstest oben
-// deckt sie automatisch mit ab, sobald sie hier registriert sind — dieser
-// Test prueft zusaetzlich explizit, dass keiner der acht Namen fehlt.
+// RegisterAll auftauchen. Der Beschreibungstest oben deckt sie
+// automatisch mit ab, sobald sie hier registriert sind — dieser Test
+// prueft zusaetzlich explizit, dass keiner der acht Namen fehlt.
 func TestStammdatenWerkzeugeSindAngemeldet(t *testing.T) {
 	want := []string{
 		"list_tags", "get_tag",

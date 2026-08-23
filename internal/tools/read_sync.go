@@ -133,11 +133,15 @@ func checkCursorEntityType(encoded string, want string) (fileee.Cursor, error) {
 type syncDescriptor[T any, S any] struct {
 	// SyncName is the registered tool name.
 	SyncName string
+	// SyncTitle is this tool's Annotations.Title — the short, human-facing
+	// name a client shows or gates on (Task 4, the MCP connector
+	// standard), independent of SyncDescription below.
+	SyncTitle string
 	// SyncDescription is this tool's Description, held to the same
 	// four-part standard (what, returns, when, does-not) and minimum
-	// length descriptions_test.go checks for every tool RegisterRead
+	// length descriptions_test.go checks for every tool RegisterAll
 	// mounts — checked there since registerSyncTools is wired into
-	// RegisterRead (read.go).
+	// RegisterAll (read.go).
 	SyncDescription string
 	// EntityType must match the library's own convention name for this
 	// resource (e.g. "Tag", "Company", "Contact" — see the NewCursor calls
@@ -214,7 +218,7 @@ func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.SyncName,
 		Description: d.SyncDescription,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.SyncTitle},
 	}, genericSyncHandler(p, logger, d))
 }
 
@@ -400,7 +404,8 @@ type syncConversationSummary struct {
 
 func tagSyncDescriptor() syncDescriptor[fileee.Tag, syncTagSummary] {
 	return syncDescriptor[fileee.Tag, syncTagSummary]{
-		SyncName: ToolSyncTags,
+		SyncName:  ToolSyncTags,
+		SyncTitle: "Sync tags",
 		SyncDescription: "Incrementally sync the tags defined in the calling user's Fileee account. " +
 			"Returns tags changed or added since the cursor you pass in (every tag on the first call), " +
 			"tag IDs deleted since then, and a new cursor to pass to the next call. Use it to keep a " +
@@ -416,7 +421,8 @@ func tagSyncDescriptor() syncDescriptor[fileee.Tag, syncTagSummary] {
 
 func companySyncDescriptor() syncDescriptor[fileee.Company, syncCompanySummary] {
 	return syncDescriptor[fileee.Company, syncCompanySummary]{
-		SyncName: ToolSyncCompanies,
+		SyncName:  ToolSyncCompanies,
+		SyncTitle: "Sync companies",
 		SyncDescription: "Incrementally sync the companies in the calling user's Fileee account. " +
 			"Returns companies changed or added since the cursor you pass in (every company on the " +
 			"first call) with structured metadata only, company IDs deleted since then, and a new " +
@@ -445,7 +451,8 @@ func companySyncDescriptor() syncDescriptor[fileee.Company, syncCompanySummary] 
 
 func documentTypeSyncDescriptor() syncDescriptor[fileee.DocumentType, syncDocumentTypeSummary] {
 	return syncDescriptor[fileee.DocumentType, syncDocumentTypeSummary]{
-		SyncName: ToolSyncDocumentTypes,
+		SyncName:  ToolSyncDocumentTypes,
+		SyncTitle: "Sync document types",
 		SyncDescription: "Incrementally sync the document types defined in the calling user's Fileee " +
 			"account. Returns document types changed or added since the cursor you pass in (every " +
 			"document type on the first call), IDs deleted since then, and a new cursor to pass to the " +
@@ -465,7 +472,8 @@ func documentTypeSyncDescriptor() syncDescriptor[fileee.DocumentType, syncDocume
 
 func documentTypeSchemeSyncDescriptor() syncDescriptor[fileee.DocumentTypeScheme, syncDocumentTypeSchemeSummary] {
 	return syncDescriptor[fileee.DocumentTypeScheme, syncDocumentTypeSchemeSummary]{
-		SyncName: ToolSyncDocumentTypeSchemes,
+		SyncName:  ToolSyncDocumentTypeSchemes,
+		SyncTitle: "Sync document type schemes",
 		SyncDescription: "Incrementally sync the document type field schemas in the calling user's " +
 			"Fileee account. Returns schemas changed or added since the cursor you pass in (every " +
 			"schema on the first call), schema IDs deleted since then, and a new cursor to pass to the " +
@@ -486,7 +494,8 @@ func documentTypeSchemeSyncDescriptor() syncDescriptor[fileee.DocumentTypeScheme
 
 func contactSyncDescriptor() syncDescriptor[fileee.Contact, syncContactSummary] {
 	return syncDescriptor[fileee.Contact, syncContactSummary]{
-		SyncName: ToolSyncContacts,
+		SyncName:  ToolSyncContacts,
+		SyncTitle: "Sync contacts",
 		SyncDescription: "Incrementally sync the contacts in the calling user's Fileee account. " +
 			"Returns contacts changed or added since the cursor you pass in (every contact on the " +
 			"first call) with structured metadata only, contact IDs deleted since then, and a new " +
@@ -515,7 +524,8 @@ func contactSyncDescriptor() syncDescriptor[fileee.Contact, syncContactSummary] 
 
 func reminderSyncDescriptor() syncDescriptor[fileee.Reminder, syncReminderSummary] {
 	return syncDescriptor[fileee.Reminder, syncReminderSummary]{
-		SyncName: ToolSyncReminders,
+		SyncName:  ToolSyncReminders,
+		SyncTitle: "Sync reminders",
 		SyncDescription: "Incrementally sync the reminders in the calling user's Fileee account. " +
 			"Returns reminders changed or added since the cursor you pass in (every reminder on the " +
 			"first call) with structured metadata only, reminder IDs deleted since then, and a new " +
@@ -537,7 +547,8 @@ func reminderSyncDescriptor() syncDescriptor[fileee.Reminder, syncReminderSummar
 
 func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConversationSummary] {
 	return syncDescriptor[fileee.Conversation, syncConversationSummary]{
-		SyncName: ToolSyncConversations,
+		SyncName:  ToolSyncConversations,
+		SyncTitle: "Sync conversations",
 		SyncDescription: "Incrementally sync the conversations in the calling user's Fileee account. " +
 			"Returns conversations changed or added since the cursor you pass in (every conversation " +
 			"on the first call) with structured metadata only, conversation IDs deleted since then, " +
@@ -563,15 +574,15 @@ func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConver
 }
 
 // registerSyncTools mounts all seven sync tools onto s. Split out from
-// RegisterRead itself (read.go) the same way registerReferenceTools and
-// registerPeopleTools will be (Aufgabe 3/4); RegisterRead calls this
+// RegisterAll itself (read.go) the same way registerReferenceTools and
+// registerPeopleTools will be (Aufgabe 3/4); RegisterAll calls this
 // directly (read.go). This file's own tests also call it directly, without
-// going through RegisterRead, to keep those tests independent of the
-// unrelated tools RegisterRead mounts.
+// going through RegisterAll, to keep those tests independent of the
+// unrelated tools RegisterAll mounts.
 //
 // logger is threaded straight through to every registerSync call — the
-// same logger RegisterRead itself received, never a fresh one built here
-// (see RegisterRead's own doc comment, read.go).
+// same logger RegisterAll itself received, never a fresh one built here
+// (see RegisterAll's own doc comment, read.go).
 func registerSyncTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	registerSync(s, p, logger, tagSyncDescriptor())
 	registerSync(s, p, logger, companySyncDescriptor())

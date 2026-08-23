@@ -75,13 +75,11 @@ type toolCallLimiter struct {
 }
 
 // newToolCallLimiter baut den Limiter aus cfg. Er MUSS genau einmal in New()
-// gebaut und an jede von buildInstances gebaute *mcp.Server-Instanz
-// weitergereicht werden, NIE einer je Instanz: die globale Rate und
-// MaxInflight sind serverweite Zusicherungen — mit einem Limiter je Instanz
-// haette ein Anrufer, dessen Berechtigungsmenge zwischen zwei Aufrufen
-// wechselt (z. B. weil sich der Rollen-Claim im Token aendert), bei jedem
-// Wechsel ein frisches Kontingent, und die globale Rate waere in Wahrheit
-// so viele getrennte globale Raten wie es Berechtigungsmengen gibt.
+// gebaut und an die eine *mcp.Server-Instanz weitergereicht werden, die
+// RegisterAll dort mit allen Werkzeugen bestueckt (ADR-0018: eine einzige
+// Instanz fuer jeden authentifizierten Aufrufer) — die globale Rate und
+// MaxInflight sind serverweite Zusicherungen, die nur bei genau einem
+// gemeinsam genutzten Limiter etwas bedeuten.
 func newToolCallLimiter(cfg *config.Config) *toolCallLimiter {
 	return &toolCallLimiter{
 		global:          rate.NewLimiter(rate.Limit(cfg.RateGlobalRPS), cfg.RateGlobalBurst),
@@ -147,7 +145,7 @@ func (l *toolCallLimiter) acquire(subject string) (release func(), kind errKind)
 // Fileee-Zugriff aus, eine Begrenzung dort schuetzt nichts.
 //
 // Muss VOR Gangways eigener Autorisierungs-Middleware auf der Instanz
-// registriert werden (siehe New(): buildInstances laeuft vor
+// registriert werden (siehe New(): AddReceivingMiddleware laeuft vor
 // AttachMCPSelector) — mcp.Server.AddReceivingMiddleware wickelt jede
 // spaeter registrierte Middleware AUSSEN um die vorherigen (siehe deren
 // Doc-Kommentar: "Middleware is applied from right to left, so that the
@@ -170,8 +168,9 @@ func (l *toolCallLimiter) middleware() mcp.Middleware {
 			// verifizierte Identitaet in ctx abgelegt — ein leeres Subject
 			// ist praktisch unerreichbar. Der leere String bleibt trotzdem
 			// ein gueltiger, wenn auch entwerteter Map-Schluessel: reine
-			// Verteidigung, kein regulaerer Pfad (derselbe Grundsatz wie
-			// bei capabilitiesFor/scopesSatisfied fuer id == nil).
+			// Verteidigung, kein regulaerer Pfad (derselbe Grundsatz wie bei
+			// scopesSatisfied fuer id == nil, siehe dessen Doc-Kommentar in
+			// scopes.go).
 			var subject string
 			if id, ok := serve.IdentityFrom(ctx); ok && id != nil {
 				subject = id.Subject

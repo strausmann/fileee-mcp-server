@@ -4,7 +4,7 @@
 
 Ein **inoffizieller** MCP-Server für [Fileee](https://www.fileee.com), der die eigenen Dokumente für AI-Clients zugänglich macht — als lokaler Server über einen statischen Token oder als **Remote-Connector mit OAuth-Anmeldung**, etwa in der Claude.ai-Web-UI.
 
-> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die Capability-Gruppe `read` ist vollständig: **32 lesende Werkzeuge**, siehe [`docs/tools.md`](docs/tools.md). Die Capability-Gruppen `write`, `share` und `destructive` entstehen in den folgenden Umsetzungsschritten.
+> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die lesenden Werkzeuge sind vollständig angemeldet: **32 fileee-Werkzeuge** (siehe [`docs/tools.md`](docs/tools.md)) plus **4 Betriebswerkzeuge** (`get_runtime_stats`, `get_tool_manifest`, `self_check`, `whoami`) — **36 Werkzeuge** insgesamt. Schreibende, teilende und löschende Werkzeuge entstehen in den folgenden Umsetzungsschritten.
 
 Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/strausmann/go-fileee) und ist damit Geschwisterprojekt von [`strausmann/fileee-server`](https://github.com/strausmann/fileee-server) (REST-API für n8n/CI). Der Unterschied: `fileee-server` kennt genau ein Fileee-Konto und ein statisches Token; dieser Server bindet die **Identität des anfragenden Benutzers** an ein Fileee-Konto.
 
@@ -16,7 +16,7 @@ Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/straus
 - **OAuth 2.1 als Resource Server** nach [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) — der Identity Provider ist frei wählbar und reine Konfiguration
 - **Statisches Bearer-Token** als Alternative, wenn kein IdP vorhanden ist
 - **Ein oder mehrere Fileee-Konten**, zugeordnet über einen signierten Claim aus dem Token
-- **Konfigurierbarer Funktionsumfang** über Capability-Gruppen — nicht freigeschaltete Tools werden gar nicht erst registriert
+- **Alle Werkzeuge angemeldet, Freigabe je Werkzeug beim Client** — jedes Werkzeug trägt einen Titel und die zutreffenden `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`); Always allow / Needs approval / Blocked entscheidet der Client und dessen Benutzer, nicht der Server (siehe [ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md))
 
 ## Drei Betriebsarten
 
@@ -31,7 +31,6 @@ FILEEE_MODE=single
 FILEEE_USERNAME=…
 FILEEE_PASSWORD=…
 FILEEE_TOTP_SEED=…        # nur bei aktiver Zwei-Faktor-Authentifizierung
-FILEEE_CAPABILITIES=read
 ```
 
 Drei Pflichtwerte, kein IdP, kein Reverse Proxy nötig. Für Claude Code lokal oder für Automatisierung im eigenen Netz.
@@ -97,54 +96,38 @@ FILEEE_ACCOUNTS=alice,bob
 FILEEE_ACCOUNT_ALICE_USERNAME=…
 FILEEE_ACCOUNT_ALICE_PASSWORD=…
 FILEEE_ACCOUNT_ALICE_SUBJECTS=alice@example.com
-FILEEE_ACCOUNT_ALICE_CAPABILITIES=read
 FILEEE_ACCOUNT_BOB_USERNAME=…
 …
 ```
 
 Die Zuordnung läuft über einen konfigurierbaren Claim aus dem Token (Default `sub`). Mehrere Identitäten dürfen auf **ein** Fileee-Konto zeigen; eine Identität auf zwei Konten ist ein Startup-Fehler, kein „first match wins". Ein unbekanntes Subject bekommt `403` — es gibt keinen Fallback auf ein Standardkonto.
 
-## Funktionsumfang festlegen
+## Funktionsumfang
 
-```dotenv
-FILEEE_CAPABILITIES=read                              # Default
-FILEEE_CAPABILITIES=read,write
-FILEEE_CAPABILITIES=read,write,share
-FILEEE_CAPABILITIES=read,write,share,destructive      # zusätzlich FILEEE_ALLOW_DESTRUCTIVE=true
-```
+Der Server registriert **alle** Werkzeuge für jeden authentifizierten Aufrufer — es gibt keine
+serverseitige Einschränkung mehr, welche Werkzeuge ein Client zu sehen bekommt (siehe
+[ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)). Jedes Werkzeug trägt einen
+sprechenden Titel und die zutreffenden Hinweise (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`) — die Freigabe je Werkzeug (Always allow / Needs approval / Blocked) trifft der
+**Client und dessen Benutzer**, nicht der Server.
 
-| Gruppe | Umfang |
-|---|---|
-| `read` | Suche, Dokument-Metadaten, OCR-Text, PDF-/Seiten-Download, Stammdaten, Kontakte/Erinnerungen/Boxen/Konversationen lesen |
-| `write` | Upload, Metadaten ändern, Erinnerungen und Kontakte anlegen/ändern, Box-Zuordnung |
-| `share` | Freigabe-Links, ZIP-Export, Konversations-Nachrichten und -Teilnehmer |
-| `destructive` | Hard-DELETE von Dokumenten, Kontakten und Erinnerungen — **doppeltes Gate** |
-
-Nicht freigeschaltete Tools werden dem Client gar nicht erst angeboten.
-
-### Wer wie viel darf
-
-Der Umfang kann aus drei Quellen kommen. Es gilt eine feste Rangfolge, keine Vermischung:
-
-1. **`FILEEE_CAPABILITIES` ist die Obergrenze.** Keine andere Quelle schaltet darüber hinaus etwas frei.
-2. **Der Identity Provider entscheidet**, sofern `MCP_OIDC_CAPABILITY_CLAIM` gesetzt ist — Entra über App-Rollen (`roles`), Authentik über Gruppen (`groups`). Damit werden Berechtigungen dort gepflegt, wo Benutzer ohnehin verwaltet werden. Für die meisten Setups genügen zwei Stufen: `read` und `write`.
-3. **Sonst** gilt `FILEEE_ACCOUNT_<KEY>_CAPABILITIES`, sonst die Obergrenze.
-
-Ist der Claim konfiguriert, der Benutzer hat aber keine passende Rolle oder Gruppe, bekommt er **`read`** — nicht den konfigurierten Standardumfang. Andernfalls wäre eine vergessene Zuweisung eine stille Rechteausweitung.
-
-`destructive` ist über keinen Claim erreichbar und bleibt eine bewusste Entscheidung am Server.
-
-Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die zwei Schalter, ein Audit-Log vor jeder Löschung und die Regel, dass eine zu löschende ID aus einer vorangegangenen Leseantwort derselben geprüften Identität stammen muss — gebunden an `serve.IdentityFrom(ctx)`, nicht an die MCP-Sitzung, die es unter der erzwungenen Statelessness ohnehin nicht über den einzelnen Request hinaus gibt.
+Destruktive Operationen (Hard-DELETE, unwiderruflich, kein Papierkorb) sind zusätzlich über ein
+serverseitiges Audit-Log vor jeder Löschung abgesichert und daran gebunden, dass die zu löschende
+ID aus einer vorangegangenen Leseantwort derselben geprüften Identität stammt — gebunden an
+`serve.IdentityFrom(ctx)`, nicht an die MCP-Sitzung, die es unter der erzwungenen Statelessness
+ohnehin nicht über den einzelnen Request hinaus gibt.
 
 ## Werkzeuge
 
-Der Katalog entsteht schrittweise. Die Capability-Gruppe `read` ist vollständig — **32 Werkzeuge**
-über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dokumenttyp-Schemata), Kontakte/
-Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
+Der Katalog entsteht schrittweise. Die lesenden Werkzeuge sind vollständig angemeldet — **32
+Werkzeuge** über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dokumenttyp-Schemata),
+Kontakte/Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
 Seiten-OCR und Kontostand — vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert,
 inklusive der Absicherung gegen präparierte, fremdbestimmte Inhalte (Dokumenttitel, Firmen-/
-Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text). `write`, `share` und
-`destructive` entstehen in den folgenden Umsetzungsschritten.
+Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text). Schreibende, teilende
+und löschende Werkzeuge entstehen in den folgenden Umsetzungsschritten — jedes davon wird, sobald
+es existiert, ebenso angemeldet und über seine `ToolAnnotations` beschrieben (siehe
+[ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)).
 
 ## Sicherheit
 

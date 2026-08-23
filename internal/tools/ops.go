@@ -47,13 +47,13 @@ type toolCallStats struct {
 
 // runtimeStats is the process-wide, concurrency-safe call counter behind
 // get_runtime_stats — a package-level var, not a struct threaded through
-// every handler, because it belongs to the PROCESS, not to any one
-// *mcp.Server instance: the server holds up to sixteen such instances,
-// one per reachable capability combination (server.go's buildInstances,
-// ADR-0011), but every one of their handlers funnels through the same
-// logToolEnd regardless of which instance served a given call. One mutex
-// around one map is simplest to reason about at the call volume a single
-// MCP server actually sees — no need for per-tool locks or atomics.
+// every handler, because it belongs to the PROCESS, not to the
+// *mcp.Server instance itself: server.go mounts exactly one such instance
+// now (ADR-0018, replacing ADR-0011's per-capability-set instance
+// catalog this comment used to describe), and every handler funnels
+// through the same logToolEnd regardless. One mutex around one map is
+// simplest to reason about at the call volume a single MCP server
+// actually sees — no need for per-tool locks or atomics.
 var runtimeStats = struct {
 	mu     sync.Mutex
 	byTool map[string]*toolCallStats
@@ -163,16 +163,31 @@ func getRuntimeStatsHandler(logger *slog.Logger) mcp.ToolHandlerFor[getRuntimeSt
 // --- get_tool_manifest -------------------------------------------------
 
 // toolManifestEntry is get_tool_manifest's per-tool entry. Kind is
-// access.ToolKind's own string value ("read" today — Teil B, a later
-// phase of this project, would add "write"), taken from ReadToolKinds()
-// rather than re-derived here, so this can never disagree with what
-// Gangway's own authorization middleware actually enforces (server.go,
-// serve.WithToolKinds(tools.ReadToolKinds())).
+// always "read" today: every tool RegisterAll mounts is a strict read,
+// and since the tool-exposure foundation refactor's Task 1
+// (access.AllowAll(), one instance, no per-capability-set routing) this
+// server no longer distinguishes KindRead/KindWrite for authorization at
+// all — the readToolNames/ReadToolKinds() classification Task 3 removed
+// was that distinction's last remnant. Kind stays a literal rather than
+// being dropped so a caller comparing manifests across a future write
+// tool's introduction sees the field's meaning change, not the field
+// disappear.
+//
+// Title mirrors the tool's own mcp.ToolAnnotations.Title (registerOpsTools
+// and every other registration site set one) — every currently mounted
+// tool has one (TestEveryMountedToolHasATitle). getToolManifestHandler
+// falls back to the tool's Name if a future tool were ever mounted
+// without a Title, so this field is never empty even then.
 type toolManifestEntry struct {
 	Name        string `json:"name"`
+	Title       string `json:"title"`
 	Description string `json:"description"`
 	Kind        string `json:"kind"`
 }
+
+// toolManifestKind is every currently-registered tool's Kind value in
+// get_tool_manifest's output — see toolManifestEntry's doc comment.
+const toolManifestKind = "read"
 
 // getToolManifestInput are get_tool_manifest's parameters — deliberately
 // empty, same reasoning as getRuntimeStatsInput above: the manifest
@@ -194,7 +209,7 @@ type getToolManifestOutput struct {
 //
 // Because get_tool_manifest and get_runtime_stats are themselves
 // registered on s before any request is ever served (registerOpsTools
-// runs inside RegisterRead, before s.Connect is ever called for a real
+// runs inside RegisterAll, before s.Connect is ever called for a real
 // caller), this round trip counts both of them automatically — no
 // separate self-reference to remember, unlike Dockhand's hand-maintained
 // META_TOOL_NAMES list, which stayed a manually kept constant even after
@@ -207,7 +222,7 @@ type getToolManifestOutput struct {
 // that may already have live client sessions attached, opened from
 // inside one of that server's own handlers. TestGetToolManifest...
 // (ops_test.go) is that verification: it drives this function through a
-// live handler call against a server RegisterRead already fully wired,
+// live handler call against a server RegisterAll already fully wired,
 // and the result matches an independently taken toolNamesOf() reading of
 // the same server exactly. No problem was found.
 func listMountedTools(ctx context.Context, s *mcp.Server) ([]*mcp.Tool, error) {
@@ -233,7 +248,7 @@ func listMountedTools(ctx context.Context, s *mcp.Server) ([]*mcp.Tool, error) {
 }
 
 // getToolManifestHandler resolves get_tool_manifest. s is the same
-// *mcp.Server RegisterRead was given to mount every tool onto — this
+// *mcp.Server RegisterAll was given to mount every tool onto — this
 // handler closes over it so listMountedTools always asks the live
 // instance, never a separately built copy that could drift from it.
 //
@@ -251,14 +266,20 @@ func getToolManifestHandler(s *mcp.Server, logger *slog.Logger) mcp.ToolHandlerF
 			return nil, getToolManifestOutput{}, err
 		}
 
-		kinds := ReadToolKinds()
 		out := getToolManifestOutput{Total: len(mounted), Tools: make([]toolManifestEntry, 0, len(mounted))}
 		for _, tool := range mounted {
-			kind := ""
-			if k, ok := kinds[tool.Name]; ok {
-				kind = string(k)
+			// TestEveryMountedToolHasATitle (descriptions_test.go) guarantees every
+			// currently mounted tool sets Annotations.Title — this branch is
+			// unreachable today. It stays as a defensive fallback to tool.Name
+			// rather than an empty string so the manifest's own promise ("every
+			// entry includes ... title") cannot be silently violated by a future
+			// tool that skips that test's coverage (e.g. one registered on a
+			// different *mcp.Server never exercised by registeredReadTools()).
+			title := tool.Name
+			if tool.Annotations != nil && tool.Annotations.Title != "" {
+				title = tool.Annotations.Title
 			}
-			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Description: tool.Description, Kind: kind})
+			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Title: title, Description: tool.Description, Kind: toolManifestKind})
 		}
 		sort.Slice(out.Tools, func(i, j int) bool { return out.Tools[i].Name < out.Tools[j].Name })
 
@@ -524,7 +545,7 @@ func getSelfCheckHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandle
 }
 
 // registerOpsTools mounts get_runtime_stats, get_tool_manifest and
-// self_check onto s — called once from RegisterRead (read.go).
+// self_check onto s — called once from RegisterAll (read.go).
 func registerOpsTools(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetRuntimeStats,
@@ -535,21 +556,21 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger
 			"to check whether a particular tool keeps failing, or whether the server is being used " +
 			"at all. It does not persist across a restart, does not break results down by caller, " +
 			"and does not include the outcome of the very call that returned this snapshot.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Runtime stats"},
 	}, getRuntimeStatsHandler(logger))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetToolManifest,
-		Description: "List every tool actually mounted on the server instance answering this call, " +
-			"with each tool's name, description and permission group. Returns the total count and " +
-			"one entry per tool, always including get_runtime_stats and get_tool_manifest itself. " +
-			"Use it to see exactly which tools the calling identity's server instance offers right " +
-			"now, for example after a deployment. It does not report tools mounted on a different " +
-			"permission-group instance than the one serving this call — the server builds one such " +
-			"instance per reachable capability combination, and each caller only ever reaches its " +
-			"own — and it does not claim this set is everything this server will ever offer, only " +
-			"what is registered in the build answering this particular call.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Description: "List every tool actually mounted on this server, with each tool's name, " +
+			"title, description and kind. Returns the total count and one entry per tool, always " +
+			"including get_runtime_stats and get_tool_manifest itself. There is one server " +
+			"instance and every tool on it is available to every authenticated caller that " +
+			"satisfies the required scopes — deciding which of those tools a particular caller " +
+			"should actually use is the client's responsibility, not something this server " +
+			"enforces per tool. Use it to see the server's full, current tool set, for example " +
+			"after a deployment, and it does not claim this set is everything this server will " +
+			"ever offer, only what is registered right now.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Tool manifest"},
 	}, getToolManifestHandler(s, logger))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -567,7 +588,7 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger
 			"tool call's own login for the same account either — reusing the cached result for " +
 			"calls inside that window, and it never returns the counterparty's own error text — " +
 			"only this fixed classification.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Self check"},
 	}, getSelfCheckHandler(p, logger))
 
 	registerWhoami(s, p, info, logger)

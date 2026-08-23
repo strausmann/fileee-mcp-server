@@ -71,11 +71,16 @@ type readServiceDescriptor[T any, S any] struct {
 	// ListName and GetName are the registered tool names.
 	ListName string
 	GetName  string
+	// ListTitle and GetTitle are each tool's Annotations.Title — the
+	// short, human-facing name a client shows or gates on (Task 4, the
+	// MCP connector standard), independent of the Description text below.
+	ListTitle string
+	GetTitle  string
 	// ListDescription and GetDescription are each tool's Description, held
 	// to the same four-part standard (what, returns, when, does-not) and
-	// minimum length descriptions_test.go checks for RegisterRead's own
+	// minimum length descriptions_test.go checks for RegisterAll's own
 	// tools — checked there again once Aufgabe 3/4 wire a service through
-	// this helper into RegisterRead.
+	// this helper into RegisterAll.
 	ListDescription string
 	GetDescription  string
 	// Service resolves this descriptor's ReadService[T] from an
@@ -178,7 +183,7 @@ type genericGetOutput[S any] struct {
 
 // registerReadService mounts d.ListName and d.GetName onto s, resolving
 // their Fileee connection through p on every call (see clientFor) — the
-// same pattern RegisterRead uses for list_documents/search_documents,
+// same pattern RegisterAll uses for list_documents/search_documents,
 // generalized over any fileee.ReadService[T].
 //
 // logger receives d.ListName's and d.GetName's diagnostic log exactly the
@@ -186,7 +191,7 @@ type genericGetOutput[S any] struct {
 // logToolStart/logToolEnd) — passed straight through to
 // genericListHandler/genericGetHandler, never rebuilt here. Aufgabe 2c
 // closed the gap where this parameter did not exist yet (#45); see this
-// function's own callers for why threading it through matters (RegisterRead's
+// function's own callers for why threading it through matters (RegisterAll's
 // own doc comment, read.go).
 //
 // It panics — like mcp.AddTool itself already does for a malformed tool —
@@ -199,13 +204,13 @@ func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.ListName,
 		Description: d.ListDescription,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.ListTitle},
 	}, genericListHandler(p, logger, d))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.GetName,
 		Description: d.GetDescription,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.GetTitle},
 	}, genericGetHandler(p, logger, d))
 }
 

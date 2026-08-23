@@ -374,7 +374,7 @@ func documentPageOCRFromService(ctx context.Context, service documentBinaryServi
 }
 
 // registerBinaryTools mounts get_document_pdf, get_page_image and
-// get_page_ocr onto s — called once from RegisterRead (read.go).
+// get_page_ocr onto s — called once from RegisterAll (read.go).
 func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetDocumentPDF,
@@ -385,7 +385,7 @@ func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger)
 			"itself, not just its metadata. It does not return a page's plain image (use " +
 			"get_page_image for a page-by-page fallback) and it does not return the document's " +
 			"OCR text (use get_page_ocr).",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get document PDF"},
 	}, getDocumentPDFHandler(p, logger))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -397,7 +397,7 @@ func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger)
 			"stale version returns a stale or missing image. Use it only when get_document_pdf " +
 			"is not applicable. It does not return the document's OCR text and does not return " +
 			"more than one page per call.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get page image"},
 	}, getPageImageHandler(p, logger))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -410,6 +410,6 @@ func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger)
 			"Use it when you need a page's actual wording, not just its existence or image. It " +
 			"does not return the text under any structured field, and it does not search by " +
 			"content.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get page OCR text"},
 	}, getPageOCRHandler(p, logger))
 }

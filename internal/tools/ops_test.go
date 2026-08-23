@@ -217,11 +217,11 @@ func TestRegisterOpsToolsMeldetGetRuntimeStatsAn(t *testing.T) {
 // Referenzzahl kommt hier bewusst aus einem UNABHAENGIGEN zweiten
 // Hin-und-Rueckl-Lauf (toolNamesOf, dieselbe Maschinerie wie
 // registeredReadTools() in names.go) -- nicht aus der Anzahl der
-// AddTool-Aufrufe in RegisterRead abgezaehlt, sonst wuerde der Test genau
+// AddTool-Aufrufe in RegisterAll abgezaehlt, sonst wuerde der Test genau
 // denselben blinden Fleck teilen, den er aufdecken soll.
 func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	want := toolNamesOf(t, s)
 	if !want[ToolGetToolManifest] {
@@ -265,7 +265,7 @@ func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind
 
 func TestGetToolManifestWaechstMitNeuAngemeldetenWerkzeugenMit(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, before, err := handler(context.Background(), nil, getToolManifestInput{})
@@ -304,10 +304,48 @@ func TestGetToolManifestOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 }
 
 func TestToolManifestEntryFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"Name", "Description", "Kind"}
+	want := []string{"Name", "Title", "Description", "Kind"}
 	got := fieldNames(toolManifestEntry{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("toolManifestEntry-Feldliste = %v, want %v", got, want)
+	}
+}
+
+// TestGetToolManifestEntryTraegtDenTitelDesWerkzeugs belegt, dass Title
+// im Verzeichnis nicht nur als Feld existiert, sondern tatsaechlich mit
+// dem Wert befuellt wird, den das jeweilige Werkzeug selbst ueber
+// mcp.ToolAnnotations.Title traegt -- Aufgabe C2s Description verspricht
+// "name, title, description and kind" je Eintrag; ohne diesen Test waere
+// das Feld leer geblieben und das Versprechen falsch, obwohl
+// TestToolManifestEntryFeldlisteIstAbgeschlossen (nur Feldnamen, keine
+// Werte) bereits gruen war.
+func TestGetToolManifestEntryTraegtDenTitelDesWerkzeugs(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	handler := getToolManifestHandler(s, discardLogger())
+
+	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
+	if err != nil {
+		t.Fatalf("getToolManifestHandler: %v", err)
+	}
+
+	byName := make(map[string]toolManifestEntry, len(out.Tools))
+	for _, entry := range out.Tools {
+		byName[entry.Name] = entry
+	}
+
+	entry, ok := byName[ToolGetToolManifest]
+	if !ok {
+		t.Fatal("get_tool_manifest fehlt im eigenen Verzeichnis")
+	}
+	if entry.Title != "Tool manifest" {
+		t.Errorf("Title von %q = %q, want %q (aus mcp.ToolAnnotations.Title, registerOpsTools)", ToolGetToolManifest, entry.Title, "Tool manifest")
+	}
+
+	for _, tool := range out.Tools {
+		if tool.Title == "" {
+			t.Errorf("Werkzeug %q hat keinen Titel im Verzeichnis -- jedes ueber RegisterAll angemeldete Werkzeug setzt mcp.ToolAnnotations.Title (ADR-0018)", tool.Name)
+		}
 	}
 }
 
@@ -319,14 +357,15 @@ func TestGetToolManifestInputNimmtKeineParameterEntgegen(t *testing.T) {
 }
 
 // TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug belegt, dass
-// jeder Eintrag eine nicht-leere Kind-Angabe traegt -- ReadToolKinds()
-// deckt heute jedes ueber RegisterRead angemeldete Werkzeug ab
-// (descriptions_test.go's eigener TestJedesWerkzeugIstAlsLesendEingestuft
-// wuerde sonst schon fehlschlagen), get_tool_manifest darf diese
-// Information nicht verlieren.
+// jeder Eintrag eine nicht-leere Kind-Angabe traegt -- toolManifestKind
+// (ops.go) setzt sie heute fuer jedes ueber RegisterAll angemeldete
+// Werkzeug fest auf "read" (die readToolNames/ReadToolKinds()-
+// Einstufung, die diesen Wert frueher lieferte, ist mit Task 3 des
+// tool-exposure-foundation-Umbaus entfallen), get_tool_manifest darf
+// diese Information nicht verlieren.
 func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, out, err := handler(context.Background(), nil, getToolManifestInput{})

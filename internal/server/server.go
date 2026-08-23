@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/config"
 	"github.com/strausmann/fileee-mcp-server/internal/diag"
 	"github.com/strausmann/fileee-mcp-server/internal/tools"
+	"github.com/strausmann/gangway/access"
 	"github.com/strausmann/gangway/identity"
 	"github.com/strausmann/gangway/serve"
 	"github.com/strausmann/go-fileee/fileee"
@@ -115,14 +115,6 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	}
 	publicBaseURL := strings.TrimSuffix(cfg.ResourceURL, mcpSuffix)
 
-	// tools.ReadToolKinds() muss hier — beim Bau von *serve.Server — ueber
-	// serve.WithToolKinds gesetzt werden, NICHT irgendwann spaeter: Gangways
-	// Tool-Autorisierungs-Middleware behandelt jedes Werkzeug, das in dieser
-	// Zuordnung fehlt, als "write" (siehe gangway/serve, toolMiddleware) —
-	// und der Default-Decider (access.NewGrid) verweigert "write" ohne
-	// eigens konfigurierte Schreibrolle kategorisch. Ohne diese Zeile waeren
-	// list_documents/search_documents fuer JEDEN Aufrufer gesperrt, obwohl
-	// beide rein lesend sind (Pruefbefund zu dieser Aufgabe).
 	gwCfg := &serve.Config{
 		Addr:            cfg.ListenAddr,
 		PublicBaseURL:   publicBaseURL,
@@ -169,7 +161,10 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		AdvertisedScopes: cfg.OIDCAdvertisedScopes,
 	}
 
-	gw, err := serve.New(ctx, gwCfg, serve.WithToolKinds(tools.ReadToolKinds()))
+	// Gangway authorizes tool calls with access.AllowAll(): every authenticated caller may
+	// call every tool. Per-tool gating is the client's job via each tool's ToolAnnotations
+	// (ADR-0018) — the server exposes and annotates, it does not decide who may call.
+	gw, err := serve.New(ctx, gwCfg, serve.WithDecider(access.AllowAll()))
 	if err != nil {
 		return nil, fmt.Errorf("fileee-mcp: gangway: %w", err)
 	}
@@ -185,7 +180,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 
 	// logger is this server's ONE diagnostic logger — level-gated and
 	// masked (internal/diag.New) — shared by every tool call
-	// (tools.RegisterRead below), by go-fileee's own transport-level
+	// (tools.RegisterAll below), by go-fileee's own transport-level
 	// request log (fileee.WithLogger, passed into every account's client
 	// via clientpool.WithClientOptions — see that package's own doc
 	// comment on WithClientOptions for why this applies to every account
@@ -208,40 +203,31 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	}, o.poolOptions...)
 	pool := clientpool.New(resolver, poolOptions...)
 
-	// Ein Katalog je Berechtigungsstufe statt eines einzigen *mcp.Server
-	// (ADR-0011): instances haelt genau eine, im Voraus gebaute Instanz je
-	// erreichbarer Menge (siehe reachableCapabilitySets) — die feste,
-	// langlebige Menge, aus der AttachMCPSelectors selector waehlen muss
-	// (siehe MCPSelectors Doc-Kommentar in gangway/serve). Eine Instanz je
-	// Aufrufer oder je Anfrage zu bauen liefe in Gangways
-	// maxWiredInstances-Obergrenze und Ablehnungen fuer alle.
+	// ONE *mcp.Server mounts every tool (ADR-0018 replaces ADR-0011's
+	// per-capability-set instance catalog): the decider is access.AllowAll()
+	// now, so there is no longer a per-caller tool CATALOG to choose between
+	// — every authenticated caller who satisfies the required scope gets
+	// this same instance. Gating a caller's effective tool set is the
+	// client's job via each tool's ToolAnnotations.
 	//
-	// AttachMCPSelector (statt AttachMCP) ist trotzdem Pflicht, unabhaengig
-	// davon wie viele Werkzeuge registriert sind: ohne einen angehaengten
-	// *mcp.Server (bzw. Selector) routet Gangways Handler() den Pfad /mcp
-	// ueberhaupt nicht, eine unauthentifizierte Anfrage liefe dann in ein
-	// 404 vom inneren ServeMux statt in die 401-Challenge der
-	// Authentifizierung — siehe TestUnauthenticatedRequestReachesTheChallengeNotA404.
-	// EIN toolCallLimiter fuer alle Instanzen, gebaut hier und nicht je
-	// Instanz — siehe dessen Doc-Kommentar (newToolCallLimiter) fuer den
-	// Grund: globale Rate und MaxInflight muessen serverweit gelten, nicht
-	// je Berechtigungsmenge neu anfangen.
+	// AttachMCPSelector (instead of AttachMCP) is still required, regardless
+	// of there being only one instance: without an attached *mcp.Server (or
+	// selector), Gangway's Handler() does not route /mcp at all — an
+	// unauthenticated request would then hit a 404 from the inner ServeMux
+	// instead of the 401 challenge from authentication — see
+	// TestUnauthenticatedRequestReachesTheChallengeNotA404.
 	limiter := newToolCallLimiter(cfg)
-	instances := buildInstances(pool, cfg.Capabilities, string(cfg.AccountMode), limiter, logger)
-	accountsByKey := make(map[string]config.Account, len(cfg.Accounts))
-	for _, acc := range cfg.Accounts {
-		accountsByKey[acc.Key] = acc
-	}
+	instance := mcp.NewServer(&mcp.Implementation{Name: "fileee-mcp-server", Version: config.Version()}, nil)
+	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode)}, logger)
+	instance.AddReceivingMiddleware(limiter.middleware())
 	gw.AttachMCPSelector(func(ctx context.Context, id *identity.Identity) *mcp.Server {
 		// scopesSatisfied ist die einzige Stelle, die MCP_OIDC_REQUIRED_SCOPES
 		// auswertet (siehe scopes.go) — davor wurde die Einstellung zwar aus
 		// der Umgebung gelesen (config.go, LoadConfig), aber nirgends geprueft
 		// (Pruefbefund zu dieser Aufgabe). Ein fehlender Scope liefert nil und
-		// damit Gangways 400, aus demselben Grund wie unten bei einer
-		// unerreichbaren Berechtigungsmenge: eine leere Instanz mit
-		// abgeschnittenem Werkzeugkatalog waere hier die falsche Antwort — der
-		// Aufrufer hat ein gueltiges Token, ihm fehlt nur der geforderte
-		// Scope, das ist eine Ablehnung, keine eingeschraenkte Sicht.
+		// damit Gangways 400: der Aufrufer hat ein gueltiges Token, ihm fehlt
+		// nur der geforderte Scope, das ist eine Ablehnung, keine
+		// eingeschraenkte Sicht.
 		//
 		// Protokolliert (info): missingScopes() ist ausschliesslich fuer
 		// dieses Protokoll da, nicht Teil der Entscheidung selbst — siehe
@@ -251,187 +237,10 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 				"missing_scopes", missingScopes(cfg, id))
 			return nil
 		}
-		// Liefert nil (und damit Gangways 400, niemals eine Standard-Instanz),
-		// wenn capabilitiesFor eine Menge zurueckgibt, fuer die instances keine
-		// Instanz haelt — nach Konstruktion unerreichbar, siehe
-		// reachableCapabilitySets: jede von config.Resolve moegliche Ausgabe ist
-		// eine Teilmenge von cfg.Capabilities, und instances deckt jede
-		// Teilmenge ab.
-		//
-		// Protokolliert (info): die aufgeloeste Faehigkeitsmenge und wie
-		// viele Werkzeuge die dafuer gebaute Instanz haelt — der Befund,
-		// den dieses Protokoll beantworten soll, wenn ein Aufrufer einen
-		// leeren Werkzeugkatalog sieht (siehe toolCountFor).
-		caps := capabilitiesFor(cfg, accountsByKey, id)
-		logger.InfoContext(ctx, "mcp selector: resolved capabilities",
-			"capabilities", caps.String(), "tool_count", toolCountFor(caps))
-		return instances[caps]
+		return instance
 	})
 
 	return &Server{cfg: cfg, gw: gw, pool: pool}, nil
-}
-
-// capabilityGroups sind die vier Gruppen aus ADR-0011, in der dort
-// festgelegten Reihenfolge (config.canonical ist unexportiert, deshalb hier
-// eine eigene, mit ihr uebereinstimmende Liste).
-var capabilityGroups = []config.Capability{config.CapRead, config.CapWrite, config.CapShare, config.CapDestructive}
-
-// reachableCapabilitySets zaehlt jede config.Set auf, die config.Resolve fuer
-// global JEMALS liefern koennte: jede Teilmenge von global selbst. Alle drei
-// Zweige von Resolve enden in einem Intersect(r.Global) (siehe dessen
-// Doc-Kommentar) — nichts, was Resolve zurueckgibt, kann also ausserhalb
-// dieser Liste liegen. Das macht die Liste vollstaendig UND von jedem
-// einzelnen Aufrufer, Konto oder IdP-Claim-Wert unabhaengig: sie haengt
-// ausschliesslich von der beim Start festgelegten Obergrenze
-// FILEEE_CAPABILITIES ab, nie von etwas, das ein Aufrufer beeinflussen
-// koennte. Begrenzt auf hoechstens 2^4 = 16 Eintraege — weit unterhalb von
-// Gangways maxWiredInstances (1024), siehe buildInstances.
-func reachableCapabilitySets(global config.Set) []config.Set {
-	var present []string
-	for _, c := range capabilityGroups {
-		if global.Has(c) {
-			present = append(present, string(c))
-		}
-	}
-
-	sets := make([]config.Set, 0, 1<<len(present))
-	for mask := 0; mask < 1<<len(present); mask++ {
-		var namen []string
-		for i, name := range present {
-			if mask&(1<<i) != 0 {
-				namen = append(namen, name)
-			}
-		}
-		// Jeder Name in present stammt aus capabilityGroups und ist damit
-		// garantiert bekannt — ParseCapabilities kann hier nie fehlschlagen.
-		s, _ := config.ParseCapabilities(strings.Join(namen, ","))
-		sets = append(sets, s)
-	}
-	return sets
-}
-
-// buildInstances baut die feste Instanzmenge: je erreichbarer Berechtigungsmenge
-// (reachableCapabilitySets) genau einen *mcp.Server, mit den lesenden
-// Werkzeugen registriert, wenn und nur wenn die Menge config.CapRead enthaelt.
-// Kuenftige Werkzeuggruppen (write/share/destructive) haetten hier ihre
-// eigene, analoge Bedingung.
-//
-// Jede Instanz bekommt zusaetzlich limiter.middleware() als
-// Receiving-Middleware, VOR der Rueckgabe an New() (das die Instanzen
-// anschliessend an gw.AttachMCPSelector uebergibt, welches Gangways eigene
-// Autorisierungs-Middleware erst beim ersten Request je Instanz installiert,
-// siehe gangway/serve.Server.ensureWired). Diese Reihenfolge ist Absicht,
-// nicht Zufall — siehe toolCallLimiter.middleware fuer die Begruendung.
-//
-// logger wird unveraendert an jede registrierte Werkzeuggruppe
-// durchgereicht (heute nur tools.RegisterRead) — derselbe Logger fuer
-// jede Instanz, nicht einer je Berechtigungsmenge: New() baut ihn genau
-// einmal (siehe dort), buildInstances reicht ihn nur weiter.
-func buildInstances(pool *clientpool.Pool, global config.Set, mode string, limiter *toolCallLimiter, logger *slog.Logger) map[config.Set]*mcp.Server {
-	instances := make(map[config.Set]*mcp.Server)
-	for _, caps := range reachableCapabilitySets(global) {
-		mcpServer := mcp.NewServer(&mcp.Implementation{
-			Name:    "fileee-mcp-server",
-			Version: config.Version(),
-		}, nil)
-		if caps.Has(config.CapRead) {
-			info := tools.ServerInfo{Capabilities: caps.String(), Mode: mode}
-			tools.RegisterRead(mcpServer, pool, info, logger)
-		}
-		mcpServer.AddReceivingMiddleware(limiter.middleware())
-		instances[caps] = mcpServer
-	}
-	return instances
-}
-
-// toolCountFor returns how many tools an instance for caps carries —
-// mirrors buildInstances' own conditional above (today: config.CapRead
-// adds exactly the tools tools.ReadToolKinds() names) without needing a
-// live *mcp.Server to count against. Used only for the diagnostic log
-// line in AttachMCPSelector's closure (New, above); stays correct as
-// buildInstances grows because both read the same
-// tools.ReadToolKinds() rather than a separately maintained number.
-func toolCountFor(caps config.Set) int {
-	n := 0
-	if caps.Has(config.CapRead) {
-		n += len(tools.ReadToolKinds())
-	}
-	return n
-}
-
-// capabilitiesFor bestimmt die wirksame Berechtigungsmenge fuer id, nach der
-// in ADR-0011 festgelegten Rangfolge — config.Resolve haelt die Rangfolge
-// selbst ein, diese Funktion baut nur die dafuer noetige config.Resolution
-// zusammen:
-//
-//  1. Ist MCP_OIDC_CAPABILITY_CLAIM konfiguriert, zaehlt ausschliesslich der
-//     Claim aus dem TOKEN (id.Claims) — nie die Konto-Einstellung, selbst wenn
-//     der Aufrufer einem Konto zugeordnet ist. Das ist ADR-0011 Punkt 4.2:
-//     der IdP gewinnt, weil dort die Benutzerverwaltung stattfindet.
-//  2. Sonst wird ueber cfg.AccountBySubject() (bislang ungenutzt — Pruefbefund
-//     zu Aufgabe 5, "die Berechtigungen je Konto werden gelesen, geprueft —
-//     und nirgends verwendet") das aufgeloeste Konto ermittelt und dessen
-//     FILEEE_ACCOUNT_<KEY>_CAPABILITIES (falls gesetzt) ausgewertet.
-//  3. Ist id nicht nil, aber das Subject bei keinem Konto gelistet, bleibt
-//     Resolution.HasAccount false — config.Resolve faellt dann auf die
-//     globale Obergrenze zurueck (nicht auf leer). Ein Aufrufer ohne
-//     zugeordnetes Konto sieht damit denselben Werkzeugkatalog wie die
-//     Obergrenze erlaubt, kann die Werkzeuge aber beim Aufruf nicht nutzen —
-//     das ist die accounts.ErrNoAccount-Ablehnung aus Aufgabe 5
-//     (clientFor/"access denied"), eine andere, unabhaengige Schicht von
-//     dieser hier. Sichtbarkeit (diese Funktion) und Konto-Zugriff
-//     (clientFor) beantworten bewusst unterschiedliche Fragen.
-//  4. id == nil ist der einzige Fall, der NICHT bis zu config.Resolve
-//     durchlaeuft: er wird vorab mit der leeren Menge beantwortet — anders
-//     als Punkt 3 also fail-closed, nicht auf die Obergrenze zurueckfallend
-//     (siehe TestCapabilitiesForNilIdentityIsEmpty; Pruefbefund: eine
-//     fruehere Fassung dieses Kommentars behauptete hier faelschlich
-//     denselben Obergrenze-Fallback wie in Punkt 3). Praktisch sollte
-//     Gangway den Selector nie mit einer unverifizierten Identitaet
-//     aufrufen, siehe AttachMCPSelector — dieser Zweig ist reine
-//     Verteidigung gegen einen theoretischen Fall, kein regulaerer Pfad.
-func capabilitiesFor(cfg *config.Config, accountsByKey map[string]config.Account, id *identity.Identity) config.Set {
-	if id == nil {
-		return config.Set{}
-	}
-
-	res := config.Resolution{Global: cfg.Capabilities}
-	if cfg.OIDCCapabilityClaim != "" {
-		res.ClaimConfigured = true
-		res.ClaimValues = claimStrings(id.Claims[cfg.OIDCCapabilityClaim])
-	} else if key, ok := cfg.AccountBySubject(id.Subject); ok {
-		if acc, ok := accountsByKey[key]; ok {
-			res.Account = acc.Capabilities
-			res.HasAccount = acc.HasCapabilities
-		}
-	}
-	return config.Resolve(res)
-}
-
-// claimStrings liest einen einzelnen Claim-Wert aus den ueber JSON dekodierten
-// Token-Claims (id.Claims) als []string — ein IdP-Claim ist je nach Anbieter
-// ein einzelner String oder eine Liste (Entra-App-Rollen typischerweise
-// ersteres, Authentik-Gruppen typischerweise Letzteres). encoding/json
-// dekodiert eine JSON-Liste dabei immer als []any, nie als []string — der
-// dritte Zweig ist dennoch nicht tot: id.Claims kann auch von Hand gebaut sein
-// (siehe die Tests in diesem Paket).
-func claimStrings(v any) []string {
-	switch vv := v.(type) {
-	case string:
-		return []string{vv}
-	case []any:
-		out := make([]string, 0, len(vv))
-		for _, e := range vv {
-			if s, ok := e.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	case []string:
-		return vv
-	default:
-		return nil
-	}
 }
 
 // buildResolver uebersetzt cfg.Accounts (siehe config.LoadConfig, ladeKonten)

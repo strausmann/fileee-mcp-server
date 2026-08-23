@@ -88,29 +88,19 @@ Diese App-Registrierung steckt hier in einer Doppelrolle: Sie ist zugleich die *
 
 **Funktionierende Reihenfolge (live geprüft, 09.08.2026):** zuerst Application ID URI, dann Scope `mcp.access` anlegen, dann diesen Abschnitt.
 
-## 3a. App-Rollen für den Funktionsumfang (optional, empfohlen)
+## 3a. App-Rollen (optional, nicht mehr für den Funktionsumfang)
 
-Statt den Funktionsumfang je Benutzer in der Server-Konfiguration zu pflegen, lässt er sich in Entra verwalten. *App roles → Create app role*, je Capability-Gruppe eine Rolle:
+Der Server registriert seit [ADR-0018](../adr/0018-werkzeug-freigabe-und-client-steuerung.md) **alle**
+Werkzeuge für jeden authentifizierten Aufrufer — es gibt keine serverseitige Einschränkung mehr,
+welche Werkzeuge ein Client zu sehen bekommt, und damit auch keinen Claim mehr, über den Entra
+einen Funktionsumfang steuern könnte. `MCP_OIDC_CAPABILITY_CLAIM` und die zugehörigen
+`FILEEE_CAPABILITIES`/`FILEEE_ALLOW_DESTRUCTIVE`-Variablen wurden aus der Konfiguration entfernt.
 
-| Display name | Value | Allowed member types |
-|---|---|---|
-| `Reader` | `read` | Users/Groups |
-| `Writer` | `write` | Users/Groups |
-| `Sharer` | `share` | Users/Groups (optional) |
-
-Zwei Rollen genügen für die meisten Setups: `Reader` und `Writer`. Der **Value** ist entscheidend, nicht der Anzeigename — er muss wörtlich der Capability-Gruppe entsprechen. Ein Benutzer mit beiden Rollen bekommt Lese- und Schreib-Tools.
-
-Entra schreibt zugewiesene Rollen in den `roles`-Claim des Access-Tokens. Der Server kann daraus den Funktionsumfang ableiten, statt ihn pro Konto in einer Umgebungsvariable zu führen:
-
-```dotenv
-MCP_OIDC_CAPABILITY_CLAIM=roles
-```
-
-Die globale `FILEEE_CAPABILITIES`-Einstellung bleibt dabei die Obergrenze — eine Rolle kann nur freischalten, was global ohnehin erlaubt ist.
-
-**Wichtig:** Sobald `MCP_OIDC_CAPABILITY_CLAIM` gesetzt ist, entscheidet der Claim allein. Ein Benutzer **ohne** zugewiesene Rolle bekommt dann `read`, nicht den konfigurierten Standardumfang — andernfalls wäre ein vergessener Rollen-Klick eine stille Rechteausweitung.
-
-`destructive` lässt sich **nicht** über eine Rolle vergeben; der Server ignoriert einen solchen Wert im Claim. Fileees Hard-DELETE ist unwiderruflich und bleibt eine bewusste Entscheidung am Server (`FILEEE_CAPABILITIES` plus `FILEEE_ALLOW_DESTRUCTIVE=true`), keine Klick-Zuweisung im Portal.
+Die Freigabe je Werkzeug (Always allow / Needs approval / Blocked) trifft jetzt der **Client und
+dessen Benutzer**, anhand der `ToolAnnotations` (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`), die jedes Werkzeug mitbringt. App-Rollen unter *App roles* lassen sich weiterhin
+für Abschnitt 6 (Zuweisung, wer den Connector überhaupt verbinden darf) nutzen — nur nicht mehr für
+einen serverseitig ausgewerteten Funktionsumfang.
 
 ## 4. Token-Version auf v2.0 stellen
 
@@ -216,7 +206,6 @@ Der dort sichtbare `AADSTS`-Fehlercode führt in die Tabelle in Abschnitt 9.
 | Connector funktioniert plötzlich nicht mehr | Client-Secret abgelaufen | neues Secret erzeugen und im Connector aktualisieren |
 | Verbindung bricht nach der ersten Token-Laufzeit ab | `offline_access` fehlt, kein Refresh-Token | Schritt 5 nachholen, inklusive Admin-Consent |
 | 401-Schleife, „audience mismatch" | `aud` im ausgestellten Token entspricht nicht `MCP_ENTRA_CLIENT_ID` (der Server prüft nur diesen einen Wert, siehe Abschnitt 7) | `accessTokenAcceptedVersion: 2` prüfen; `aud` im Token nachsehen (Abschnitt 8). Steht dort `api://<CLIENT_ID>`, fordert der **Client** den falschen Scope an — im Connector den Scope aus Abschnitt 3 verwenden |
-| Write-Tools erscheinen nicht | App-Rolle nicht zugewiesen oder `MCP_OIDC_CAPABILITY_CLAIM` nicht gesetzt | Abschnitte 3a und 6 prüfen; `roles`-Claim im Token gegenprüfen |
 | Jeder Tenant-Benutzer kommt durch | „Assignment required" steht auf `No` | Schritt 6 nachholen |
 | Start bricht ab: „ist keine Verzeichnis-ID" | in `MCP_ENTRA_TENANT_ID` steht eine Domain oder `common`/`organizations` | die GUID aus der Portal-Übersicht eintragen (Abschnitt 7) |
 | Start bricht ab: „gesetzt sind auch Variablen anderer Anbieter" | neben den `MCP_ENTRA_*`-Werten stehen noch `MCP_AUTHENTIK_*`- oder `MCP_OIDC_ISSUER`-Reste aus einer früheren Konfiguration | entfernen — bei `MCP_OIDC_PROVIDER=entra` werden sie nicht gelesen |

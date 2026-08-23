@@ -1,6 +1,6 @@
 // This file covers this package's diagnostic-log integration: what
 // list_documents/search_documents actually write through the *slog.Logger
-// RegisterRead now takes, driven end-to-end through a real MCP client
+// RegisterAll now takes, driven end-to-end through a real MCP client
 // exactly like read_test.go's own tests — reusing that file's helpers
 // (newIsolationServer, newErrorServer, newRejectedLoginServer,
 // newGangwayServer, connectAs, mustCall) rather than duplicating them.
@@ -58,7 +58,7 @@ func setupLoggedListDocuments(t *testing.T, level diag.Level, queryBody string) 
 	srv := newIsolationServer(t, fixtureAccount{username: "alice@example.invalid", password: "pw", queryBody: queryBody})
 	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterRead(mcpServer, pool, tools.ServerInfo{}, logger)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, logger)
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -172,7 +172,7 @@ func TestSearchDocumentsTermIsDebugOnly(t *testing.T) {
 		srv := newIsolationServer(t, fixtureAccount{username: "alice@example.invalid", password: "pw", queryBody: searchBody})
 		pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 		mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-		tools.RegisterRead(mcpServer, pool, tools.ServerInfo{}, logger)
+		tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, logger)
 
 		idp := testidp.New(t)
 		httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -228,7 +228,7 @@ func TestToolCallLoggingNeverContainsDocumentContentOrResponseBody(t *testing.T)
 			srv := newErrorServer(t, http.StatusInternalServerError, body)
 			pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 			mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-			tools.RegisterRead(mcpServer, pool, tools.ServerInfo{}, logger)
+			tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, logger)
 
 			idp := testidp.New(t)
 			httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -279,7 +279,7 @@ func TestToolCallLoggingClassifiesAccessDeniedAndInvalidInput(t *testing.T) {
 			"alice-subject": {Username: "alice@example.invalid", Password: "pw"},
 		}))
 		mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-		tools.RegisterRead(mcpServer, pool, tools.ServerInfo{}, logger)
+		tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, logger)
 
 		idp := testidp.New(t)
 		httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -306,7 +306,7 @@ func TestToolCallLoggingClassifiesAccessDeniedAndInvalidInput(t *testing.T) {
 
 		pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
 		mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-		tools.RegisterRead(mcpServer, pool, tools.ServerInfo{}, logger)
+		tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, logger)
 
 		idp := testidp.New(t)
 		httpSrv := newGangwayServer(t, idp, mcpServer)

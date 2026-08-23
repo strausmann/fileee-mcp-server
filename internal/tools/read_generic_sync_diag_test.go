@@ -14,7 +14,7 @@
 // deliberate, not a shortcut around a harder test: package tools (this
 // white-box test file) has no way to fabricate a verified identity
 // (unlike package tools_test's read_diag_test.go, which drives a real
-// gangway+HTTP round trip for RegisterRead's own two tools), and a
+// gangway+HTTP round trip for RegisterAll's own two tools), and a
 // call that fails at clientFor still exercises exactly what this task
 // is about — logToolStart fires before clientFor runs at all, and
 // logToolEnd fires on the error path, both through the logger each

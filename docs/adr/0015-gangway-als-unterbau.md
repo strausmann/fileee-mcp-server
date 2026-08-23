@@ -6,7 +6,7 @@
 **Ersetzt durch:** —
 **Überarbeitet:** [ADR-0012](0012-multi-account-mapping.md), [ADR-0013](0013-prompt-injection-schutz.md)
 **Überarbeitet durch:** —
-**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0011](0011-capability-gating.md), [ADR-0016](0016-anbieter-namensraeume-statt-roher-oidc-parameter.md), [ADR-0017](0017-diagnose-protokoll-mit-erzwungener-maskierung.md), [Gangway](https://github.com/strausmann/gangway)
+**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0011](0011-capability-gating.md), [ADR-0016](0016-anbieter-namensraeume-statt-roher-oidc-parameter.md), [ADR-0017](0017-diagnose-protokoll-mit-erzwungener-maskierung.md), [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md), [Gangway](https://github.com/strausmann/gangway)
 
 ## Kontext
 

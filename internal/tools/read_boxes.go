@@ -195,7 +195,7 @@ func boxFromService(ctx context.Context, service boxReadService, id string) (*mc
 }
 
 // registerBoxTools mounts list_boxes/get_box onto s — called once from
-// RegisterRead (read.go).
+// RegisterAll (read.go).
 func registerBoxTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListBoxes,
@@ -206,7 +206,7 @@ func registerBoxTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"third-party content. Use it to discover which boxes exist before loading one in " +
 			"detail with get_box. It does not return the contained documents' own titles or " +
 			"metadata — use list_documents/get_document for that.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "List boxes"},
 	}, listBoxesHandler(p, logger))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -216,6 +216,6 @@ func registerBoxTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"handed you a box ID and you need its contents. It does not return the documents' " +
 			"own titles or metadata — use get_document with each returned ID for that — and it " +
 			"does not search by box name.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get box"},
 	}, getBoxHandler(p, logger))
 }
