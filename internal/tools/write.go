@@ -27,9 +27,18 @@
 // company contact) is exactly as foreign here as it is on the read side
 // (read_people.go's own doc comment on contactDescriptor/contactSummary
 // — supplied by the contact itself or extracted from a document, never
-// written by the account holder) and is framed the same way:
-// updateContactOutput never carries it as a plain field, only as
-// wrapUntrusted'd text (ADR-0013).
+// written by the account holder) and is framed the same way: NEVER as a
+// structured field on updateContactOutput (which lands in
+// CallToolResult.StructuredContent), only as wrapUntrustedLines'd text
+// in CallToolResult.Content (ADR-0013) — exactly the same channel
+// getDocumentHandler's own documentFromService (read.go) already uses
+// for a document's Title, never returned as a field on
+// getDocumentOutput either. Every read tool in this package keeps its
+// StructuredContent 100% foreign-text-free by construction
+// (mustNotLeakUntrustedLine, read_generic.go, for the generic
+// descriptors; a bespoke handler like this one has no such automatic
+// check, so it must hold the same line by hand — see
+// updateContactResult below).
 package tools
 
 import (
@@ -101,18 +110,17 @@ type updateContactInput struct {
 // deliberately excludes every field updateContactInput can set as a
 // plain field — all either the contact's own supplied data or extracted
 // from a document (contactDescriptor's own doc comment, read_people.go)
-// — never Fileee's own; Contact carries the same information framed
-// instead (wrapUntrusted), never structured.
+// — never Fileee's own. The updated contact's own display name is
+// returned too, but NEVER as a field here (that would leak foreign text
+// into CallToolResult.StructuredContent) — only as clearly marked,
+// untrusted text in CallToolResult.Content, exactly like every read
+// tool's own UntrustedLine/wrapUntrustedLines convention (see this
+// file's own doc comment, updateContactResult below, and ADR-0013).
 type updateContactOutput struct {
 	// ID is the updated contact's ID, unchanged by this call.
 	ID string `json:"id"`
 	// Modified is Fileee's own record of when the update was applied.
 	Modified string `json:"modified"`
-	// Contact is the updated contact's own display name (first name +
-	// last name, or the company name for a company contact), as
-	// clearly marked, untrusted text — see this file's own doc comment
-	// and ADR-0013.
-	Contact string `json:"contact"`
 }
 
 // applyContactPatch applies in's supplied (non-nil) fields onto cur —
@@ -161,15 +169,23 @@ func contactDisplayName(c *fileee.Contact) string {
 
 // updateContactResult builds updateContactHandler's success return from
 // upd, the contact fileee.Contacts.Update handed back — split out from
-// updateContactFromService so wrapUntrusted's own error path (see
+// updateContactFromService so wrapUntrustedLines' own error path (see
 // newUntrustedBoundary's doc comment, read.go) has a single call site,
 // independent of the two backend calls around it.
+//
+// The updated contact's own display name goes into result.Content via
+// wrapUntrustedLines (read_generic.go) — the exact same call
+// documentFromService (read.go) already makes for a document's Title —
+// never into a field of the returned updateContactOutput: that struct
+// lands in CallToolResult.StructuredContent, and every tool in this
+// package keeps that channel free of foreign text (see this file's own
+// package doc comment).
 func updateContactResult(upd *fileee.Contact) (*mcp.CallToolResult, updateContactOutput, error) {
-	framed, err := wrapUntrusted(contactDisplayName(upd))
+	result, err := wrapUntrustedLines([]string{contactDisplayName(upd)})
 	if err != nil {
 		return nil, updateContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateContact, err)
 	}
-	return &mcp.CallToolResult{}, updateContactOutput{ID: upd.ID, Modified: upd.Modified, Contact: framed}, nil
+	return result, updateContactOutput{ID: upd.ID, Modified: upd.Modified}, nil
 }
 
 // updateContactFromService is updateContactHandler's logic below client

@@ -18,6 +18,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -37,7 +38,12 @@ func TestUpdateContactInputFeldlisteIstAbgeschlossen(t *testing.T) {
 }
 
 func TestUpdateContactOutputFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"ID", "Modified", "Contact"}
+	// KEIN Fremdtext-Feld hier — der Anzeigename landet ausschliesslich
+	// gerahmt in CallToolResult.Content (siehe
+	// TestUpdateContactPatchMerge unten), nie strukturiert in
+	// CallToolResult.StructuredContent. Eine dritte Feldliste hier waere
+	// exakt der Fehler, den die Fix-Runde behoben hat.
+	want := []string{"ID", "Modified"}
 	got := fieldNames(updateContactOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("updateContactOutput-Feldliste = %v, want %v", got, want)
@@ -130,8 +136,15 @@ func (f *fakeContactWriteService) Update(_ context.Context, entity *fileee.Conta
 // TestUpdateContactPatchMerge is the task's own named test: only the
 // caller-supplied field (Email) changes, every other field the existing
 // contact already carried (FirstName) survives untouched into the
-// Update call, and the tool's output surfaces the updated, framed
-// contact.
+// Update call, and the tool's result surfaces the updated contact's
+// display name — framed, in CallToolResult.Content, exactly the way
+// TestDocumentFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfolg
+// (read_document_test.go) already proves for a document's Title, NEVER
+// as a field of the returned updateContactOutput (which lands in
+// CallToolResult.StructuredContent — see this file's own doc comment
+// and write.go's package doc comment on why that channel stays
+// foreign-text-free for every tool in this package, write tools
+// included).
 func TestUpdateContactPatchMerge(t *testing.T) {
 	service := &fakeContactWriteService{
 		getResult: &fileee.Contact{ID: "c1", FirstName: "Alice", LastName: "Nachname", Email: "alt@x.de"},
@@ -141,7 +154,7 @@ func TestUpdateContactPatchMerge(t *testing.T) {
 	}
 	in := updateContactInput{ID: "c1", Email: ptr("neu@x.de")}
 
-	_, out, err := updateContactFromService(context.Background(), service, in)
+	result, out, err := updateContactFromService(context.Background(), service, in)
 	if err != nil {
 		t.Fatalf("updateContactFromService: %v", err)
 	}
@@ -167,11 +180,27 @@ func TestUpdateContactPatchMerge(t *testing.T) {
 	if out.Modified != "2026-08-23T00:00:00Z" {
 		t.Errorf("out.Modified = %q, want %q", out.Modified, "2026-08-23T00:00:00Z")
 	}
-	if !strings.Contains(out.Contact, "Alice") {
-		t.Errorf("out.Contact = %q, enthaelt nicht den Anzeigenamen %q", out.Contact, "Alice")
+	// Struktur-Teil (CallToolResult.StructuredContent) bleibt frei vom
+	// fremdbestimmten Anzeigenamen — dieselbe Pruefung wie
+	// TestDocumentFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfolg
+	// (read_document_test.go) fuer ein Dokument-Title.
+	if strings.Contains(fmt.Sprint(out), "Alice") {
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen strukturiert — der gehoert "+
+			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
 	}
-	if !strings.Contains(out.Contact, "<untrusted_external_content") {
-		t.Errorf("out.Contact = %q, ist nicht als fremdbestimmter Text gerahmt (ADR-0013)", out.Contact)
+
+	if len(result.Content) != 1 {
+		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+	}
+	if !strings.Contains(text.Text, "Alice") {
+		t.Errorf("Content enthaelt nicht den Anzeigenamen %q: %q", "Alice", text.Text)
+	}
+	if !strings.Contains(text.Text, "<untrusted_external_content") {
+		t.Errorf("Content ist nicht als fremdbestimmter Text gerahmt (ADR-0013): %q", text.Text)
 	}
 }
 
