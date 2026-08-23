@@ -1,9 +1,9 @@
 # ADR-0011: Funktionsumfang über nicht registrierte Tools statt Laufzeit-Ablehnung
 
-**Status:** accepted
+**Status:** superseded
 **Datum:** 2026-08-06
 **Ersetzt:** —
-**Ersetzt durch:** —
+**Ersetzt durch:** [ADR-0018](0018-tool-exposure-and-client-gating.md)
 **Überarbeitet:** —
 **Überarbeitet durch:** —
 **Verwandt:** [ADR-0013](0013-prompt-injection-schutz.md), [ADR-0015](0015-gangway-als-unterbau.md), [go-fileee ADR-0007](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0007-ausschluss-destruktiver-operationen.md), [fileee-server ADR-0008](https://github.com/strausmann/fileee-server/blob/main/docs/adr/0008-fileee-server.md)
