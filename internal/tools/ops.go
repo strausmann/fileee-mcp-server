@@ -163,16 +163,24 @@ func getRuntimeStatsHandler(logger *slog.Logger) mcp.ToolHandlerFor[getRuntimeSt
 // --- get_tool_manifest -------------------------------------------------
 
 // toolManifestEntry is get_tool_manifest's per-tool entry. Kind is
-// access.ToolKind's own string value ("read" today — Teil B, a later
-// phase of this project, would add "write"), taken from ReadToolKinds()
-// rather than re-derived here, so this can never disagree with what
-// Gangway's own authorization middleware actually enforces (server.go,
-// serve.WithToolKinds(tools.ReadToolKinds())).
+// always "read" today: every tool RegisterRead mounts is a strict read,
+// and since the tool-exposure foundation refactor's Task 1
+// (access.AllowAll(), one instance, no per-capability-set routing) this
+// server no longer distinguishes KindRead/KindWrite for authorization at
+// all — the readToolNames/ReadToolKinds() classification Task 3 removed
+// was that distinction's last remnant. Kind stays a literal rather than
+// being dropped so a caller comparing manifests across a future write
+// tool's introduction sees the field's meaning change, not the field
+// disappear.
 type toolManifestEntry struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Kind        string `json:"kind"`
 }
+
+// toolManifestKind is every currently-registered tool's Kind value in
+// get_tool_manifest's output — see toolManifestEntry's doc comment.
+const toolManifestKind = "read"
 
 // getToolManifestInput are get_tool_manifest's parameters — deliberately
 // empty, same reasoning as getRuntimeStatsInput above: the manifest
@@ -251,14 +259,9 @@ func getToolManifestHandler(s *mcp.Server, logger *slog.Logger) mcp.ToolHandlerF
 			return nil, getToolManifestOutput{}, err
 		}
 
-		kinds := ReadToolKinds()
 		out := getToolManifestOutput{Total: len(mounted), Tools: make([]toolManifestEntry, 0, len(mounted))}
 		for _, tool := range mounted {
-			kind := ""
-			if k, ok := kinds[tool.Name]; ok {
-				kind = string(k)
-			}
-			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Description: tool.Description, Kind: kind})
+			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Description: tool.Description, Kind: toolManifestKind})
 		}
 		sort.Slice(out.Tools, func(i, j int) bool { return out.Tools[i].Name < out.Tools[j].Name })
 

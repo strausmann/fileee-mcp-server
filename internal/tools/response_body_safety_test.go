@@ -70,7 +70,7 @@ import (
 // MUST be updated whenever a new tool with a new output type is
 // registered — see TestNoFileeeMarshalerTypeInAnyResponseBody below, which
 // walks exactly this list. One entry per registered tool name, in the same
-// order names.go's readToolNames lists them, so the two lists can be
+// order RegisterRead mounts the corresponding tools, so the two lists can be
 // compared by eye.
 var registeredResponseBodyTypes = []reflect.Type{
 	reflect.TypeOf(listDocumentsOutput{}),                              // list_documents
@@ -324,17 +324,24 @@ func TestNoFileeeMarshalerTypeKnownSafeTypesPassCleanly(t *testing.T) {
 }
 
 // TestRegisteredResponseBodyTypesCoversEveryReadTool cross-checks
-// registeredResponseBodyTypes' length against readToolNames (names.go) —
-// the same "two independent lists must agree" pattern names.go's own
-// registeredReadTools()/ReadToolKinds() Gegenprobe already uses. A mismatch
-// here means either this file's list fell behind a newly registered tool
-// (the guardrail above then simply never runs against it) or names.go
-// gained/lost an entry this file never learned about — either way, a
+// registeredResponseBodyTypes' length against the live mounted tool set
+// (registeredReadTools(), names.go) — the same "two independent lists must
+// agree" pattern names.go's own former readToolNames/registeredReadTools()
+// Gegenprobe used before names.go dropped that hand-maintained kind map
+// (Task 3, foundation refactor). Every one of this server's read tools —
+// including the meta tools whoami/self_check/get_runtime_stats/
+// get_tool_manifest — returns a dedicated response body type, so this
+// count basis stays exact rather than needing an exclusion list; if a
+// future tool's response body is genuinely exempt (e.g. a binary-only
+// tool with no StructuredContent at all), narrow this comparison then and
+// document why here instead of silently letting the counts drift apart.
+// A mismatch means either this file's list fell behind a newly registered
+// tool (the guardrail above then simply never runs against it) or a tool
+// was mounted/removed that this file never learned about — either way, a
 // silent gap in coverage rather than a loud one.
 func TestRegisteredResponseBodyTypesCoversEveryReadTool(t *testing.T) {
-	if got, want := len(registeredResponseBodyTypes), len(readToolNames); got != want {
-		t.Errorf("registeredResponseBodyTypes has %d entries, readToolNames has %d — "+
-			"a newly registered tool's response body type may be missing from this file's guardrail list "+
-			"(or vice versa); update registeredResponseBodyTypes to match", got, want)
+	if got, want := len(registeredResponseBodyTypes), len(registeredReadTools()); got != want {
+		t.Errorf("registeredResponseBodyTypes has %d entries, %d tools are mounted — "+
+			"a newly registered tool's response body type is missing from the guardrail list (or vice versa)", got, want)
 	}
 }

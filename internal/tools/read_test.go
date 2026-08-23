@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/strausmann/gangway/access"
 	"github.com/strausmann/gangway/identity/testidp"
 	"github.com/strausmann/gangway/serve"
 	"github.com/strausmann/go-fileee/fileee"
@@ -230,12 +231,13 @@ func mustPrefixes(t *testing.T, cidrs ...string) []netip.Prefix {
 }
 
 // newGangwayServer attaches mcpServer to a freshly built gangway server —
-// with tools.ReadToolKinds() wired in via serve.WithToolKinds, exactly as
-// internal/server/server.go does in production — and serves it over a real
-// HTTP listener. Without that wiring, list_documents/search_documents
-// would default to access.KindWrite (see gangway/serve, toolMiddleware)
-// and every call in this file would be refused regardless of what each
-// test is actually trying to check.
+// with access.AllowAll() wired in via serve.WithDecider, exactly as
+// internal/server/server.go does in production since the tool-exposure
+// foundation refactor's Task 1 (one instance, no per-capability-set
+// routing, no KindRead/KindWrite distinction) — and serves it over a real
+// HTTP listener. Without that wiring, gangway's own default decider would
+// refuse every call in this file regardless of what each test is actually
+// trying to check.
 func newGangwayServer(t *testing.T, idp *testidp.IDP, mcpServer *mcp.Server) *httptest.Server {
 	t.Helper()
 
@@ -247,7 +249,7 @@ func newGangwayServer(t *testing.T, idp *testidp.IDP, mcpServer *mcp.Server) *ht
 		SubjectClaim:    "sub",
 		AllowedPrefixes: mustPrefixes(t, "127.0.0.1/32", "::1/128"),
 	}
-	gw, err := serve.New(context.Background(), gwCfg, serve.WithToolKinds(tools.ReadToolKinds()))
+	gw, err := serve.New(context.Background(), gwCfg, serve.WithDecider(access.AllowAll()))
 	if err != nil {
 		t.Fatalf("serve.New: %v", err)
 	}

@@ -319,11 +319,12 @@ func TestGetToolManifestInputNimmtKeineParameterEntgegen(t *testing.T) {
 }
 
 // TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug belegt, dass
-// jeder Eintrag eine nicht-leere Kind-Angabe traegt -- ReadToolKinds()
-// deckt heute jedes ueber RegisterRead angemeldete Werkzeug ab
-// (descriptions_test.go's eigener TestJedesWerkzeugIstAlsLesendEingestuft
-// wuerde sonst schon fehlschlagen), get_tool_manifest darf diese
-// Information nicht verlieren.
+// jeder Eintrag eine nicht-leere Kind-Angabe traegt -- toolManifestKind
+// (ops.go) setzt sie heute fuer jedes ueber RegisterRead angemeldete
+// Werkzeug fest auf "read" (die readToolNames/ReadToolKinds()-
+// Einstufung, die diesen Wert frueher lieferte, ist mit Task 3 des
+// tool-exposure-foundation-Umbaus entfallen), get_tool_manifest darf
+// diese Information nicht verlieren.
 func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
