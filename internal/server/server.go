@@ -227,7 +227,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// Grund: globale Rate und MaxInflight muessen serverweit gelten, nicht
 	// je Berechtigungsmenge neu anfangen.
 	limiter := newToolCallLimiter(cfg)
-	instances := buildInstances(pool, cfg.Capabilities, limiter, logger)
+	instances := buildInstances(pool, cfg.Capabilities, string(cfg.AccountMode), limiter, logger)
 	accountsByKey := make(map[string]config.Account, len(cfg.Accounts))
 	for _, acc := range cfg.Accounts {
 		accountsByKey[acc.Key] = acc
@@ -327,7 +327,7 @@ func reachableCapabilitySets(global config.Set) []config.Set {
 // durchgereicht (heute nur tools.RegisterRead) — derselbe Logger fuer
 // jede Instanz, nicht einer je Berechtigungsmenge: New() baut ihn genau
 // einmal (siehe dort), buildInstances reicht ihn nur weiter.
-func buildInstances(pool *clientpool.Pool, global config.Set, limiter *toolCallLimiter, logger *slog.Logger) map[config.Set]*mcp.Server {
+func buildInstances(pool *clientpool.Pool, global config.Set, mode string, limiter *toolCallLimiter, logger *slog.Logger) map[config.Set]*mcp.Server {
 	instances := make(map[config.Set]*mcp.Server)
 	for _, caps := range reachableCapabilitySets(global) {
 		mcpServer := mcp.NewServer(&mcp.Implementation{
@@ -335,7 +335,8 @@ func buildInstances(pool *clientpool.Pool, global config.Set, limiter *toolCallL
 			Version: config.Version(),
 		}, nil)
 		if caps.Has(config.CapRead) {
-			tools.RegisterRead(mcpServer, pool, logger)
+			info := tools.ServerInfo{Capabilities: caps.String(), Mode: mode}
+			tools.RegisterRead(mcpServer, pool, info, logger)
 		}
 		mcpServer.AddReceivingMiddleware(limiter.middleware())
 		instances[caps] = mcpServer

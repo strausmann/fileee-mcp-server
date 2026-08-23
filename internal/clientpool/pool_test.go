@@ -953,3 +953,39 @@ func TestProbeLoginUndBuildAndLoginLaufenNieGleichzeitigFuerDasselbeKonto(t *tes
 			"Pool.For (buildAndLogin) und ProbeLogin liefen gleichzeitig fuer dasselbe Konto", got)
 	}
 }
+
+// --- AccountUsername (Task 2) -----------------------------------------------
+
+func TestPoolAccountUsername(t *testing.T) {
+	t.Run("single mode returns configured username", func(t *testing.T) {
+		p := New(accounts.NewSingle(fileee.Credentials{Username: "bjoern@strausmann.net", Password: "x"}))
+		got, err := p.AccountUsername(context.Background(), &identity.Identity{Subject: "anyone"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "bjoern@strausmann.net" {
+			t.Fatalf("got %q, want the configured username", got)
+		}
+	})
+
+	t.Run("multi mode maps subject to its account username", func(t *testing.T) {
+		p := New(accounts.NewMulti(map[string]fileee.Credentials{
+			"sub-1": {Username: "one@strausmann.net", Password: "x"},
+		}))
+		got, err := p.AccountUsername(context.Background(), &identity.Identity{Subject: "sub-1"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "one@strausmann.net" {
+			t.Fatalf("got %q, want the mapped username", got)
+		}
+	})
+
+	t.Run("unmapped subject wraps ErrNoAccount", func(t *testing.T) {
+		p := New(accounts.NewMulti(map[string]fileee.Credentials{}))
+		_, err := p.AccountUsername(context.Background(), &identity.Identity{Subject: "stranger"})
+		if !errors.Is(err, accounts.ErrNoAccount) {
+			t.Fatalf("got %v, want error wrapping accounts.ErrNoAccount", err)
+		}
+	})
+}

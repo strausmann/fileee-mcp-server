@@ -60,7 +60,7 @@ const (
 // threaded logger through before it (#45/#46 both shipped without it);
 // both now take it and pass it on to their own handlers the same way
 // listDocumentsHandler/searchDocumentsHandler already did.
-func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+func RegisterRead(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocuments,
 		Description: "List documents in the calling user's Fileee account, most recently modified " +
@@ -122,7 +122,7 @@ func RegisterRead(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	registerBoxTools(s, p, logger)
 	registerBinaryTools(s, p, logger)
 	registerAccountTools(s, p, logger)
-	registerOpsTools(s, p, logger)
+	registerOpsTools(s, p, info, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current
