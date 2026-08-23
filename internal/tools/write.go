@@ -441,6 +441,12 @@ func registerWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) 
 	// why (write.go outgrew a comfortable single-topic size once
 	// update_contact/create_contact were both in it).
 	registerReminderWriteTools(s, p, logger)
+
+	// box_add_document/box_remove_document (Task 4) live in their own
+	// file, write_boxes.go — a third topic (box-document membership),
+	// not a variant of either shape already in this file or in
+	// write_people.go — see that file's own package doc comment.
+	registerBoxWriteTools(s, p, logger)
 }
 
 // boolPtr returns a pointer to v — mcp.ToolAnnotations.DestructiveHint

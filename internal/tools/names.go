@@ -142,6 +142,16 @@ const (
 	// respectively.
 	ToolCreateReminder = "create_reminder"
 	ToolUpdateReminder = "update_reminder"
+
+	// ToolBoxAddDocument and ToolBoxRemoveDocument are
+	// box_add_document's and box_remove_document's registered names
+	// (Task 4, write_boxes.go) — the fifth and sixth write-class
+	// tools, over fileee.BoxService: neither creates nor patch/merges
+	// an entity the way every write tool above does, each is a single
+	// AddDocument/RemoveDocument call toggling one document's
+	// membership in one box.
+	ToolBoxAddDocument    = "box_add_document"
+	ToolBoxRemoveDocument = "box_remove_document"
 )
 
 // registeredReadTools mounts RegisterAll onto a throwaway server and reads

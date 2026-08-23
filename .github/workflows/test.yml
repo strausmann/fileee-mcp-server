@@ -182,6 +182,20 @@ jobs:
           # update_reminder nachgezogen (update_contact hat diesen Gegenprobe-Test bislang
           # nicht). Datei liegt bei 85,0% — komfortabel ueber der 80%-Business-Logik-Stufe,
           # keine Ausnahme noetig.
+          #
+          # internal/tools/write_boxes.go (Task 4, write-Tools-Plan): box_add_document +
+          # box_remove_document, ueber fileee.BoxService.AddDocument/RemoveDocument — anders
+          # als jedes Muster in write.go/write_people.go (kein Create, kein Get/apply/Update-
+          # Patch-Merge): ein einzelner Aufruf, der nur einen Fehler zurueckgibt, keine
+          # aktualisierte Entitaet. Kernlogik (boxDocumentResult, addBoxDocumentFromService,
+          # removeBoxDocumentFromService) ueber Fakes (fakeBoxDocumentAddService/
+          # fakeBoxDocumentRemoveService, write_boxes_test.go) vollstaendig ohne Netzwerk
+          # testbar, inklusive Netzwerk- und Backend-Fehlerpfad — hier besonders wichtig, da
+          # es ohne Rueckgabewert nichts anderes zu pruefen gibt als "kein Teilerfolg". Beide
+          # duennen clientFor-Huellen bekommen je zwei Vor-clientFor-Ablehnungstests (leere
+          # BoxID/DocumentID) und einen Gegenprobe-Test mit gueltiger Eingabe, dieselbe Idee
+          # wie write_people.go oben. Datei liegt bei 86,7% — komfortabel ueber der
+          # 80%-Business-Logik-Stufe, keine Ausnahme noetig.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -203,6 +217,7 @@ jobs:
             internal/tools/ops.go:80 \
             internal/tools/write.go:80 \
             internal/tools/write_people.go:80 \
+            internal/tools/write_boxes.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
