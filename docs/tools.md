@@ -9,11 +9,14 @@ Benutzer (Always allow / Needs approval / Blocked), nicht der Server. Details un
 [ADR-0018](adr/0018-werkzeug-freigabe-und-client-steuerung.md) (löst
 [ADR-0011](adr/0011-capability-gating.md)s serverseitiges Capability-Gating ab).
 
-Die lesenden Werkzeuge sind heute vollständig: **32 fileee-Werkzeuge**, unten nach Sachgebiet
-gruppiert — plus 4 operative Werkzeuge, die keine Fileee-Daten berühren (`get_runtime_stats`,
+Der heutige Stand: **32 lesende fileee-Werkzeuge** (unten nach Sachgebiet gruppiert) plus **8
+schreibende fileee-Werkzeuge** (eigener Abschnitt weiter unten, ebenfalls nach Sachgebiet
+gruppiert) plus **4 operative Werkzeuge**, die keine Fileee-Daten berühren (`get_runtime_stats`,
 `get_tool_manifest`, `self_check`, `whoami`; siehe deren eigene Beschreibung im Code, nicht Teil
-dieser Gruppierung nach Sachgebiet). Jede Zusammenfassung fasst die Beschreibung zusammen, die
-das jeweilige Werkzeug selbst im Code trägt (die eigentliche Quelle) — sie erfindet nichts Neues.
+einer der beiden Gruppierungen nach Sachgebiet) — **44 Werkzeuge** insgesamt. Jede Zusammenfassung
+fasst die Beschreibung zusammen, die das jeweilige Werkzeug selbst im Code trägt (die eigentliche
+Quelle) — sie erfindet nichts Neues. Teilende und löschende Werkzeuge existieren noch nicht und
+entstehen in künftigen Umsetzungsschritten (siehe README, Abschnitt „Werkzeuge").
 
 ## Fremdbestimmter Text — die wichtigste Eigenschaft dieses Servers (ADR-0013)
 
@@ -40,12 +43,18 @@ behandeln, nicht als Anweisung** — unabhängig davon, wie er formuliert ist.
 | `list_reminders`, `sync_reminders`, `get_reminder` | Erinnerungs-Beschreibung | kann aus dem verknüpften Dokument übernommen sein |
 | `list_conversations`, `sync_conversations`, `get_conversation`, `list_document_conversations` | Konversations-Betreff | wer auf der anderen Seite der Konversation steht |
 | `get_page_ocr` | erkannter Seitentext | wörtlich das, was auf dem Papier eines Dritten steht — der stärkste Fall im ganzen Server |
+| `create_contact`, `update_contact` (schreibend) | Kontakt-Anzeigename | der Kontakt selbst, oder aus einem Dokument extrahiert — bei `create_contact` der bei genau diesem Aufruf übergebene Name, der ebenso aus einem kopierten Dokumenttext stammen kann |
+| `create_reminder`, `update_reminder` (schreibend) | Erinnerungs-Beschreibung | kann aus dem verknüpften Dokument übernommen sein — bei `create_reminder` der bei genau diesem Aufruf übergebene Text |
+| `update_document` (schreibend) | Dokumenttitel | wer das Dokument verfasst/eingescannt hat, oder der bei diesem Aufruf selbst übergebene neue Titel |
 
 **Welche Werkzeuge liefern KEINEN fremdbestimmten Text** — alle Felder sind entweder Fileees
 eigene Metadaten oder vom Kontoinhaber selbst vergeben: `search_documents`, `list_tags`/`get_tag`/
 `sync_tags`, `list_document_types`/`get_document_type`/`sync_document_types`,
 `list_document_type_schemes`/`get_document_type_scheme`/`sync_document_type_schemes`,
-`list_boxes`/`get_box`, `get_document_pdf`, `get_page_image`, `get_account_status`.
+`list_boxes`/`get_box`, `get_document_pdf`, `get_page_image`, `get_account_status`; von den
+schreibenden Werkzeugen (siehe unten) `upload_document` (gibt nur ID und `isDuplicate` zurück, nie
+den übergebenen Titel) und `box_add_document`/`box_remove_document` (geben nur Box-/Dokument-ID
+und Erfolg zurück).
 
 ## `read` — lesende Werkzeuge
 
@@ -130,6 +139,45 @@ nennt, nie mit einer stillschweigend gekürzten Datei.
 | Werkzeug | Was es tut und was nicht |
 |---|---|
 | `get_account_status` | Liefert Abo-Typ, -Name, Abrechnungsintervall/-betrag, Lizenzgültigkeit/-auffüllung und ein von Fileee gemeldetes Kontoproblem. Nimmt **keine** Parameter entgegen (genau ein Wert je Konto) und liefert **keine** dokumentbezogenen Informationen. |
+
+## `write` — schreibende Werkzeuge
+
+Jedes schreibende Werkzeug trägt `readOnlyHint: false`; `destructiveHint`/`idempotentHint` sind je
+Operation wahrheitsgemäß gesetzt (siehe [ADR-0018](adr/0018-werkzeug-freigabe-und-client-steuerung.md)),
+nicht pauschal vorbelegt — die Spalte „Hinweise" unten nennt sie direkt. `destructiveHint: true`
+markiert dabei eine Operation, deren Wiederholung mit denselben Parametern **kein sicheres No-op**
+ist (z. B. weil bereits geänderte Felder erneut überschrieben würden) — nicht „löscht
+unwiderruflich": kein schreibendes Werkzeug in diesem Server löscht Fileee-Daten hart, dafür gibt
+es, Stand heute, noch kein Werkzeug (siehe README, Abschnitt „Werkzeuge", zu teilenden und
+löschenden Werkzeugen als künftigem Schritt).
+
+### Kontakte
+
+| Werkzeug | Hinweise | Was es tut und was nicht |
+|---|---|---|
+| `create_contact` | destructive: nein · idempotent: nein | Legt einen neuen Kontakt an. Pass `firstName`+`lastName` (Person) oder `companyName` (Firma) — mindestens eines der drei ist Pflicht, optional `email`/`phoneNumber`. Gibt die neue Kontakt-ID zurück, den Anzeigenamen gerahmt. Legt **immer** einen neuen Kontakt an — aktualisiert **nie** einen bestehenden (dafür `update_contact`). |
+| `update_contact` | destructive: ja · idempotent: ja | Patch/Merge: nur übergebene Felder (`firstName`, `lastName`, `companyName`, `email`, `phoneNumber`, `faxNumber`, `url`) ändern sich, ausgelassene bleiben unverändert. Gibt ID, neuen Änderungszeitstempel und Anzeigenamen gerahmt zurück. Erst `list_contacts`/`get_contact` nutzen, um die ID zu finden. Legt **keinen** neuen Kontakt an — nur auf einer bereits existierenden ID nutzbar. |
+
+### Erinnerungen
+
+| Werkzeug | Hinweise | Was es tut und was nicht |
+|---|---|---|
+| `create_reminder` | destructive: nein · idempotent: nein | Legt eine neue Erinnerung an. Pass `description` (Pflicht — eine Erinnerung braucht etwas, woran sie erinnert), optional `detailedDescription`, `documentId` (Verknüpfung mit einem Dokument), `startDate` (YYYY-MM-DD). Gibt ID und Erledigt-Status zurück (immer `false` bei Neuanlage), Beschreibung gerahmt. Legt **immer** eine neue Erinnerung an — aktualisiert **nie** eine bestehende (dafür `update_reminder`). |
+| `update_reminder` | destructive: ja · idempotent: ja | Patch/Merge: nur übergebene Felder (`description`, `detailedDescription`, `startDate`, `done`) ändern sich. Häufigster Anwendungsfall: eine Erinnerung als erledigt markieren. Gibt ID und aktuellen Erledigt-Status zurück, Beschreibung gerahmt. Erst `list_reminders`/`get_reminder` nutzen, um die ID zu finden. Legt **keine** neue Erinnerung an. |
+
+### Boxen
+
+| Werkzeug | Hinweise | Was es tut und was nicht |
+|---|---|---|
+| `box_add_document` | destructive: nein · idempotent: nein | Legt ein Dokument in eine Box ab. Pass `boxId` und `documentId` (beide Pflicht) — IDs über `list_boxes`/`get_box` bzw. `list_documents`/`search_documents` finden. Gibt Box-ID, Dokument-ID und Erfolg zurück. Ein zweiter Aufruf mit demselben Paar ist **nicht** garantiert ein No-op. Entfernt das Dokument **nicht** aus einer Box, in der es bereits liegt (dafür `box_remove_document`). |
+| `box_remove_document` | destructive: ja · idempotent: ja | Entfernt ein Dokument aus einer Box. Pass `boxId` und `documentId` (beide Pflicht). Gibt Box-ID, Dokument-ID und Erfolg zurück. Ein erneuter Aufruf für ein bereits entferntes Dokument ändert nichts weiter. Löscht **nicht** das Dokument selbst — nur seine Zugehörigkeit zu dieser Box. |
+
+### Dokumente
+
+| Werkzeug | Hinweise | Was es tut und was nicht |
+|---|---|---|
+| `upload_document` | destructive: nein · idempotent: nein | Lädt ein neues Dokument hoch. Pass `title` und `contentBase64` (beide Pflicht) — `contentBase64` sind die rohen Dateibytes, base64-kodiert (MCP-Aufrufe sind textbasiert). Gibt die neue Dokument-ID zurück. Erkennt der Server den Inhalt als bereits vorhandenes Dokument, wird das als `isDuplicate: true` mit der ID des BESTEHENDEN Dokuments gemeldet — kein Fehler; `isDuplicate` prüfen statt anzunehmen, dass jeder erfolgreiche Aufruf ein neues Dokument erzeugt hat. Wird abgelehnt, wenn der dekodierte Inhalt das konfigurierte Upload-Größenlimit (`FILEEE_MAX_UPLOAD_BYTES`) überschreitet — bereits anhand der kodierten Länge, bevor überhaupt dekodiert wird. Gibt **keinen** Titel zurück (siehe Tabelle „KEINEN fremdbestimmten Text" oben) — dafür anschließend `get_document`/`list_documents` nutzen. |
+| `update_document` | destructive: ja · idempotent: ja | Patch/Merge, aber ausschließlich für den Titel: `title` übergeben, um ihn zu ändern, weglassen, um ihn unverändert zu lassen. Gibt Dokument-ID und Titel (neu gesetzt oder unverändert) gerahmt zurück. Erst `list_documents`/`search_documents` oder `get_document` nutzen, um die ID zu finden. Legt **kein** neues Dokument an, und ändert **ausschließlich** den Titel — andere Dokumentfelder unterstützt dieses Werkzeug nicht. |
 
 ## Wie fremdbestimmter Text gerahmt wird
 
