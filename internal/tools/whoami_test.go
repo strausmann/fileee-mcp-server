@@ -18,7 +18,7 @@ import (
 
 func TestWhoamiResultForHappyPath(t *testing.T) {
 	p := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "bjoern@strausmann.net", Password: "x"}))
-	out, err := whoamiResultFor(context.Background(), p, ServerInfo{Capabilities: "read", Mode: "single"}, &identity.Identity{Subject: "caller-123"})
+	out, err := whoamiResultFor(context.Background(), p, ServerInfo{Mode: "single"}, &identity.Identity{Subject: "caller-123"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,8 +31,8 @@ func TestWhoamiResultForHappyPath(t *testing.T) {
 	if out.Account.Username != "bjoern@strausmann.net" {
 		t.Fatalf("Account.Username = %q, want the account's plain email", out.Account.Username)
 	}
-	if out.Mode != "single" || out.Capabilities != "read" {
-		t.Fatalf("Mode/Capabilities = %q/%q", out.Mode, out.Capabilities)
+	if out.Mode != "single" {
+		t.Fatalf("Mode = %q", out.Mode)
 	}
 
 	// The password must never appear anywhere in the marshaled output, even
@@ -48,20 +48,20 @@ func TestWhoamiResultForHappyPath(t *testing.T) {
 
 func TestWhoamiResultForAccountNotConfigured(t *testing.T) {
 	p := clientpool.New(accounts.NewMulti(map[string]fileee.Credentials{}))
-	out, err := whoamiResultFor(context.Background(), p, ServerInfo{Capabilities: "read", Mode: "multi"}, &identity.Identity{Subject: "stranger"})
+	out, err := whoamiResultFor(context.Background(), p, ServerInfo{Mode: "multi"}, &identity.Identity{Subject: "stranger"})
 	if err != nil {
 		t.Fatalf("not-configured must not be an error, got %v", err)
 	}
 	if out.Account.Configured {
 		t.Fatalf("Account.Configured = true, want false for an unmapped subject")
 	}
-	if out.Identity != "stranger" || out.Mode != "multi" || out.Capabilities != "read" {
-		t.Fatalf("identity/mode/caps should still be reported: %+v", out)
+	if out.Identity != "stranger" || out.Mode != "multi" {
+		t.Fatalf("identity/mode should still be reported: %+v", out)
 	}
 }
 
 func TestGetWhoamiHandlerRejectsWithoutIdentity(t *testing.T) {
-	h := getWhoamiHandler((*clientpool.Pool)(nil), ServerInfo{Capabilities: "read", Mode: "single"}, discardLogger())
+	h := getWhoamiHandler((*clientpool.Pool)(nil), ServerInfo{Mode: "single"}, discardLogger())
 	_, _, err := h(context.Background(), nil, whoamiInput{})
 	if err == nil {
 		t.Fatal("getWhoamiHandler without identity in context: err = nil, want error")
