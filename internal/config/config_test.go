@@ -1,7 +1,9 @@
 package config
 
 import (
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +93,80 @@ func TestLoadConfigLeitetTransportLimitAusUploadLimitAb(t *testing.T) {
 	if cfg.MaxRequestBodyBytes < mindestens {
 		t.Fatalf("MaxRequestBodyBytes = %d, erwartet mindestens %d (Base64-Aufschlag plus Rahmen)",
 			cfg.MaxRequestBodyBytes, mindestens)
+	}
+}
+
+// TestLoadConfigMaxRequestBodyBytesSaettigtBeiSehrGrossemUploadLimit belegt
+// den Ueberlauf-Fund (Review, 23.08.2026): FILEEE_MAX_UPLOAD_BYTES
+// akzeptiert jeden nicht-negativen int64-Wert, bis math.MaxInt64. Mit der
+// urspruenglichen Inline-Formel maxUploadBytes*4/3 + 64<<10 lief bereits
+// die Multiplikation *4 bei einem Wert nahe math.MaxInt64 ueber int64
+// hinaus und kippte MaxRequestBodyBytes in einen NEGATIVEN Wert — genau
+// der Zustand, den intWerts eigene Negativ-Pruefung fuer den EINGABEWERT
+// verhindern soll ("ein negatives Upload-Limit ergaebe ein negatives
+// MaxRequestBodyBytes"), hier aber ueber einen positiven, von intWert
+// als gueltig akzeptierten Wert erreicht.
+//
+// Getestet ueber LoadConfig (nicht nur den nackten Helfer
+// maxRequestBodyBytesFor direkt), weil das der tatsaechlich verdrahtete
+// Pfad ist: FILEEE_MAX_UPLOAD_BYTES als String aus der Umgebung, geparst
+// von intWert, abgeleitet zu MaxRequestBodyBytes.
+//
+// Gegenprobe (Kommentar, nicht ausfuehrbar, da die alte Inline-Formel
+// entfernt wurde): mit maxUploadBytes*4/3 + 64<<10 direkt in int64
+// gerechnet wird dieser Test ROT — bei maxUploadBytes nahe math.MaxInt64
+// lief die Multiplikation ueber und lieferte ein negatives
+// MaxRequestBodyBytes, was die Test-Bedingung "MaxRequestBodyBytes > 0"
+// verletzt.
+func TestLoadConfigMaxRequestBodyBytesSaettigtBeiSehrGrossemUploadLimit(t *testing.T) {
+	t.Parallel()
+
+	env := minimalToken()
+	env["FILEEE_MAX_UPLOAD_BYTES"] = strconv.FormatInt(math.MaxInt64, 10)
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+
+	if cfg.MaxRequestBodyBytes <= 0 {
+		t.Fatalf("MaxRequestBodyBytes = %d, wollte einen POSITIVEN Wert (die alte Formel maxUploadBytes*4/3 + 64<<10 lief hier ueber int64 und lieferte einen negativen Wert)",
+			cfg.MaxRequestBodyBytes)
+	}
+	if cfg.MaxRequestBodyBytes != math.MaxInt64 {
+		t.Errorf("MaxRequestBodyBytes = %d, want %d (math.MaxInt64, gesaettigt) fuer FILEEE_MAX_UPLOAD_BYTES = math.MaxInt64",
+			cfg.MaxRequestBodyBytes, int64(math.MaxInt64))
+	}
+}
+
+// TestMaxRequestBodyBytesForGrenzfaelle prueft maxRequestBodyBytesFor direkt
+// (nicht nur ueber LoadConfig) an den drei Stellen, an denen die alte
+// Inline-Formel ueberlaufen konnte: der Multiplikation *4, der Addition
+// des Rahmen-Zuschlags, und einem normalen, kleinen Wert als
+// Kontrollfall (keine Regression fuer den Alltagsfall).
+func TestMaxRequestBodyBytesForGrenzfaelle(t *testing.T) {
+	t.Parallel()
+
+	// Kontrollfall: ein normaler Wert veraendert sich durch den Fix nicht
+	// gegenueber der alten Formel.
+	if got, want := maxRequestBodyBytesFor(3000000), int64(3000000*4/3)+64<<10; got != want {
+		t.Errorf("maxRequestBodyBytesFor(3000000) = %d, want %d (unveraendert gegenueber der alten Formel)", got, want)
+	}
+
+	// maxUploadBytes*4 selbst liefe hier ueber, noch bevor /3 greift.
+	if got := maxRequestBodyBytesFor(math.MaxInt64); got != math.MaxInt64 {
+		t.Errorf("maxRequestBodyBytesFor(math.MaxInt64) = %d, want %d (math.MaxInt64)", got, int64(math.MaxInt64))
+	}
+	if got := maxRequestBodyBytesFor(math.MaxInt64); got <= 0 {
+		t.Errorf("maxRequestBodyBytesFor(math.MaxInt64) = %d, wollte einen POSITIVEN Wert", got)
+	}
+
+	// Ein Wert knapp unter der *4-Ueberlaufgrenze: *4/3 selbst laeuft
+	// nicht ueber, aber das anschliessende +64<<10 koennte es -- auch das
+	// muss saettigen statt zu kippen.
+	knappUnterGrenze := int64(math.MaxInt64/4) - 1
+	if got := maxRequestBodyBytesFor(knappUnterGrenze); got <= 0 {
+		t.Errorf("maxRequestBodyBytesFor(%d) = %d, wollte einen POSITIVEN Wert", knappUnterGrenze, got)
 	}
 }
 

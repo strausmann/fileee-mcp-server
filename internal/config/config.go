@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/netip"
 	"net/url"
@@ -353,7 +354,12 @@ func ladeZahlenwerte(cfg *Config, env Env) error {
 	// Base64 blaeht den Nutzinhalt um Faktor 4/3 auf, dazu kommt der
 	// JSON-RPC-Rahmen. Ohne diese Ableitung wuerde der 4-MiB-Default des SDK
 	// groessere Uploads mit 413 abweisen, bevor der Tool-Handler laeuft.
-	cfg.MaxRequestBodyBytes = cfg.MaxUploadBytes*4/3 + 64<<10
+	// maxRequestBodyBytesFor saettigt statt zu ueberlaufen, wenn
+	// FILEEE_MAX_UPLOAD_BYTES sehr gross gewaehlt ist (deren eigener
+	// Doc-Kommentar erklaert, warum genau dieselbe Ueberlaufklasse hier
+	// wie in internal/tools/write_documents.go's base64EncodedLenFor
+	// auftreten kann).
+	cfg.MaxRequestBodyBytes = maxRequestBodyBytesFor(cfg.MaxUploadBytes)
 	return nil
 }
 
@@ -726,6 +732,57 @@ func splitListe(roh string) []string {
 		}
 	}
 	return out
+}
+
+// maxRequestBodyBytesFor berechnet MaxUploadBytes*4/3 + 64 KiB — dieselbe
+// Formel, die LoadConfig frueher direkt inline schrieb (Base64s
+// Aufblaeh-Faktor 4/3 plus ein 64-KiB-Rahmen fuer JSON-RPC/HTTP) —
+// saettigt aber auf math.MaxInt64 statt in int64 zu ueberlaufen, wenn
+// maxUploadBytes sehr gross ist.
+//
+// FILEEE_MAX_UPLOAD_BYTES akzeptiert jeden nicht-negativen int64-Wert
+// (intWert unten weist nur NEGATIVE Werte zurueck) — ein Betreiber kann
+// ihn also beliebig nah an math.MaxInt64 setzen. Die urspruengliche
+// Inline-Formel rechnete das in zwei Schritten, von denen JEDER fuer
+// sich bei einem solchen Wert ueberlaufen kann: maxUploadBytes*4 laeuft
+// bereits ueber, sobald maxUploadBytes math.MaxInt64/4 uebersteigt —
+// lange bevor die anschliessende /3 den Wert wieder senken wuerde —,
+// und selbst ein Zwischenergebnis, das Multiplikation und Division
+// unbeschadet uebersteht, kann beim abschliessenden + 64<<10 noch
+// ueberlaufen, wenn es bereits nahe math.MaxInt64 liegt. Beide
+// Ueberlaeufe kippen in ein NEGATIVES MaxRequestBodyBytes — genau der
+// Fehler, den intWerts eigener Kommentar unten fuer einen negativen
+// EINGABEWERT beschreibt, hier aber ueber einen Wert erreichbar, den
+// intWert als voellig gueltig durchlaesst (einen sehr grossen
+// positiven). Das ist dieselbe Ueberlauf-Klasse, vor der
+// internal/tools/write_documents.go's base64EncodedLenFor beim
+// Groessen-Gate fuer die kodierte Laenge schuetzt — siehe dessen
+// eigenen Doc-Kommentar fuer die allgemeine Begruendung. Hier steht
+// bewusst eine zweite, eigenstaendig kommentierte Implementierung statt
+// eines gemeinsamen Helfers: beide liegen in verschiedenen Paketen
+// (hier internal/config, dort internal/tools) und berechnen zwei
+// UNTERSCHIEDLICHE Ausdruecke (dieser hier addiert obendrauf einen
+// festen Rahmen-Zuschlag und rundet ab, statt auf den naechsten
+// Base64-Block aufzurunden) — ein gemeinsames Paket ueber diese
+// Paketgrenze hinweg fuer zwei Zeilen saettigender Arithmetik waere
+// mehr Aufwand als die Duplikation, die es einsparen wuerde.
+//
+// Saettigung (statt auf 0 abzuschneiden oder in Panic zu geraten) haelt
+// MaxRequestBodyBytes einen gueltigen, nutzbaren — wenn auch absurd
+// grosszuegigen — Byte-Deckel, statt einen Wert, der den Server jeden
+// Upload ablehnen liesse (siehe base64EncodedLenFor's eigenen
+// Doc-Kommentar dafuer, warum ein gesaettigter, aber positiver Deckel
+// im Sinne dieses Werts weiterhin ein korrekter Deckel ist).
+func maxRequestBodyBytesFor(maxUploadBytes int64) int64 {
+	const rahmenZuschlag = 64 << 10 // 64 KiB Spielraum fuer JSON-RPC/HTTP-Rahmen
+	if maxUploadBytes > math.MaxInt64/4 {
+		return math.MaxInt64
+	}
+	aufgeblaeht := maxUploadBytes * 4 / 3
+	if aufgeblaeht > math.MaxInt64-rahmenZuschlag {
+		return math.MaxInt64
+	}
+	return aufgeblaeht + rahmenZuschlag
 }
 
 func intWert(env Env, key string, fallback int64) (int64, error) {
