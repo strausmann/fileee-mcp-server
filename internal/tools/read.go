@@ -2,9 +2,10 @@
 // only entry point today — it mounts this server's full read/write/meta
 // tool set: 32 fileee-backed read tools (documents, reference data,
 // people data) plus 4 operational tools that never touch Fileee data at
-// all (get_runtime_stats, get_tool_manifest, self_check, whoami) plus,
-// since Task 1 (write.go), 1 fileee-backed write tool (update_contact) —
-// 37 tools total (registeredReadTools() in names.go is the live count;
+// all (get_runtime_stats, get_tool_manifest, self_check, whoami) plus 8
+// fileee-backed write tools (create/update contact, create/update reminder,
+// box add/remove document, upload/update document) —
+// 44 tools total (registeredReadTools() in names.go is the live count;
 // its name predates write.go and it counts every mounted tool, not only
 // read ones — see its own doc comment). Every Fileee-backed handler
 // resolves its own connection through a clientpool.Pool, keyed to the
