@@ -50,7 +50,7 @@ func TestReminderOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterWriteToolsMeldetCreateReminderAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolCreateReminder] {
@@ -250,7 +250,7 @@ func TestUpdateReminderInputFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterWriteToolsMeldetUpdateReminderAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolUpdateReminder] {

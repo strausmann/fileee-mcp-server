@@ -191,15 +191,55 @@ func uploadDocumentFromService(ctx context.Context, service documentUploadServic
 	return uploadDocumentResult(res, false)
 }
 
-// uploadDocumentHandler resolves upload_document. The base64 decode
-// runs before clientFor — the same order every other handler in this
-// package uses for its own required-input validation (write.go's own
-// doc comment on updateContactHandler) — so a caller's malformed
+// base64EncodedLenFor returns the base64 (encoding/base64.StdEncoding,
+// padded) encoded length of n raw bytes — ceil(n/3)*4, computed as
+// ((n+2)/3)*4 via integer division. Standard base64 packs input into
+// blocks of 3 bytes -> 4 characters, padding the final partial block up
+// to a full 4-character group — so this function is a non-decreasing
+// step function of n (every additional byte either keeps the encoded
+// length the same, within a block, or adds exactly 4 once a new block
+// starts). That monotonicity is what makes it usable as a size gate:
+// for a given byte ceiling limit, any base64 string whose length
+// exceeds base64EncodedLenFor(limit) is GUARANTEED to decode to more
+// than limit bytes (if it decodes at all) — so uploadDocumentHandler
+// below can reject it by length alone, before ever calling
+// base64.StdEncoding.DecodeString on it.
+func base64EncodedLenFor(n int64) int64 {
+	return ((n + 2) / 3) * 4
+}
+
+// uploadDocumentHandler resolves upload_document. maxUploadBytes is
+// this server's configured upload size ceiling
+// (FILEEE_MAX_UPLOAD_BYTES, config.go, threaded in via ServerInfo —
+// see registerDocumentWriteTools above and ServerInfo's own doc
+// comment, whoami.go) — the only place that value is enforced.
+//
+// Grenzfall maxUploadBytes<=0: config.go's ladeZahlenwerte (intWert)
+// rejects a NEGATIVE FILEEE_MAX_UPLOAD_BYTES at startup already
+// (config.go's own comment on intWert — "ein negatives Upload-Limit
+// [ergaebe] ein negatives MaxRequestBodyBytes, und der Server startete
+// damit"), so maxUploadBytes here is never negative. It CAN be exactly
+// 0 (an operator setting FILEEE_MAX_UPLOAD_BYTES=0 explicitly — the
+// default, unset case is 2 MiB, config.go). This server has no
+// existing "0 means unlimited" convention anywhere — MaxInflight, this
+// codebase's other config.go-loaded ceiling, is built straight into a
+// semaphore.Weighted(cfg.MaxInflight) (ratelimit.go, newToolCallLimiter):
+// at 0, TryAcquire always fails, i.e. 0 is enforced as "reject
+// everything", not read as "unlimited". This function follows that
+// same convention rather than inventing a new "0 is special" case just
+// for uploads: 0 is enforced like any other ceiling, meaning it rejects
+// every upload whose decoded content is not itself empty (see
+// TestUploadDocumentHandlerLehntJedenUploadAbWennLimitNullIst).
+//
+// The base64 decode (like the size check below) runs before
+// clientFor — the same order every other handler in this package uses
+// for its own required-input validation (write.go's own doc comment on
+// updateContactHandler) — so a caller's malformed OR oversized
 // ContentBase64 is rejected without spending a login round trip on it,
 // and without ever calling service.Upload at all, and so this path is
 // testable without a *clientpool.Pool at all (see
 // write_documents_test.go).
-func uploadDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[uploadDocumentInput, uploadDocumentOutput] {
+func uploadDocumentHandler(p *clientpool.Pool, maxUploadBytes int64, logger *slog.Logger) mcp.ToolHandlerFor[uploadDocumentInput, uploadDocumentOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in uploadDocumentInput) (*mcp.CallToolResult, uploadDocumentOutput, error) {
 		start := time.Now()
 		// No slog.String args here (unlike updateContactHandler's own
@@ -212,11 +252,38 @@ func uploadDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHand
 		// diagnostic logs as to its structured tool output.
 		logToolStart(ctx, logger, ToolUploadDocument)
 
+		// Encoded-length gate FIRST, before ever touching
+		// base64.StdEncoding.DecodeString: an oversized ContentBase64
+		// is rejected by its length alone, so this server never
+		// allocates/decodes a caller-controlled multi-megabyte string
+		// it is going to reject anyway. See base64EncodedLenFor's own
+		// doc comment for why encLen > base64EncodedLenFor(maxUploadBytes)
+		// guarantees the decoded content (if it decodes at all) would
+		// exceed maxUploadBytes.
+		encLen := int64(len(in.ContentBase64))
+		if maxEncLen := base64EncodedLenFor(maxUploadBytes); encLen > maxEncLen {
+			tooLarge := fmt.Errorf("fileee-mcp: tools: %s: contentBase64 is too large: %d encoded bytes exceeds the configured upload limit of %d bytes (decoded)", ToolUploadDocument, encLen, maxUploadBytes)
+			logToolEnd(ctx, logger, ToolUploadDocument, start, "", 0, tooLarge)
+			return nil, uploadDocumentOutput{}, tooLarge
+		}
+
 		decoded, err := base64.StdEncoding.DecodeString(in.ContentBase64)
 		if err != nil {
 			wrapped := fmt.Errorf("fileee-mcp: tools: %s: contentBase64 is not valid base64: %w", ToolUploadDocument, err)
 			logToolEnd(ctx, logger, ToolUploadDocument, start, "", 0, wrapped)
 			return nil, uploadDocumentOutput{}, wrapped
+		}
+
+		// Second gate, on the ACTUAL decoded byte count: the encoded-
+		// length gate above is a conservative upper-bound check (it
+		// can let a string through whose decoded size is still at or
+		// under the limit even though the check couldn't rule out
+		// more — see base64EncodedLenFor's own doc comment), this is
+		// the exact check.
+		if decodedLen := int64(len(decoded)); decodedLen > maxUploadBytes {
+			tooLarge := fmt.Errorf("fileee-mcp: tools: %s: contentBase64 decodes to %d bytes, exceeds the configured upload limit of %d bytes", ToolUploadDocument, decodedLen, maxUploadBytes)
+			logToolEnd(ctx, logger, ToolUploadDocument, start, "", 0, tooLarge)
+			return nil, uploadDocumentOutput{}, tooLarge
 		}
 
 		client, err := clientFor(ctx, p)
@@ -395,8 +462,13 @@ func updateDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHand
 // box_add_document/box_remove_document from. Split into its own
 // function (rather than inlined into registerWriteTools) so this file
 // stays self-contained, the same reasoning registerBoxWriteTools' own
-// doc comment gives (write_boxes.go).
-func registerDocumentWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+// doc comment gives (write_boxes.go). maxUploadBytes is
+// registerWriteTools' own info.MaxUploadBytes (config.go's
+// FILEEE_MAX_UPLOAD_BYTES) — threaded through as its own parameter,
+// not the whole ServerInfo, since uploadDocumentHandler below is this
+// package's only consumer of it; update_document needs no per-instance
+// fact at all.
+func registerDocumentWriteTools(s *mcp.Server, p *clientpool.Pool, maxUploadBytes int64, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolUploadDocument,
 		Description: "Upload a new document into the calling user's Fileee account. Pass title " +
@@ -405,14 +477,15 @@ func registerDocumentWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.
 			"If the server recognizes the content as a document that already exists in the " +
 			"account, this is reported as isDuplicate:true with the EXISTING document's ID — not " +
 			"as an error; check isDuplicate rather than assuming every successful call created a " +
-			"new document. Use get_document/list_documents afterwards to inspect the result.",
+			"new document. Rejected if the decoded content exceeds this server's configured " +
+			"upload size limit. Use get_document/list_documents afterwards to inspect the result.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Upload document",
 			ReadOnlyHint:    false,
 			DestructiveHint: boolPtr(false),
 			IdempotentHint:  false,
 		},
-	}, uploadDocumentHandler(p, logger))
+	}, uploadDocumentHandler(p, maxUploadBytes, logger))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolUpdateDocument,

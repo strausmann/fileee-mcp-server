@@ -437,8 +437,10 @@ func createContactHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 // registerPeopleTools/registerBoxTools/... already use for their own
 // tool families. update_contact (Task 1) is the first of eight planned
 // write tools (the plan's own task list); later tasks add to this
-// function, they do not replace it.
-func registerWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+// function, they do not replace it. info is only threaded through to
+// registerDocumentWriteTools below (info.MaxUploadBytes) — the other
+// tool families registered here need no per-instance fact from it.
+func registerWriteTools(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolUpdateContact,
 		Description: "Update an existing contact in the calling user's Fileee account. This is " +
@@ -489,8 +491,11 @@ func registerWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) 
 	// write_documents.go — a fourth topic (document creation via
 	// upload), not a variant of any shape already established in this
 	// file, write_people.go, or write_boxes.go — see that file's own
-	// package doc comment.
-	registerDocumentWriteTools(s, p, logger)
+	// package doc comment. info.MaxUploadBytes is threaded through
+	// explicitly (not the whole ServerInfo) — upload_document is this
+	// package's only consumer of that value, update_document (the
+	// file's other tool) needs no per-instance fact at all.
+	registerDocumentWriteTools(s, p, info.MaxUploadBytes, logger)
 }
 
 // boolPtr returns a pointer to v — mcp.ToolAnnotations.DestructiveHint

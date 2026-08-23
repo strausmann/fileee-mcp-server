@@ -32,6 +32,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -67,7 +68,7 @@ func TestUploadDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterWriteToolsMeldetUploadDocumentAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolUploadDocument] {
@@ -329,7 +330,7 @@ func TestUploadDocumentFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnam
 // gangway/HTTP round trip" pattern every other handler-level
 // pre-clientFor test in this package uses.
 func TestUploadDocumentHandlerLehntUngueltigesBase64OhneNetzwerkzugriffAb(t *testing.T) {
-	handler := uploadDocumentHandler(nil, discardLogger())
+	handler := uploadDocumentHandler(nil, defaultTestMaxUploadBytes, discardLogger())
 
 	_, _, err := handler(context.Background(), nil, uploadDocumentInput{Title: "t", ContentBase64: "not valid base64!!"})
 	if err == nil {
@@ -351,7 +352,7 @@ func TestUploadDocumentHandlerLehntUngueltigesBase64OhneNetzwerkzugriffAb(t *tes
 // (clientFor failing without a verified identity in ctx) must not
 // mention base64 at all.
 func TestUploadDocumentHandlerLaesstGueltigesBase64BisZuClientForDurch(t *testing.T) {
-	handler := uploadDocumentHandler(nil, discardLogger())
+	handler := uploadDocumentHandler(nil, defaultTestMaxUploadBytes, discardLogger())
 
 	validBase64 := "aGVsbG8gd29ybGQ=" // "hello world"
 	_, _, err := handler(context.Background(), nil, uploadDocumentInput{Title: "t", ContentBase64: validBase64})
@@ -360,6 +361,151 @@ func TestUploadDocumentHandlerLaesstGueltigesBase64BisZuClientForDurch(t *testin
 	}
 	if strings.Contains(err.Error(), "base64") {
 		t.Errorf("gueltiges base64 wurde faelschlich als ungueltig abgewiesen: %v", err)
+	}
+}
+
+// defaultTestMaxUploadBytes is a stand-in for config.go's own
+// FILEEE_MAX_UPLOAD_BYTES default (2<<20, 2 MiB — config.go, LoadConfig)
+// for handler-level tests that exercise something OTHER than the size
+// limit itself and just need a ceiling generous enough to never
+// interfere (every ContentBase64 value used in this package's existing
+// tests is a handful of bytes).
+const defaultTestMaxUploadBytes = 2 << 20
+
+// TestBase64EncodedLenForMatchesStdEncodingsOwnLength is a direct,
+// table-driven check of base64EncodedLenFor's own formula against
+// base64.StdEncoding.EncodedLen (the standard library's own, trusted
+// implementation of the same computation) across a block boundary (0
+// through 7 raw bytes covers every remainder mod 3 twice over) — this
+// package's own size-gate math is only as sound as this formula is, so
+// it is checked directly rather than only indirectly through the
+// handler-level tests below.
+func TestBase64EncodedLenForMatchesStdEncodingsOwnLength(t *testing.T) {
+	for n := int64(0); n <= 7; n++ {
+		got := base64EncodedLenFor(n)
+		want := int64(base64.StdEncoding.EncodedLen(int(n)))
+		if got != want {
+			t.Errorf("base64EncodedLenFor(%d) = %d, want %d (base64.StdEncoding.EncodedLen)", n, got, want)
+		}
+	}
+}
+
+// TestUploadDocumentHandlerLehntZuGrosseKodierteLaengeVorDemDekodierenAb
+// is this task's own required first named case: a caller-supplied
+// ContentBase64 whose ENCODED length alone already proves the decoded
+// content would exceed the configured limit is rejected before
+// base64.StdEncoding.DecodeString is ever called on it. The counter-
+// check baked into this same test (not a separate one): the oversized
+// string here is NOT valid base64 at all (repeated non-base64
+// characters) — if the encoded-length gate did not run first, decoding
+// would fail instead, and the error would mention "base64", not size.
+// A size-specific error therefore proves the length gate fired before
+// the decode was ever attempted.
+func TestUploadDocumentHandlerLehntZuGrosseKodierteLaengeVorDemDekodierenAb(t *testing.T) {
+	const limit = int64(10) // bytes, decoded
+	handler := uploadDocumentHandler(nil, limit, discardLogger())
+
+	// 64 "!" characters: not valid base64 (not in the base64 alphabet),
+	// but far longer than base64EncodedLenFor(10) = 16 — long enough
+	// that the length gate must reject it on length alone.
+	oversizedGarbage := strings.Repeat("!", 64)
+
+	_, _, err := handler(context.Background(), nil, uploadDocumentInput{Title: "t", ContentBase64: oversizedGarbage})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !strings.Contains(err.Error(), ToolUploadDocument) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolUploadDocument)
+	}
+	if strings.Contains(err.Error(), "not valid base64") {
+		t.Errorf("Fehlermeldung %q ist eine base64-Fehlermeldung — die Groessenpruefung haette VOR dem Dekodieren greifen muessen: %v", err.Error(), err)
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("Fehlermeldung %q nennt nicht, dass die Eingabe zu gross war", err.Error())
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d", limit)) {
+		t.Errorf("Fehlermeldung %q nennt nicht das konfigurierte Limit %d", err.Error(), limit)
+	}
+}
+
+// TestUploadDocumentHandlerLehntZuGrosseDekodierteBytesAb is this
+// task's own required second named case: content whose ENCODED length
+// alone does not yet prove a violation (it decodes without error) but
+// whose DECODED byte count exceeds the limit — knapp UEBER dem Limit,
+// as the task brief requires. This proves the second, exact gate (on
+// len(decoded)) fires even when the first, conservative gate
+// (base64EncodedLenFor) let the string through.
+func TestUploadDocumentHandlerLehntZuGrosseDekodierteBytesAb(t *testing.T) {
+	const limit = int64(10) // bytes, decoded
+	handler := uploadDocumentHandler(nil, limit, discardLogger())
+
+	// 11 raw bytes -> one over the limit. Its encoded length,
+	// base64EncodedLenFor(11) = 16, equals base64EncodedLenFor(10) = 16
+	// (11 and 10 share the same padded 4-byte block count), so the
+	// first gate lets it through and only the decoded-byte check can
+	// catch it.
+	tooLarge := bytes.Repeat([]byte("x"), int(limit)+1)
+	encoded := base64.StdEncoding.EncodeToString(tooLarge)
+	if base64EncodedLenFor(limit) != base64EncodedLenFor(limit+1) {
+		t.Fatalf("Testannahme verletzt: base64EncodedLenFor(%d)=%d != base64EncodedLenFor(%d)=%d — die erste Pruefung wuerde diesen Fall schon abfangen, der Test belegt dann nicht die zweite Pruefung", limit, base64EncodedLenFor(limit), limit+1, base64EncodedLenFor(limit+1))
+	}
+
+	_, _, err := handler(context.Background(), nil, uploadDocumentInput{Title: "t", ContentBase64: encoded})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !strings.Contains(err.Error(), ToolUploadDocument) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolUploadDocument)
+	}
+	if !strings.Contains(err.Error(), "decodes to") {
+		t.Errorf("Fehlermeldung %q nennt nicht die dekodierte Groesse", err.Error())
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("%d", limit)) {
+		t.Errorf("Fehlermeldung %q nennt nicht das konfigurierte Limit %d", err.Error(), limit)
+	}
+}
+
+// TestUploadDocumentHandlerLaesstBytesKnappUnterDemLimitBisZuClientForDurch
+// is this task's own required third named case, and the Gegenprobe to
+// the two rejection tests above: content knapp UNTER dem Limit must
+// NOT be rejected by either size gate — it must reach clientFor (which
+// then fails for its own, unrelated reason: no verified identity in
+// ctx). The error must mention neither "base64" nor "too large" nor
+// "decodes to".
+func TestUploadDocumentHandlerLaesstBytesKnappUnterDemLimitBisZuClientForDurch(t *testing.T) {
+	const limit = int64(10) // bytes, decoded
+	handler := uploadDocumentHandler(nil, limit, discardLogger())
+
+	justUnderLimit := bytes.Repeat([]byte("x"), int(limit)-1)
+	encoded := base64.StdEncoding.EncodeToString(justUnderLimit)
+
+	_, _, err := handler(context.Background(), nil, uploadDocumentInput{Title: "t", ContentBase64: encoded})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus (clientFor ohne verifizierte Identitaet muss scheitern)")
+	}
+	for _, mustNotContain := range []string{"base64", "too large", "decodes to"} {
+		if strings.Contains(err.Error(), mustNotContain) {
+			t.Errorf("Inhalt unter dem Limit wurde faelschlich als zu gross/ungueltig abgewiesen (Fehlermeldung enthaelt %q): %v", mustNotContain, err)
+		}
+	}
+}
+
+// TestUploadDocumentHandlerLehntJedenUploadAbWennLimitNullIst belegt die
+// im Doc-Kommentar von uploadDocumentHandler getroffene Entscheidung:
+// FILEEE_MAX_UPLOAD_BYTES=0 bedeutet NICHT "unbegrenzt" (anders als es
+// ohne diesen Test stillschweigend spaeter angenommen werden koennte),
+// sondern wird wie jede andere Obergrenze durchgesetzt — jeder nicht
+// selbst leere Upload wird abgelehnt.
+func TestUploadDocumentHandlerLehntJedenUploadAbWennLimitNullIst(t *testing.T) {
+	handler := uploadDocumentHandler(nil, 0, discardLogger())
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("x"))
+	_, _, err := handler(context.Background(), nil, uploadDocumentInput{Title: "t", ContentBase64: encoded})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus — Limit 0 muss jeden nicht-leeren Upload ablehnen")
+	}
+	if !strings.Contains(err.Error(), "0") {
+		t.Errorf("Fehlermeldung %q nennt nicht das Limit 0", err.Error())
 	}
 }
 
@@ -386,7 +532,7 @@ func TestUpdateDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterWriteToolsMeldetUpdateDocumentAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolUpdateDocument] {

@@ -53,7 +53,7 @@ func TestUpdateContactOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterWriteToolsMeldetUpdateContactAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolUpdateContact] {
@@ -378,7 +378,7 @@ func TestCreateContactOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterWriteToolsMeldetCreateContactAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolCreateContact] {

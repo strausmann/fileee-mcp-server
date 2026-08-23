@@ -133,8 +133,11 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 
 	// Task 1 (write.go): the first write-class tool. Write tools are
 	// always mounted, the same way every read tool above is — see
-	// write.go's own package doc comment.
-	registerWriteTools(s, p, logger)
+	// write.go's own package doc comment. info is threaded through here
+	// (not just to registerOpsTools above) because upload_document
+	// (write_documents.go, via registerDocumentWriteTools) needs
+	// info.MaxUploadBytes to enforce the configured upload size limit.
+	registerWriteTools(s, p, info, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current

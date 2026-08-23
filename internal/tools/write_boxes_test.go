@@ -48,7 +48,7 @@ func TestBoxDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterWriteToolsMeldetBoxAddDocumentAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolBoxAddDocument] {
@@ -223,7 +223,7 @@ func TestAddBoxDocumentHandlerLaesstGueltigeEingabenBisZuClientForDurch(t *testi
 func TestRegisterWriteToolsMeldetBoxRemoveDocumentAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerWriteTools(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	names := toolNamesOf(t, s)
 	if !names[ToolBoxRemoveDocument] {
