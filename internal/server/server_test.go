@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -384,10 +383,11 @@ func TestToolAuthorizationAllowsEveryAuthenticatedCaller(t *testing.T) {
 // configured issuer/audience — the only thing wrong with it is that this
 // subject was never added to MCP_ALLOWED_SUBJECTS (testConfig only lists
 // "abc123"). It must reach the tool (an ordinary, allowed call at the
-// gangway/tool-authorization layer — this is not what ReadToolKinds
-// guards) and then be refused there, by clientFor/accounts.ErrNoAccount —
-// the same "access denied" tool-level result an unmapped multi-mode
-// subject gets (TestUnknownCallerGetsAToolErrorNotAServerError, in
+// gangway/tool-authorization layer, which is access.AllowAll() and lets it
+// through regardless) and then be refused there, by
+// clientFor/accounts.ErrNoAccount — the same "access denied" tool-level
+// result an unmapped multi-mode subject gets
+// (TestUnknownCallerGetsAToolErrorNotAServerError, in
 // internal/tools/read_test.go), not a protocol-level failure.
 func TestNewRefusesASubjectNotOnTheAllowlistDespiteAValidToken(t *testing.T) {
 	fileeeMock := newFileeeMock(t)
@@ -910,36 +910,5 @@ func TestSessionFilePathIsDeterministicUniqueAndFilesystemSafe(t *testing.T) {
 	other := sessionFilePath(dir, "different@example.com")
 	if other == first {
 		t.Error("zwei unterschiedliche Konto-Keys ergaben dieselbe Session-Datei")
-	}
-}
-
-// --- claimStrings: die drei Wire-Formen eines Claim-Werts -----------------
-
-// TestClaimStrings deckt claimStrings direkt ab: JSON-dekodierte Token-Claims
-// (id.Claims) liefern einen Listenwert immer als []any, nie als []string —
-// encoding/json kennt beim Dekodieren nach map[string]any keinen praeziseren
-// Slice-Typ. Der []string-Zweig ist trotzdem kein toter Code: id.Claims kann
-// auch von Hand gebaut sein, wie es die uebrigen capabilitiesFor-Tests in
-// dieser Datei tun.
-func TestClaimStrings(t *testing.T) {
-	cases := []struct {
-		name string
-		in   any
-		want []string
-	}{
-		{"einzelner String (Entra-App-Rollen)", "write", []string{"write"}},
-		{"Liste ueber JSON dekodiert ([]any, Authentik-Gruppen)", []any{"read", "share"}, []string{"read", "share"}},
-		{"Liste-Eintrag, der kein String ist, wird uebersprungen", []any{"read", 42}, []string{"read"}},
-		{"von Hand gebaute []string", []string{"read"}, []string{"read"}},
-		{"unbekannter Typ liefert nil", 42, nil},
-		{"nil liefert nil", nil, nil},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := claimStrings(tc.in)
-			if !slices.Equal(got, tc.want) {
-				t.Errorf("claimStrings(%#v) = %#v, want %#v", tc.in, got, tc.want)
-			}
-		})
 	}
 }

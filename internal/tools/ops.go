@@ -543,15 +543,15 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetToolManifest,
-		Description: "List every tool actually mounted on the server instance answering this call, " +
-			"with each tool's name, description and permission group. Returns the total count and " +
-			"one entry per tool, always including get_runtime_stats and get_tool_manifest itself. " +
-			"Use it to see exactly which tools the calling identity's server instance offers right " +
-			"now, for example after a deployment. It does not report tools mounted on a different " +
-			"permission-group instance than the one serving this call — the server builds one such " +
-			"instance per reachable capability combination, and each caller only ever reaches its " +
-			"own — and it does not claim this set is everything this server will ever offer, only " +
-			"what is registered in the build answering this particular call.",
+		Description: "List every tool actually mounted on this server, with each tool's name, " +
+			"description and title. Returns the total count and one entry per tool, always " +
+			"including get_runtime_stats and get_tool_manifest itself. There is one server " +
+			"instance and every tool on it is available to every authenticated caller — deciding " +
+			"which of those tools a particular caller should actually use is the client's " +
+			"responsibility, not something this server enforces per tool. Use it to see the " +
+			"server's full, current tool set, for example after a deployment, and it does not " +
+			"claim this set is everything this server will ever offer, only what is registered " +
+			"right now.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Tool manifest"},
 	}, getToolManifestHandler(s, logger))
 

@@ -113,9 +113,8 @@ type Config struct {
 	Accounts    []Account
 
 	// MaxDownloadBytes und MaxUploadBytes sind fuer kuenftige Download-/
-	// Upload-Werkzeuge vorgesehen (Capability-Gruppen read/write, siehe
-	// README "Funktionsumfang festlegen"). Die Bibliotheksfaehigkeit dafuer
-	// EXISTIERT bereits in go-fileee — DocumentService.Upload(ctx, r
+	// Upload-Werkzeuge vorgesehen (siehe README "Funktionsumfang"). Die
+	// Bibliotheksfaehigkeit dafuer EXISTIERT bereits in go-fileee — DocumentService.Upload(ctx, r
 	// io.Reader, meta UploadMetadata), DocumentService.DownloadPDF(ctx, id,
 	// mode) io.ReadCloser, DocumentService.DownloadPageImage(...)
 	// io.ReadCloser, dazu die Freigabe-seitigen Gegenstuecke

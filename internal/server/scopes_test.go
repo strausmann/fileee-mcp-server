@@ -25,8 +25,8 @@ import (
 // Aequivalent fuer delegierte Berechtigungen (siehe docs/idp/entra-id.md,
 // Abschnitt "Zu den Scopes") -- in der Praxis ebenfalls ein leerzeichen-
 // getrennter String, keine JSON-Liste. Eine Liste wird trotzdem akzeptiert,
-// falls ein anderer Aussteller den Claim so befuellt (derselbe Grundsatz wie
-// bei claimStrings fuer den Capability-Claim).
+// falls ein anderer Aussteller den Claim so befuellt (siehe tokenScopes'
+// eigener Doc-Kommentar in scopes.go).
 func TestTokenScopes(t *testing.T) {
 	cases := []struct {
 		name   string

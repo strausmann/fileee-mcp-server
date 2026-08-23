@@ -243,32 +243,6 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	return &Server{cfg: cfg, gw: gw, pool: pool}, nil
 }
 
-// claimStrings liest einen einzelnen Claim-Wert aus den ueber JSON dekodierten
-// Token-Claims (id.Claims) als []string — ein IdP-Claim ist je nach Anbieter
-// ein einzelner String oder eine Liste (Entra-App-Rollen typischerweise
-// ersteres, Authentik-Gruppen typischerweise Letzteres). encoding/json
-// dekodiert eine JSON-Liste dabei immer als []any, nie als []string — der
-// dritte Zweig ist dennoch nicht tot: id.Claims kann auch von Hand gebaut sein
-// (siehe die Tests in diesem Paket).
-func claimStrings(v any) []string {
-	switch vv := v.(type) {
-	case string:
-		return []string{vv}
-	case []any:
-		out := make([]string, 0, len(vv))
-		for _, e := range vv {
-			if s, ok := e.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	case []string:
-		return vv
-	default:
-		return nil
-	}
-}
-
 // buildResolver uebersetzt cfg.Accounts (siehe config.LoadConfig, ladeKonten)
 // in einen accounts.Resolver — fuer BEIDE Kontomodi ueber denselben Weg,
 // accounts.NewMulti: jedes Konto expandiert seine konfigurierte

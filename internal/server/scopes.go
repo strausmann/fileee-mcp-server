@@ -22,11 +22,10 @@ var scopeClaimNames = [...]string{"scope", "scp"}
 // Die ueblichen Auspraegungen sind ein einzelner, leerzeichengetrennter
 // String (RFC 8693 fuer "scope", Entra fuer "scp") -- dieser Fall wird per
 // strings.Fields aufgespalten. Eine JSON-Liste wird defensiv ebenfalls
-// akzeptiert, falls ein anderer Aussteller den Claim so befuellt (derselbe
-// Grundsatz wie bei claimStrings fuer den Capability-Claim: encoding/json
-// dekodiert eine Liste beim Dekodieren nach map[string]any immer als
-// []any, nie als []string -- der []string-Zweig deckt eine von Hand
-// gebaute Identity ab, wie sie TestScopesSatisfied verwendet).
+// akzeptiert, falls ein anderer Aussteller den Claim so befuellt:
+// encoding/json dekodiert eine Liste beim Dekodieren nach map[string]any
+// immer als []any, nie als []string -- der []string-Zweig deckt eine von
+// Hand gebaute Identity ab, wie sie TestScopesSatisfied verwendet.
 func tokenScopes(claims map[string]any) map[string]bool {
 	out := map[string]bool{}
 	for _, key := range scopeClaimNames {
@@ -63,8 +62,7 @@ func tokenScopes(claims map[string]any) map[string]bool {
 // id == nil bei einer konfigurierten Pflicht-Liste ist fail-closed: keine
 // verifizierte Identitaet, keine Claims, keine Scopes, keine Freigabe.
 // Praktisch sollte Gangway den Selector nie mit einer unverifizierten
-// Identitaet aufrufen (derselbe Fall wie in capabilitiesFor, dort ebenso
-// dokumentiert) -- dieser Zweig ist wie dort reine Verteidigung gegen einen
+// Identitaet aufrufen -- dieser Zweig ist reine Verteidigung gegen einen
 // theoretischen Fall, kein regulaerer Pfad.
 func scopesSatisfied(cfg *config.Config, id *identity.Identity) bool {
 	if len(cfg.OIDCRequiredScopes) == 0 {
