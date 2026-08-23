@@ -163,15 +163,25 @@ func getRuntimeStatsHandler(logger *slog.Logger) mcp.ToolHandlerFor[getRuntimeSt
 // --- get_tool_manifest -------------------------------------------------
 
 // toolManifestEntry is get_tool_manifest's per-tool entry. Kind is
-// always "read" today: every tool RegisterAll mounts is a strict read,
-// and since the tool-exposure foundation refactor's Task 1
+// derived per tool from its own mcp.ToolAnnotations.ReadOnlyHint
+// (deriveToolManifestKind below) — NOT a fixed literal. Before the
+// write tools (create/update contact, create/update reminder, box
+// add/remove document, upload/update document) were introduced, every
+// tool RegisterAll mounted was a strict read and Kind was hardcoded to
+// "read" for all of them. That hardcoding became a misrepresentation
+// once write tools existed: a downstream host/orchestrator that gates
+// auto-execution on Kind would have treated a destructive tool
+// (update_document, box_remove_document, ...) as a confirmation-free
+// read. Kind is now computed per tool so it always reflects the tool's
+// own annotation instead of a stale constant.
+//
+// Since the tool-exposure foundation refactor's Task 1
 // (access.AllowAll(), one instance, no per-capability-set routing) this
-// server no longer distinguishes KindRead/KindWrite for authorization at
-// all — the readToolNames/ReadToolKinds() classification Task 3 removed
-// was that distinction's last remnant. Kind stays a literal rather than
-// being dropped so a caller comparing manifests across a future write
-// tool's introduction sees the field's meaning change, not the field
-// disappear.
+// server no longer uses Kind for authorization at all — the
+// readToolNames/ReadToolKinds() classification Task 3 removed was that
+// distinction's last remnant for access control. Kind survives here
+// purely as manifest metadata for callers/hosts that want to gate their
+// own behaviour (e.g. auto-execution) on it.
 //
 // Title mirrors the tool's own mcp.ToolAnnotations.Title (registerOpsTools
 // and every other registration site set one) — every currently mounted
@@ -185,9 +195,33 @@ type toolManifestEntry struct {
 	Kind        string `json:"kind"`
 }
 
-// toolManifestKind is every currently-registered tool's Kind value in
-// get_tool_manifest's output — see toolManifestEntry's doc comment.
-const toolManifestKind = "read"
+// toolManifestKindRead and toolManifestKindWrite are the two Kind
+// values deriveToolManifestKind can produce today. Named constants
+// instead of inline literals so a future third value (if ever needed)
+// is an obvious, greppable addition rather than a new string invented
+// at the call site.
+const (
+	toolManifestKindRead  = "read"
+	toolManifestKindWrite = "write"
+)
+
+// deriveToolManifestKind reports a mounted tool's Kind for
+// get_tool_manifest's output, derived from the tool's own
+// mcp.ToolAnnotations.ReadOnlyHint rather than a hardcoded literal —
+// see toolManifestEntry's doc comment for why a literal was wrong.
+// ReadOnlyHint is a plain bool (MCP spec default: false), so a tool
+// mounted without Annotations at all is treated as non-read-only
+// (write) rather than silently defaulting to "read": every tool this
+// server registers sets Annotations explicitly (RegisterAll,
+// TestEveryMountedToolHasATitle), so a nil Annotations case would
+// itself be a registration bug worth surfacing as "write", not masking
+// it as "read".
+func deriveToolManifestKind(tool *mcp.Tool) string {
+	if tool.Annotations != nil && tool.Annotations.ReadOnlyHint {
+		return toolManifestKindRead
+	}
+	return toolManifestKindWrite
+}
 
 // getToolManifestInput are get_tool_manifest's parameters — deliberately
 // empty, same reasoning as getRuntimeStatsInput above: the manifest
@@ -279,7 +313,7 @@ func getToolManifestHandler(s *mcp.Server, logger *slog.Logger) mcp.ToolHandlerF
 			if tool.Annotations != nil && tool.Annotations.Title != "" {
 				title = tool.Annotations.Title
 			}
-			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Title: title, Description: tool.Description, Kind: toolManifestKind})
+			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Title: title, Description: tool.Description, Kind: deriveToolManifestKind(tool)})
 		}
 		sort.Slice(out.Tools, func(i, j int) bool { return out.Tools[i].Name < out.Tools[j].Name })
 

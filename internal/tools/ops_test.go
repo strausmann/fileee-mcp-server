@@ -357,9 +357,9 @@ func TestGetToolManifestInputNimmtKeineParameterEntgegen(t *testing.T) {
 }
 
 // TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug belegt, dass
-// jeder Eintrag eine nicht-leere Kind-Angabe traegt -- toolManifestKind
-// (ops.go) setzt sie heute fuer jedes ueber RegisterAll angemeldete
-// Werkzeug fest auf "read" (die readToolNames/ReadToolKinds()-
+// jeder Eintrag eine nicht-leere Kind-Angabe traegt -- deriveToolManifestKind
+// (ops.go) leitet sie heute PRO WERKZEUG aus dessen eigener
+// mcp.ToolAnnotations.ReadOnlyHint ab (die readToolNames/ReadToolKinds()-
 // Einstufung, die diesen Wert frueher lieferte, ist mit Task 3 des
 // tool-exposure-foundation-Umbaus entfallen), get_tool_manifest darf
 // diese Information nicht verlieren.
@@ -375,6 +375,75 @@ func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 	for _, tool := range out.Tools {
 		if tool.Kind == "" {
 			t.Errorf("Werkzeug %q hat keine Berechtigungsgruppe im Verzeichnis", tool.Name)
+		}
+	}
+}
+
+// TestGetToolManifestMeldetSchreibwerkzeugeNichtAlsLesend ist der
+// Regressionstest fuer den behobenen Fehlbefund: vor diesem Fix trug
+// toolManifestKind einen festen Literal "read", sodass JEDES Werkzeug --
+// auch die acht mutierenden Schreibwerkzeuge -- im Verzeichnis als
+// Kind:"read" erschien. Ein Host/Orchestrator, der Auto-Ausfuehrung an
+// Kind festmacht, haette destruktive Werkzeuge (update_document,
+// box_remove_document, ...) faelschlich als bestaetigungsfreie Reads
+// behandelt. Der Test prueft explizit BEIDE Richtungen: jedes der acht
+// Schreibwerkzeuge traegt Kind != "read" (aktuell "write"), UND jedes
+// reine Lese-/Ops-Werkzeug traegt weiterhin Kind == "read" --
+// deriveToolManifestKind darf die bestehende Klassifizierung nicht
+// beschaedigen, waehrend sie die neue einfuehrt.
+func TestGetToolManifestMeldetSchreibwerkzeugeNichtAlsLesend(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	handler := getToolManifestHandler(s, discardLogger())
+
+	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
+	if err != nil {
+		t.Fatalf("getToolManifestHandler: %v", err)
+	}
+
+	byName := make(map[string]toolManifestEntry, len(out.Tools))
+	for _, entry := range out.Tools {
+		byName[entry.Name] = entry
+	}
+
+	writeTools := []string{
+		ToolCreateContact,
+		ToolUpdateContact,
+		ToolCreateReminder,
+		ToolUpdateReminder,
+		ToolBoxAddDocument,
+		ToolBoxRemoveDocument,
+		ToolUploadDocument,
+		ToolUpdateDocument,
+	}
+	for _, name := range writeTools {
+		entry, ok := byName[name]
+		if !ok {
+			t.Errorf("Schreibwerkzeug %q fehlt im Verzeichnis", name)
+			continue
+		}
+		if entry.Kind == toolManifestKindRead {
+			t.Errorf("Werkzeug %q: Kind = %q, darf nicht %q sein -- es schreibt/mutiert", name, entry.Kind, toolManifestKindRead)
+		}
+		if entry.Kind != toolManifestKindWrite {
+			t.Errorf("Werkzeug %q: Kind = %q, want %q", name, entry.Kind, toolManifestKindWrite)
+		}
+	}
+
+	readTools := []string{
+		ToolGetToolManifest,
+		ToolGetRuntimeStats,
+		ToolListDocuments,
+		ToolGetDocument,
+	}
+	for _, name := range readTools {
+		entry, ok := byName[name]
+		if !ok {
+			t.Errorf("Lesewerkzeug %q fehlt im Verzeichnis", name)
+			continue
+		}
+		if entry.Kind != toolManifestKindRead {
+			t.Errorf("Werkzeug %q: Kind = %q, want %q -- es liest nur", name, entry.Kind, toolManifestKindRead)
 		}
 	}
 }
