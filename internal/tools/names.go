@@ -118,6 +118,13 @@ const (
 	// (its plain login email) and the server's mode/capabilities. Not
 	// Fileee-backed either.
 	ToolWhoami = "whoami"
+
+	// ToolUpdateContact is update_contact's registered name (Task 1,
+	// write.go) — the first write-class tool: a patch/merge update
+	// (Get, apply the caller's supplied fields, Update) over
+	// fileee.WriteService[fileee.Contact], the template every later
+	// write tool in this file follows.
+	ToolUpdateContact = "update_contact"
 )
 
 // registeredReadTools mounts RegisterAll onto a throwaway server and reads

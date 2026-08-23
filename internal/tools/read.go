@@ -1,13 +1,15 @@
 // Package tools registers this server's MCP tools. RegisterAll is the
-// only entry point today — it mounts this server's full read/meta tool
-// set: 32 fileee-backed read tools (documents, reference data, people
-// data) plus 4 operational tools that never touch Fileee data at all
-// (get_runtime_stats, get_tool_manifest, self_check, whoami) — 36 tools
-// total (registeredReadTools() in names.go is the live count). Every
-// Fileee-backed handler resolves its own connection through a
-// clientpool.Pool, keyed to the caller identity Gangway verified
-// (serve.IdentityFrom), never to a fixed account (CONTRIBUTING.md,
-// "Konto-Auflösung"; ADR-0012).
+// only entry point today — it mounts this server's full read/write/meta
+// tool set: 32 fileee-backed read tools (documents, reference data,
+// people data) plus 4 operational tools that never touch Fileee data at
+// all (get_runtime_stats, get_tool_manifest, self_check, whoami) plus,
+// since Task 1 (write.go), 1 fileee-backed write tool (update_contact) —
+// 37 tools total (registeredReadTools() in names.go is the live count;
+// its name predates write.go and it counts every mounted tool, not only
+// read ones — see its own doc comment). Every Fileee-backed handler
+// resolves its own connection through a clientpool.Pool, keyed to the
+// caller identity Gangway verified (serve.IdentityFrom), never to a
+// fixed account (CONTRIBUTING.md, "Konto-Auflösung"; ADR-0012).
 package tools
 
 import (
@@ -127,6 +129,11 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 	registerBinaryTools(s, p, logger)
 	registerAccountTools(s, p, logger)
 	registerOpsTools(s, p, info, logger)
+
+	// Task 1 (write.go): the first write-class tool. Write tools are
+	// always mounted, the same way every read tool above is — see
+	// write.go's own package doc comment.
+	registerWriteTools(s, p, logger)
 }
 
 // clientFor resolves the Fileee client for whoever is making the current
