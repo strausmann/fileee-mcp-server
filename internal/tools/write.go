@@ -447,6 +447,13 @@ func registerWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) 
 	// not a variant of either shape already in this file or in
 	// write_people.go — see that file's own package doc comment.
 	registerBoxWriteTools(s, p, logger)
+
+	// upload_document (Task 5) lives in its own file,
+	// write_documents.go — a fourth topic (document creation via
+	// upload), not a variant of any shape already established in this
+	// file, write_people.go, or write_boxes.go — see that file's own
+	// package doc comment.
+	registerDocumentWriteTools(s, p, logger)
 }
 
 // boolPtr returns a pointer to v — mcp.ToolAnnotations.DestructiveHint

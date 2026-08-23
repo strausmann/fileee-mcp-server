@@ -152,6 +152,15 @@ const (
 	// membership in one box.
 	ToolBoxAddDocument    = "box_add_document"
 	ToolBoxRemoveDocument = "box_remove_document"
+
+	// ToolUploadDocument is upload_document's registered name (Task 5,
+	// write_documents.go) — the seventh write-class tool, over
+	// *fileee.Client.Documents.Upload: a single call, like
+	// ToolCreateContact/ToolCreateReminder, but one whose own error
+	// return (fileee.ErrDuplicateDocument) is treated as a normal,
+	// informative success rather than a failure — see write_documents.go's
+	// own package doc comment.
+	ToolUploadDocument = "upload_document"
 )
 
 // registeredReadTools mounts RegisterAll onto a throwaway server and reads

@@ -196,6 +196,23 @@ jobs:
           # BoxID/DocumentID) und einen Gegenprobe-Test mit gueltiger Eingabe, dieselbe Idee
           # wie write_people.go oben. Datei liegt bei 86,7% — komfortabel ueber der
           # 80%-Business-Logik-Stufe, keine Ausnahme noetig.
+          #
+          # internal/tools/write_documents.go (Task 5, write-Tools-Plan): upload_document,
+          # ueber *fileee.Client.Documents.Upload — ein einzelner Aufruf wie
+          # create_contact/create_reminder, dessen eigener Fehlerrueckgabewert
+          # (fileee.ErrDuplicateDocument) bewusst als normaler, informativer Erfolg behandelt
+          # wird statt als Fehlschlag (siehe die Datei eigenen Package-Doc-Kommentar).
+          # Kernlogik (uploadDocumentResult, uploadDocumentFromService) ueber ein Fake
+          # (fakeDocumentUploadService, write_documents_test.go) vollstaendig ohne Netzwerk
+          # testbar, inklusive Duplikat-, Netzwerk- und Backend-Fehlerpfad sowie zwei
+          # dedizierten Gegenprobe-Tests (Duplikat faelschlich als Fehler behandelt; roher
+          # base64-String statt dekodierter Bytes durchgereicht — beide mutationsgeprueft,
+          # beide faerben den jeweils zugehoerigen Test rot). Die duenne clientFor-Huelle
+          # (uploadDocumentHandler) traegt denselben strukturellen weissen Fleck wie
+          # addBoxDocumentHandler/updateContactHandler oben, haelt sich aber bei 80% dank der
+          # eigenen Vor-clientFor-Pruefung (ungueltiges base64 wird ohne Netzwerkzugriff
+          # abgelehnt, inklusive Gegenprobe mit gueltigem base64). Datei liegt bei 87,0% —
+          # komfortabel ueber der 80%-Business-Logik-Stufe, keine Ausnahme noetig.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -218,6 +235,7 @@ jobs:
             internal/tools/write.go:80 \
             internal/tools/write_people.go:80 \
             internal/tools/write_boxes.go:80 \
+            internal/tools/write_documents.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
