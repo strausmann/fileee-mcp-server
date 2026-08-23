@@ -1,6 +1,6 @@
 // names.go centralizes every read tool's registered name as an exported
 // constant and holds registeredReadTools(), a live probe of the tool set
-// RegisterRead actually mounts (used by this package's own tests).
+// RegisterAll actually mounts (used by this package's own tests).
 //
 // Until the tool-exposure foundation refactor (Task 3), this file also
 // held readToolNames and ReadToolKinds() — a hand-maintained
@@ -120,9 +120,9 @@ const (
 	ToolWhoami = "whoami"
 )
 
-// registeredReadTools mounts RegisterRead onto a throwaway server and reads
+// registeredReadTools mounts RegisterAll onto a throwaway server and reads
 // its tools back over an in-memory client-server connection — the ground
-// truth of what RegisterRead actually mounts. descriptions_test.go's
+// truth of what RegisterAll actually mounts. descriptions_test.go's
 // description-length check runs against this list, because that question
 // ("what does a caller see") is exactly what a real tools/list call
 // answers; response_body_safety_test.go's
@@ -138,7 +138,7 @@ const (
 // pattern this repo's own tests already use for exactly this purpose
 // (internal/server/server_test.go, toolNamesOf).
 //
-// p is (*clientpool.Pool)(nil): none of RegisterRead's tool handlers run
+// p is (*clientpool.Pool)(nil): none of RegisterAll's tool handlers run
 // during registration or during a tools/list round-trip — only AddTool's
 // schema derivation and the ListTools call below do, neither of which
 // touches p. logger is a discarding *slog.Logger for the same reason:
@@ -147,7 +147,7 @@ func registeredReadTools() []*mcp.Tool {
 	ctx := context.Background()
 
 	probe := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(probe, (*clientpool.Pool)(nil), ServerInfo{}, slog.New(slog.DiscardHandler))
+	RegisterAll(probe, (*clientpool.Pool)(nil), ServerInfo{}, slog.New(slog.DiscardHandler))
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := probe.Connect(ctx, serverTransport, nil)

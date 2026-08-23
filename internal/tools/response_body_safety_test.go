@@ -28,7 +28,7 @@
 // boxDetail, ...) built field-by-field from primitive Go types, with
 // UntrustedLine/PoisonProbe (read_generic.go, read_sync.go) as a second,
 // independent check that foreign free text specifically never leaks into a
-// structured field. An audit of every RegisterRead tool's response body
+// structured field. An audit of every RegisterAll tool's response body
 // (Aufgabe: fileee-mcp-server PII-Leak-Audit, homelab-management repo,
 // 2026-08-14) confirmed this by hand across all 35 read tools — found no
 // go-fileee Marshaler type reachable from any response body, directly or
@@ -59,7 +59,7 @@ import (
 
 // registeredResponseBodyTypes is the complete list of every Go type used as
 // a CallToolResult.StructuredContent output across this server's read
-// tools (RegisterRead, read.go) — the S/Output type parameter for the
+// tools (RegisterAll, read.go) — the S/Output type parameter for the
 // generic list/get/sync tools (read_generic.go/read_sync.go), and every
 // bespoke handler's own output struct. Binary tools (get_document_pdf,
 // get_page_image) return their payload as mcp.EmbeddedResource/
@@ -70,7 +70,7 @@ import (
 // MUST be updated whenever a new tool with a new output type is
 // registered — see TestNoFileeeMarshalerTypeInAnyResponseBody below, which
 // walks exactly this list. One entry per registered tool name, in the same
-// order RegisterRead mounts the corresponding tools, so the two lists can be
+// order RegisterAll mounts the corresponding tools, so the two lists can be
 // compared by eye.
 var registeredResponseBodyTypes = []reflect.Type{
 	reflect.TypeOf(listDocumentsOutput{}),                              // list_documents

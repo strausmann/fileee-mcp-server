@@ -35,7 +35,7 @@ import (
 // pass one into registerReadService/registerSync/genericListHandler/
 // genericGetHandler/genericSyncHandler but do not themselves assert on
 // what it logs (that is read_generic_sync_diag_test.go's own job). Never
-// nil: RegisterRead's own doc comment (read.go) requires a non-nil
+// nil: RegisterAll's own doc comment (read.go) requires a non-nil
 // logger, and the same requirement carries down to every function this
 // package threads it through.
 func discardLogger() *slog.Logger {
@@ -53,7 +53,7 @@ type tagSummary struct {
 
 // descriptionFixture stands in for a real tool description in tests that
 // never call descriptions_test.go's length check (that check runs against
-// registeredReadTools(), i.e. only tools RegisterRead itself mounts —
+// registeredReadTools(), i.e. only tools RegisterAll itself mounts —
 // nothing in this file does) — kept realistically long anyway so a test
 // failure here is never mistaken for that unrelated check.
 const descriptionFixture = "Beschreibungstext lang genug fuer die Pruefung, mindestens hundertzwanzig Zeichen, damit der Beschreibungstest nicht anschlaegt."

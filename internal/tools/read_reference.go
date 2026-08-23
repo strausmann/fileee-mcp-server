@@ -85,8 +85,10 @@ type documentTypeSchemeSummary struct {
 // referenceTagDescriptor describes list_tags/get_tag.
 func referenceTagDescriptor() readServiceDescriptor[fileee.Tag, referenceTagSummary] {
 	return readServiceDescriptor[fileee.Tag, referenceTagSummary]{
-		ListName: ToolListTags,
-		GetName:  ToolGetTag,
+		ListName:  ToolListTags,
+		ListTitle: "List tags",
+		GetName:   ToolGetTag,
+		GetTitle:  "Get tag",
 		ListDescription: "List the tags defined in the calling user's Fileee account. Returns each " +
 			"tag's ID and name — a category the account holder created themselves, never text a " +
 			"third party wrote. Use it to discover which tags exist before filtering or describing " +
@@ -103,8 +105,10 @@ func referenceTagDescriptor() readServiceDescriptor[fileee.Tag, referenceTagSumm
 // referenceCompanyDescriptor describes list_companies/get_company.
 func referenceCompanyDescriptor() readServiceDescriptor[fileee.Company, companySummary] {
 	return readServiceDescriptor[fileee.Company, companySummary]{
-		ListName: ToolListCompanies,
-		GetName:  ToolGetCompany,
+		ListName:  ToolListCompanies,
+		ListTitle: "List companies",
+		GetName:   ToolGetCompany,
+		GetTitle:  "Get company",
 		ListDescription: "List the companies recorded in the calling user's Fileee account — both " +
 			"ones the account holder entered themselves and ones Fileee extracted automatically from " +
 			"a document. Returns each company's ID and Fileee-owned metadata (contact type, contact " +
@@ -138,8 +142,10 @@ func referenceCompanyDescriptor() readServiceDescriptor[fileee.Company, companyS
 // referenceDocumentTypeDescriptor describes list_document_types/get_document_type.
 func referenceDocumentTypeDescriptor() readServiceDescriptor[fileee.DocumentType, documentTypeSummary] {
 	return readServiceDescriptor[fileee.DocumentType, documentTypeSummary]{
-		ListName: ToolListDocumentTypes,
-		GetName:  ToolGetDocumentType,
+		ListName:  ToolListDocumentTypes,
+		ListTitle: "List document types",
+		GetName:   ToolGetDocumentType,
+		GetTitle:  "Get document type",
 		ListDescription: "List the document types defined in the calling user's Fileee account — " +
 			"Fileee's own built-in types plus any the account holder created. Returns each type's " +
 			"ID, display name, the ID of the document-type scheme it uses, and how many documents " +
@@ -168,8 +174,10 @@ func referenceDocumentTypeDescriptor() readServiceDescriptor[fileee.DocumentType
 // list_document_type_schemes/get_document_type_scheme.
 func referenceDocumentTypeSchemeDescriptor() readServiceDescriptor[fileee.DocumentTypeScheme, documentTypeSchemeSummary] {
 	return readServiceDescriptor[fileee.DocumentTypeScheme, documentTypeSchemeSummary]{
-		ListName: ToolListDocumentTypeSchemes,
-		GetName:  ToolGetDocumentTypeScheme,
+		ListName:  ToolListDocumentTypeSchemes,
+		ListTitle: "List document type schemes",
+		GetName:   ToolGetDocumentTypeScheme,
+		GetTitle:  "Get document type scheme",
 		ListDescription: "List the document-type schemes defined in the calling user's Fileee " +
 			"account — the field definitions a document type can use. Returns each scheme's ID and " +
 			"the keys of the metadata fields it composes, flattened out of its field tree — " +
@@ -196,7 +204,7 @@ func referenceDocumentTypeSchemeDescriptor() readServiceDescriptor[fileee.Docume
 }
 
 // registerReferenceTools mounts this file's four descriptors onto s —
-// called once from RegisterRead (read.go). logger is threaded straight
+// called once from RegisterAll (read.go). logger is threaded straight
 // through to registerReadService, the same pattern registerSyncTools
 // already follows (read_sync.go) for its own seven descriptors.
 func registerReferenceTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {

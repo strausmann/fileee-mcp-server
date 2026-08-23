@@ -98,8 +98,10 @@ type conversationSummary struct {
 // contactDescriptor describes list_contacts/get_contact.
 func contactDescriptor() readServiceDescriptor[fileee.Contact, contactSummary] {
 	return readServiceDescriptor[fileee.Contact, contactSummary]{
-		ListName: ToolListContacts,
-		GetName:  ToolGetContact,
+		ListName:  ToolListContacts,
+		ListTitle: "List contacts",
+		GetName:   ToolGetContact,
+		GetTitle:  "Get contact",
 		ListDescription: "List the contacts in the calling user's Fileee account. Returns each " +
 			"contact's ID and Fileee-owned metadata (linked company ID, contact type, contact " +
 			"status, whether it is connected to another Fileee account or was entered by the " +
@@ -134,8 +136,10 @@ func contactDescriptor() readServiceDescriptor[fileee.Contact, contactSummary] {
 // reminderDescriptor describes list_reminders/get_reminder.
 func reminderDescriptor() readServiceDescriptor[fileee.Reminder, reminderSummary] {
 	return readServiceDescriptor[fileee.Reminder, reminderSummary]{
-		ListName: ToolListReminders,
-		GetName:  ToolGetReminder,
+		ListName:  ToolListReminders,
+		ListTitle: "List reminders",
+		GetName:   ToolGetReminder,
+		GetTitle:  "Get reminder",
 		ListDescription: "List the reminders in the calling user's Fileee account. Returns each " +
 			"reminder's ID, the linked document ID, its start date, and whether it is done; the " +
 			"reminder's own description is included separately as clearly marked, untrusted text, " +
@@ -159,8 +163,10 @@ func reminderDescriptor() readServiceDescriptor[fileee.Reminder, reminderSummary
 // conversationDescriptor describes list_conversations/get_conversation.
 func conversationDescriptor() readServiceDescriptor[fileee.Conversation, conversationSummary] {
 	return readServiceDescriptor[fileee.Conversation, conversationSummary]{
-		ListName: ToolListConversations,
-		GetName:  ToolGetConversation,
+		ListName:  ToolListConversations,
+		ListTitle: "List conversations",
+		GetName:   ToolGetConversation,
+		GetTitle:  "Get conversation",
 		ListDescription: "List the conversations in the calling user's Fileee account. Returns " +
 			"each conversation's ID, its type, its kind, and how many participants it has; the " +
 			"conversation's own subject is included separately as clearly marked, untrusted text, " +
@@ -188,7 +194,7 @@ func conversationDescriptor() readServiceDescriptor[fileee.Conversation, convers
 }
 
 // registerPeopleTools mounts this file's three descriptors onto s — called
-// once from RegisterRead (read.go). logger is threaded straight through to
+// once from RegisterAll (read.go). logger is threaded straight through to
 // registerReadService, the same pattern registerReferenceTools already
 // follows (read_reference.go) for its own four descriptors.
 func registerPeopleTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {

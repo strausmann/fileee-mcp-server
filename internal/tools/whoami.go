@@ -113,6 +113,6 @@ func registerWhoami(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *
 			"account mode (single or multi), and the resolved capabilities. Use it to confirm " +
 			"who the server thinks you are and what this identity is allowed to do. It makes no " +
 			"call to fileee and reflects only what this server already knows about the calling identity.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Who am I"},
 	}, getWhoamiHandler(p, info, logger))
 }

@@ -118,7 +118,7 @@ func accountStatusFromService(ctx context.Context, service accountStatusService)
 }
 
 // registerAccountTools mounts get_account_status onto s — called once
-// from RegisterRead (read.go).
+// from RegisterAll (read.go).
 func registerAccountTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetAccountStatus,
@@ -129,6 +129,6 @@ func registerAccountTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger
 			"relying on other tools continuing to work. It does not return any per-document " +
 			"information and does not accept an account or user ID — it always answers for the " +
 			"calling identity.",
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get account status"},
 	}, getAccountStatusHandler(p, logger))
 }

@@ -217,11 +217,11 @@ func TestRegisterOpsToolsMeldetGetRuntimeStatsAn(t *testing.T) {
 // Referenzzahl kommt hier bewusst aus einem UNABHAENGIGEN zweiten
 // Hin-und-Rueckl-Lauf (toolNamesOf, dieselbe Maschinerie wie
 // registeredReadTools() in names.go) -- nicht aus der Anzahl der
-// AddTool-Aufrufe in RegisterRead abgezaehlt, sonst wuerde der Test genau
+// AddTool-Aufrufe in RegisterAll abgezaehlt, sonst wuerde der Test genau
 // denselben blinden Fleck teilen, den er aufdecken soll.
 func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 
 	want := toolNamesOf(t, s)
 	if !want[ToolGetToolManifest] {
@@ -265,7 +265,7 @@ func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind
 
 func TestGetToolManifestWaechstMitNeuAngemeldetenWerkzeugenMit(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, before, err := handler(context.Background(), nil, getToolManifestInput{})
@@ -320,14 +320,14 @@ func TestGetToolManifestInputNimmtKeineParameterEntgegen(t *testing.T) {
 
 // TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug belegt, dass
 // jeder Eintrag eine nicht-leere Kind-Angabe traegt -- toolManifestKind
-// (ops.go) setzt sie heute fuer jedes ueber RegisterRead angemeldete
+// (ops.go) setzt sie heute fuer jedes ueber RegisterAll angemeldete
 // Werkzeug fest auf "read" (die readToolNames/ReadToolKinds()-
 // Einstufung, die diesen Wert frueher lieferte, ist mit Task 3 des
 // tool-exposure-foundation-Umbaus entfallen), get_tool_manifest darf
 // diese Information nicht verlieren.
 func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterRead(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, out, err := handler(context.Background(), nil, getToolManifestInput{})

@@ -180,7 +180,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 
 	// logger is this server's ONE diagnostic logger — level-gated and
 	// masked (internal/diag.New) — shared by every tool call
-	// (tools.RegisterRead below), by go-fileee's own transport-level
+	// (tools.RegisterAll below), by go-fileee's own transport-level
 	// request log (fileee.WithLogger, passed into every account's client
 	// via clientpool.WithClientOptions — see that package's own doc
 	// comment on WithClientOptions for why this applies to every account
@@ -218,7 +218,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// TestUnauthenticatedRequestReachesTheChallengeNotA404.
 	limiter := newToolCallLimiter(cfg)
 	instance := mcp.NewServer(&mcp.Implementation{Name: "fileee-mcp-server", Version: config.Version()}, nil)
-	tools.RegisterRead(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode)}, logger)
+	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode)}, logger)
 	instance.AddReceivingMiddleware(limiter.middleware())
 	gw.AttachMCPSelector(func(ctx context.Context, id *identity.Identity) *mcp.Server {
 		// scopesSatisfied ist die einzige Stelle, die MCP_OIDC_REQUIRED_SCOPES

@@ -40,9 +40,23 @@ func TestEveryMountedToolHasAnnotations(t *testing.T) {
 	}
 }
 
+// TestEveryMountedToolHasATitle strengthens TestEveryMountedToolHasAnnotations
+// above (Task 3's own doc comment already announced this): per the MCP
+// connector standard, every tool needs a Title a client can show/gate on,
+// not merely a non-nil Annotations value. Task 4 (tool-exposure foundation
+// refactor) is what actually sets Title on every tool below — this test
+// fails until it does.
+func TestEveryMountedToolHasATitle(t *testing.T) {
+	for _, tool := range registeredReadTools() {
+		if tool.Annotations == nil || tool.Annotations.Title == "" {
+			t.Errorf("tool %q is missing a Title annotation", tool.Name)
+		}
+	}
+}
+
 // TestStammdatenWerkzeugeSindAngemeldet ist Aufgabe 3's eigener Test: alle
 // acht Stammdaten-Werkzeuge (vier Dienste, je Liste+Detail) muessen unter
-// RegisterRead auftauchen. Der Beschreibungstest oben deckt sie
+// RegisterAll auftauchen. Der Beschreibungstest oben deckt sie
 // automatisch mit ab, sobald sie hier registriert sind — dieser Test
 // prueft zusaetzlich explizit, dass keiner der acht Namen fehlt.
 func TestStammdatenWerkzeugeSindAngemeldet(t *testing.T) {
