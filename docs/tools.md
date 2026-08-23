@@ -145,11 +145,17 @@ nennt, nie mit einer stillschweigend gekürzten Datei.
 Jedes schreibende Werkzeug trägt `readOnlyHint: false`; `destructiveHint`/`idempotentHint` sind je
 Operation wahrheitsgemäß gesetzt (siehe [ADR-0018](adr/0018-werkzeug-freigabe-und-client-steuerung.md)),
 nicht pauschal vorbelegt — die Spalte „Hinweise" unten nennt sie direkt. `destructiveHint: true`
-markiert dabei eine Operation, deren Wiederholung mit denselben Parametern **kein sicheres No-op**
-ist (z. B. weil bereits geänderte Felder erneut überschrieben würden) — nicht „löscht
-unwiderruflich": kein schreibendes Werkzeug in diesem Server löscht Fileee-Daten hart, dafür gibt
-es, Stand heute, noch kein Werkzeug (siehe README, Abschnitt „Werkzeuge", zu teilenden und
-löschenden Werkzeugen als künftigem Schritt).
+markiert dabei eine Operation, die **nicht rein additiv** ist — sie kann bestehende Werte verändern
+oder überschreiben, statt nur etwas Neues hinzuzufügen (z. B. weil ein Patch/Merge bereits
+vorhandene Felder ersetzt); `destructiveHint: false` heißt umgekehrt, das Werkzeug fügt nur hinzu.
+Ob ein zweiter Aufruf mit denselben Parametern folgenlos bleibt, beschreibt das davon
+**unabhängige** `idempotentHint` (siehe Spalte „Hinweise"): `idempotentHint: true` heißt, eine
+Wiederholung hat **keine zusätzliche Wirkung** über die erste Ausführung hinaus; `idempotentHint:
+false` heißt, jeder Aufruf wirkt zusätzlich (z. B. legt jeweils einen neuen Datensatz an). Und
+`destructiveHint: true` heißt — ausdrücklich — nicht „löscht unwiderruflich": kein schreibendes
+Werkzeug in diesem Server löscht Fileee-Daten hart, dafür gibt es, Stand heute, noch kein Werkzeug
+(siehe README, Abschnitt „Werkzeuge", zu teilenden und löschenden Werkzeugen als künftigem
+Schritt).
 
 ### Kontakte
 
@@ -170,7 +176,7 @@ löschenden Werkzeugen als künftigem Schritt).
 | Werkzeug | Hinweise | Was es tut und was nicht |
 |---|---|---|
 | `box_add_document` | destructive: nein · idempotent: nein | Legt ein Dokument in eine Box ab. Pass `boxId` und `documentId` (beide Pflicht) — IDs über `list_boxes`/`get_box` bzw. `list_documents`/`search_documents` finden. Gibt Box-ID, Dokument-ID und Erfolg zurück. Ein zweiter Aufruf mit demselben Paar ist **nicht** garantiert ein No-op. Entfernt das Dokument **nicht** aus einer Box, in der es bereits liegt (dafür `box_remove_document`). |
-| `box_remove_document` | destructive: ja · idempotent: ja | Entfernt ein Dokument aus einer Box. Pass `boxId` und `documentId` (beide Pflicht). Gibt Box-ID, Dokument-ID und Erfolg zurück. Ein erneuter Aufruf für ein bereits entferntes Dokument ändert nichts weiter. Löscht **nicht** das Dokument selbst — nur seine Zugehörigkeit zu dieser Box. |
+| `box_remove_document` | destructive: ja · idempotent: ja | Entfernt ein Dokument aus einer Box. Pass `boxId` und `documentId` (beide Pflicht). Gibt Box-ID, Dokument-ID und Erfolg zurück. Ein erneuter Aufruf für ein bereits entferntes Dokument ändert den Boxzustand nicht mehr — daher `idempotentHint: true`. Ob das Fileee-Backend einen solchen zweiten Aufruf dabei still bestätigt oder mit einem Fehler quittiert, ist **nicht verifiziert** (go-fileees `RemoveDocument` übersetzt jeden Statuscode außer 200/204 in einen Fehler; ein erneutes Entfernen könnte je nach Backend z. B. mit `404` beantwortet werden). Löscht **nicht** das Dokument selbst — nur seine Zugehörigkeit zu dieser Box. |
 
 ### Dokumente
 
