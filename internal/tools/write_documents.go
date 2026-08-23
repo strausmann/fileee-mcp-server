@@ -59,6 +59,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -204,8 +205,31 @@ func uploadDocumentFromService(ctx context.Context, service documentUploadServic
 // than limit bytes (if it decodes at all) — so uploadDocumentHandler
 // below can reject it by length alone, before ever calling
 // base64.StdEncoding.DecodeString on it.
+//
+// Ueberlauf-Saettigung: n ist FILEEE_MAX_UPLOAD_BYTES (config.go,
+// intWert) — ein Betreiber darf dort JEDEN nicht-negativen int64-Wert
+// eintragen, bis math.MaxInt64. Die urspruengliche Formel ((n+2)/3)*4
+// rechnete das direkt in int64: bei einem sehr grossen n (z.B. nahe
+// math.MaxInt64) lief bereits n+2 ueber und kippte in einen negativen
+// Zwischenwert — das Ergebnis war dann eine NEGATIVE Obergrenze, gegen
+// die jeder nicht-leere Upload als "zu gross" abgelehnt wurde, obwohl
+// er weit unter dem konfigurierten Limit lag. Die Rechnung unten
+// vermeidet das Ueberlaufen von n+2 (Division vor Multiplikation,
+// blocks einzeln berechnet) und saettigt zusaetzlich auf math.MaxInt64,
+// falls blocks*4 selbst ueberlaufen wuerde — bewusst gesaettigt statt
+// abgeschnitten oder zum Panic gebracht: eine Obergrenze, die zu einem
+// zu grossen (aber positiven) Wert saettigt, bleibt eine gueltige,
+// nutzbare Obergrenze im Sinne des Kommentars oben; eine, die ins
+// Negative kippt, ist keine Obergrenze mehr.
 func base64EncodedLenFor(n int64) int64 {
-	return ((n + 2) / 3) * 4
+	blocks := n / 3
+	if n%3 != 0 {
+		blocks++
+	}
+	if blocks > math.MaxInt64/4 {
+		return math.MaxInt64
+	}
+	return blocks * 4
 }
 
 // uploadDocumentHandler resolves upload_document. maxUploadBytes is

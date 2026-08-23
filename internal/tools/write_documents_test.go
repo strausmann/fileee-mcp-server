@@ -36,6 +36,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -387,6 +388,56 @@ func TestBase64EncodedLenForMatchesStdEncodingsOwnLength(t *testing.T) {
 		if got != want {
 			t.Errorf("base64EncodedLenFor(%d) = %d, want %d (base64.StdEncoding.EncodedLen)", n, got, want)
 		}
+	}
+}
+
+// TestBase64EncodedLenForSaettigtStattUeberzulaufenBeiSehrGrossemLimit
+// belegt den Overflow-Fund (Review, 23.08.2026): FILEEE_MAX_UPLOAD_BYTES
+// (config.go, intWert) akzeptiert JEDEN nicht-negativen int64-Wert, bis
+// math.MaxInt64. Mit der urspruenglichen Formel ((n+2)/3)*4 lief bereits
+// n+2 bei einem n nahe math.MaxInt64 ueber int64 hinaus und kippte in
+// einen negativen Zwischenwert — die berechnete Obergrenze war dann
+// NEGATIV, und uploadDocumentHandler haette jeden nicht-leeren Upload
+// als "zu gross" abgelehnt, obwohl er weit unter dem konfigurierten
+// Limit lag.
+//
+// Der Test prueft direkt an der Grenze (math.MaxInt64 selbst, wo n+2 in
+// der alten Formel ueberlief) zwei Dinge: die Obergrenze ist POSITIV,
+// und sie ist >= dem Eingabewert n selbst — beides zusammen ist genau
+// die Eigenschaft, die base64EncodedLenFor's eigener Doc-Kommentar
+// zusichert ("jeder String, dessen Laenge diese Obergrenze
+// ueberschreitet, dekodiert garantiert zu mehr als n Bytes"). Eine
+// negative oder kleinere-als-n Obergrenze wuerde diese Zusicherung
+// verletzen und uploadDocumentHandler's Groessenpruefung kaputt machen.
+//
+// Gegenprobe (Kommentar, nicht ausfuehrbar, da die alte Formel entfernt
+// wurde): mit der alten Formel ((n+2)/3)*4 wird dieser Test ROT — bei
+// n=math.MaxInt64 lief n+2 in int64 ueber und lieferte eine negative
+// Obergrenze, die die Test-Bedingung "Obergrenze > 0" verletzt.
+func TestBase64EncodedLenForSaettigtStattUeberzulaufenBeiSehrGrossemLimit(t *testing.T) {
+	for _, n := range []int64{math.MaxInt64 - 2, math.MaxInt64 - 1, math.MaxInt64} {
+		got := base64EncodedLenFor(n)
+		if got <= 0 {
+			t.Errorf("base64EncodedLenFor(%d) = %d, wollte eine POSITIVE Obergrenze (alte Formel ((n+2)/3)*4 lief hier ueber und lieferte einen negativen Wert)", n, got)
+		}
+		if got < n {
+			t.Errorf("base64EncodedLenFor(%d) = %d, wollte eine Obergrenze >= dem Eingabewert selbst (base64 kann ein Byte nie kuerzer kodieren als es lang ist)", n, got)
+		}
+	}
+}
+
+// TestBase64EncodedLenForSaettigtAufMaxInt64WennBlocksMalVierUeberliefe
+// belegt die zweite Ueberlaufstelle in base64EncodedLenFor: NACH der in
+// TestBase64EncodedLenForSaettigtStattUeberzulaufenBeiSehrGrossemLimit
+// belegten Korrektur von n+2 kann blocks*4 selbst noch ueberlaufen (ein
+// n nahe math.MaxInt64 ergibt blocks nahe math.MaxInt64/3, und blocks*4
+// > math.MaxInt64). Der Saettigungs-Zweig (blocks > math.MaxInt64/4 →
+// math.MaxInt64) faengt genau das ab — dieser Test prueft direkt, dass
+// das Ergebnis exakt math.MaxInt64 ist, nicht ein durch Ueberlauf
+// entstandener negativer Wert.
+func TestBase64EncodedLenForSaettigtAufMaxInt64WennBlocksMalVierUeberliefe(t *testing.T) {
+	if got := base64EncodedLenFor(math.MaxInt64); got != math.MaxInt64 {
+		t.Errorf("base64EncodedLenFor(math.MaxInt64) = %d, want %d (math.MaxInt64) — blocks*4 haette hier ohne Saettigung ueberlaufen", got, int64(math.MaxInt64))
 	}
 }
 
