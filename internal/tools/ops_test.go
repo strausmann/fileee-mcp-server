@@ -304,10 +304,48 @@ func TestGetToolManifestOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 }
 
 func TestToolManifestEntryFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"Name", "Description", "Kind"}
+	want := []string{"Name", "Title", "Description", "Kind"}
 	got := fieldNames(toolManifestEntry{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("toolManifestEntry-Feldliste = %v, want %v", got, want)
+	}
+}
+
+// TestGetToolManifestEntryTraegtDenTitelDesWerkzeugs belegt, dass Title
+// im Verzeichnis nicht nur als Feld existiert, sondern tatsaechlich mit
+// dem Wert befuellt wird, den das jeweilige Werkzeug selbst ueber
+// mcp.ToolAnnotations.Title traegt -- Aufgabe C2s Description verspricht
+// "name, title, description and kind" je Eintrag; ohne diesen Test waere
+// das Feld leer geblieben und das Versprechen falsch, obwohl
+// TestToolManifestEntryFeldlisteIstAbgeschlossen (nur Feldnamen, keine
+// Werte) bereits gruen war.
+func TestGetToolManifestEntryTraegtDenTitelDesWerkzeugs(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	handler := getToolManifestHandler(s, discardLogger())
+
+	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
+	if err != nil {
+		t.Fatalf("getToolManifestHandler: %v", err)
+	}
+
+	byName := make(map[string]toolManifestEntry, len(out.Tools))
+	for _, entry := range out.Tools {
+		byName[entry.Name] = entry
+	}
+
+	entry, ok := byName[ToolGetToolManifest]
+	if !ok {
+		t.Fatal("get_tool_manifest fehlt im eigenen Verzeichnis")
+	}
+	if entry.Title != "Tool manifest" {
+		t.Errorf("Title von %q = %q, want %q (aus mcp.ToolAnnotations.Title, registerOpsTools)", ToolGetToolManifest, entry.Title, "Tool manifest")
+	}
+
+	for _, tool := range out.Tools {
+		if tool.Title == "" {
+			t.Errorf("Werkzeug %q hat keinen Titel im Verzeichnis -- jedes ueber RegisterAll angemeldete Werkzeug setzt mcp.ToolAnnotations.Title (ADR-0018)", tool.Name)
+		}
 	}
 }
 

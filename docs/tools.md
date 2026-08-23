@@ -1,13 +1,19 @@
 # Werkzeuge
 
-Dieser Server registriert nur die Werkzeuge, die die konfigurierte Capability-Gruppe
-freischaltet (siehe [`README.md`](../README.md), Abschnitt „Funktionsumfang festlegen“, und
-[ADR-0011](adr/0011-capability-gating.md)). Nicht freigeschaltete Werkzeuge tauchen in
-`tools/list` gar nicht erst auf.
+Dieser Server registriert **jedes** Werkzeug immer, für jeden Aufrufer, der Gangways
+Authentifizierung und die geforderte Scope-Prüfung besteht — es gibt keine serverseitige
+Freischaltung mehr, die ein Werkzeug aus `tools/list` fernhält. Jedes Werkzeug trägt stattdessen
+einen `Title` und wahrheitsgemäße `ToolAnnotations` (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`); ob ein Client es tatsächlich aufrufen darf, entscheiden der Client und dessen
+Benutzer (Always allow / Needs approval / Blocked), nicht der Server. Details und Begründung:
+[ADR-0018](adr/0018-werkzeug-freigabe-und-client-steuerung.md) (löst
+[ADR-0011](adr/0011-capability-gating.md)s serverseitiges Capability-Gating ab).
 
-`read` ist heute vollständig: **32 lesende Werkzeuge**, unten nach Sachgebiet gruppiert. Jede
-Zusammenfassung fasst die Beschreibung zusammen, die das jeweilige Werkzeug selbst im Code trägt
-(die eigentliche Quelle) — sie erfindet nichts Neues.
+Die lesenden Werkzeuge sind heute vollständig: **32 fileee-Werkzeuge**, unten nach Sachgebiet
+gruppiert — plus 4 operative Werkzeuge, die keine Fileee-Daten berühren (`get_runtime_stats`,
+`get_tool_manifest`, `self_check`, `whoami`; siehe deren eigene Beschreibung im Code, nicht Teil
+dieser Gruppierung nach Sachgebiet). Jede Zusammenfassung fasst die Beschreibung zusammen, die
+das jeweilige Werkzeug selbst im Code trägt (die eigentliche Quelle) — sie erfindet nichts Neues.
 
 ## Fremdbestimmter Text — die wichtigste Eigenschaft dieses Servers (ADR-0013)
 

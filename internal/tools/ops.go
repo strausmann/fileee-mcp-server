@@ -172,8 +172,13 @@ func getRuntimeStatsHandler(logger *slog.Logger) mcp.ToolHandlerFor[getRuntimeSt
 // being dropped so a caller comparing manifests across a future write
 // tool's introduction sees the field's meaning change, not the field
 // disappear.
+//
+// Title mirrors the tool's own mcp.ToolAnnotations.Title (registerOpsTools
+// and every other registration site set one) — empty only if a tool were
+// ever registered without one, which every currently mounted tool is not.
 type toolManifestEntry struct {
 	Name        string `json:"name"`
+	Title       string `json:"title"`
 	Description string `json:"description"`
 	Kind        string `json:"kind"`
 }
@@ -261,7 +266,11 @@ func getToolManifestHandler(s *mcp.Server, logger *slog.Logger) mcp.ToolHandlerF
 
 		out := getToolManifestOutput{Total: len(mounted), Tools: make([]toolManifestEntry, 0, len(mounted))}
 		for _, tool := range mounted {
-			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Description: tool.Description, Kind: toolManifestKind})
+			var title string
+			if tool.Annotations != nil {
+				title = tool.Annotations.Title
+			}
+			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Title: title, Description: tool.Description, Kind: toolManifestKind})
 		}
 		sort.Slice(out.Tools, func(i, j int) bool { return out.Tools[i].Name < out.Tools[j].Name })
 
@@ -544,14 +553,14 @@ func registerOpsTools(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetToolManifest,
 		Description: "List every tool actually mounted on this server, with each tool's name, " +
-			"description and title. Returns the total count and one entry per tool, always " +
+			"title, description and kind. Returns the total count and one entry per tool, always " +
 			"including get_runtime_stats and get_tool_manifest itself. There is one server " +
-			"instance and every tool on it is available to every authenticated caller — deciding " +
-			"which of those tools a particular caller should actually use is the client's " +
-			"responsibility, not something this server enforces per tool. Use it to see the " +
-			"server's full, current tool set, for example after a deployment, and it does not " +
-			"claim this set is everything this server will ever offer, only what is registered " +
-			"right now.",
+			"instance and every tool on it is available to every authenticated caller that " +
+			"satisfies the required scopes — deciding which of those tools a particular caller " +
+			"should actually use is the client's responsibility, not something this server " +
+			"enforces per tool. Use it to see the server's full, current tool set, for example " +
+			"after a deployment, and it does not claim this set is everything this server will " +
+			"ever offer, only what is registered right now.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Tool manifest"},
 	}, getToolManifestHandler(s, logger))
 

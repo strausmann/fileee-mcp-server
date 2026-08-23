@@ -1,9 +1,13 @@
 // Package tools registers this server's MCP tools. RegisterAll is the
-// only entry point today — it adds the two reading tools this server
-// currently offers (list_documents, search_documents). Every handler
-// resolves its own Fileee connection through a clientpool.Pool, keyed to
-// the caller identity Gangway verified (serve.IdentityFrom), never to a
-// fixed account (CONTRIBUTING.md, "Konto-Auflösung"; ADR-0012).
+// only entry point today — it mounts this server's full read/meta tool
+// set: 32 fileee-backed read tools (documents, reference data, people
+// data) plus 4 operational tools that never touch Fileee data at all
+// (get_runtime_stats, get_tool_manifest, self_check, whoami) — 36 tools
+// total (registeredReadTools() in names.go is the live count). Every
+// Fileee-backed handler resolves its own connection through a
+// clientpool.Pool, keyed to the caller identity Gangway verified
+// (serve.IdentityFrom), never to a fixed account (CONTRIBUTING.md,
+// "Konto-Auflösung"; ADR-0012).
 package tools
 
 import (
@@ -42,11 +46,11 @@ const (
 // Aufgabe 3: tags, companies, document types, document-type schemes), and —
 // since Aufgabe 4 — the three people-data list/get pairs (registerPeopleTools,
 // read_people.go: contacts, reminders, conversations) to s. Since Aufgabe
-// C1, it also adds this server's own operational tools
-// (registerOpsTools, ops.go: get_runtime_stats today, get_tool_manifest
-// once Aufgabe C2 lands) — unlike every other tool here, these never
-// touch Fileee data at all. All Fileee-backed tools resolve their
-// connection through p — see clientFor.
+// C1/C2, it also adds this server's own operational tools
+// (registerOpsTools, ops.go: get_runtime_stats, get_tool_manifest,
+// self_check, whoami) — unlike every other tool here, these never touch
+// Fileee data at all. All Fileee-backed tools resolve their connection
+// through p — see clientFor.
 //
 // logger receives this server's diagnostic log for every tool this
 // function mounts, directly or through registerSyncTools/

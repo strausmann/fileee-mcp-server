@@ -30,9 +30,13 @@
 // independent check that foreign free text specifically never leaks into a
 // structured field. An audit of every RegisterAll tool's response body
 // (Aufgabe: fileee-mcp-server PII-Leak-Audit, homelab-management repo,
-// 2026-08-14) confirmed this by hand across all 35 read tools — found no
-// go-fileee Marshaler type reachable from any response body, directly or
-// transitively.
+// 2026-08-14) confirmed this by hand across all tools registered at the
+// time (35) — found no go-fileee Marshaler type reachable from any
+// response body, directly or transitively. registeredReadTools() mounts
+// 36 tools today (32 fileee-backed read tools plus 4 operational tools:
+// get_runtime_stats, get_tool_manifest, self_check, whoami) — the count
+// grew after that audit, registeredResponseBodyTypes below reflects the
+// current set.
 //
 // A hand audit is a snapshot, not a standing guarantee. This test is the
 // mechanical guardrail that keeps that finding true going forward: it
