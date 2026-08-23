@@ -90,7 +90,7 @@ Diese App-Registrierung steckt hier in einer Doppelrolle: Sie ist zugleich die *
 
 ## 3a. App-Rollen (optional, nicht mehr für den Funktionsumfang)
 
-Der Server registriert seit [ADR-0018](../adr/0018-tool-exposure-and-client-gating.md) **alle**
+Der Server registriert seit [ADR-0018](../adr/0018-werkzeug-freigabe-und-client-steuerung.md) **alle**
 Werkzeuge für jeden authentifizierten Aufrufer — es gibt keine serverseitige Einschränkung mehr,
 welche Werkzeuge ein Client zu sehen bekommt, und damit auch keinen Claim mehr, über den Entra
 einen Funktionsumfang steuern könnte. `MCP_OIDC_CAPABILITY_CLAIM` und die zugehörigen

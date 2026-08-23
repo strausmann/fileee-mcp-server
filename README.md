@@ -4,7 +4,7 @@
 
 Ein **inoffizieller** MCP-Server für [Fileee](https://www.fileee.com), der die eigenen Dokumente für AI-Clients zugänglich macht — als lokaler Server über einen statischen Token oder als **Remote-Connector mit OAuth-Anmeldung**, etwa in der Claude.ai-Web-UI.
 
-> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die Capability-Gruppe `read` ist vollständig: **32 lesende Werkzeuge**, siehe [`docs/tools.md`](docs/tools.md). Die Capability-Gruppen `write`, `share` und `destructive` entstehen in den folgenden Umsetzungsschritten.
+> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die lesenden Werkzeuge sind vollständig angemeldet: **32 Werkzeuge**, siehe [`docs/tools.md`](docs/tools.md). Schreibende, teilende und löschende Werkzeuge entstehen in den folgenden Umsetzungsschritten.
 
 Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/strausmann/go-fileee) und ist damit Geschwisterprojekt von [`strausmann/fileee-server`](https://github.com/strausmann/fileee-server) (REST-API für n8n/CI). Der Unterschied: `fileee-server` kennt genau ein Fileee-Konto und ein statisches Token; dieser Server bindet die **Identität des anfragenden Benutzers** an ein Fileee-Konto.
 
@@ -16,7 +16,7 @@ Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/straus
 - **OAuth 2.1 als Resource Server** nach [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) — der Identity Provider ist frei wählbar und reine Konfiguration
 - **Statisches Bearer-Token** als Alternative, wenn kein IdP vorhanden ist
 - **Ein oder mehrere Fileee-Konten**, zugeordnet über einen signierten Claim aus dem Token
-- **Konfigurierbarer Funktionsumfang** über Capability-Gruppen — nicht freigeschaltete Tools werden gar nicht erst registriert
+- **Alle Werkzeuge angemeldet, Freigabe je Werkzeug beim Client** — jedes Werkzeug trägt einen Titel und die zutreffenden `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`); Always allow / Needs approval / Blocked entscheidet der Client und dessen Benutzer, nicht der Server (siehe [ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md))
 
 ## Drei Betriebsarten
 
@@ -107,7 +107,7 @@ Die Zuordnung läuft über einen konfigurierbaren Claim aus dem Token (Default `
 
 Der Server registriert **alle** Werkzeuge für jeden authentifizierten Aufrufer — es gibt keine
 serverseitige Einschränkung mehr, welche Werkzeuge ein Client zu sehen bekommt (siehe
-[ADR-0018](docs/adr/0018-tool-exposure-and-client-gating.md)). Jedes Werkzeug trägt einen
+[ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)). Jedes Werkzeug trägt einen
 sprechenden Titel und die zutreffenden Hinweise (`readOnlyHint`, `destructiveHint`,
 `idempotentHint`) — die Freigabe je Werkzeug (Always allow / Needs approval / Blocked) trifft der
 **Client und dessen Benutzer**, nicht der Server.
@@ -120,13 +120,15 @@ ohnehin nicht über den einzelnen Request hinaus gibt.
 
 ## Werkzeuge
 
-Der Katalog entsteht schrittweise. Die Capability-Gruppe `read` ist vollständig — **32 Werkzeuge**
-über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dokumenttyp-Schemata), Kontakte/
-Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
+Der Katalog entsteht schrittweise. Die lesenden Werkzeuge sind vollständig angemeldet — **32
+Werkzeuge** über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dokumenttyp-Schemata),
+Kontakte/Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
 Seiten-OCR und Kontostand — vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert,
 inklusive der Absicherung gegen präparierte, fremdbestimmte Inhalte (Dokumenttitel, Firmen-/
-Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text). `write`, `share` und
-`destructive` entstehen in den folgenden Umsetzungsschritten.
+Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text). Schreibende, teilende
+und löschende Werkzeuge entstehen in den folgenden Umsetzungsschritten — jedes davon wird, sobald
+es existiert, ebenso angemeldet und über seine `ToolAnnotations` beschrieben (siehe
+[ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)).
 
 ## Sicherheit
 
