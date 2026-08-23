@@ -225,6 +225,40 @@ func TestUploadDocumentFromServiceGegenprobeDuplikatAlsFehlerBehandeltWuerdeDenT
 	}
 }
 
+// TestUploadDocumentFromServiceVertragsverletzungNilResultBeiDuplikatWirdFehlerStattPanic
+// deckt einen defensiven Nil-Check ab, keinen heute erreichbaren
+// Produktionspfad: go-fileee garantiert laut eigenem Doc-Kommentar auf
+// Upload/UploadResult ("Result befüllen UND Fehler liefern"), dass res
+// auch auf dem ErrDuplicateDocument-Pfad nicht nil ist — das
+// fakeDocumentUploadService hier verletzt genau diesen Vertrag
+// absichtlich (result:nil trotz ErrDuplicateDocument), um zu belegen,
+// dass eine künftige, stille Vertragsverletzung von go-fileee einen
+// gewöhnlichen Fehler zurückgibt statt den gesamten Prozess mit einem
+// Nil-Pointer-Panic zu beenden (kein recover() im go-sdk-Dispatch,
+// internal/jsonrpc2/conn.go handleAsync). Ohne den Nil-Check in
+// uploadDocumentResult panickt dieser Test — das ist die geforderte
+// Gegenprobe.
+func TestUploadDocumentFromServiceVertragsverletzungNilResultBeiDuplikatWirdFehlerStattPanic(t *testing.T) {
+	service := &fakeDocumentUploadService{
+		result: nil, // Vertragsverletzung: go-fileee sollte hier nie nil liefern
+		err:    fileee.ErrDuplicateDocument,
+	}
+
+	result, out, err := uploadDocumentFromService(context.Background(), service, []byte("x"), uploadDocumentInput{Title: "t"})
+	if err == nil {
+		t.Fatal("uploadDocumentFromService: err ist nil, want einen Fehler (res war nil)")
+	}
+	if !strings.Contains(err.Error(), string(ToolUploadDocument)) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolUploadDocument)
+	}
+	if result != nil {
+		t.Errorf("result = %+v, want nil bei einem Fehler", result)
+	}
+	if out != (uploadDocumentOutput{}) {
+		t.Errorf("out = %+v, want die Nullwert-Struktur bei einem Fehler", out)
+	}
+}
+
 // TestUploadDocumentFromServiceGegenprobeRohesBase64StattDekodierterBytesWuerdeDenTestRotFaerben
 // proves uploadDocumentFromService's reader carries the caller's
 // DECODED bytes, not the base64-encoded string itself — the second

@@ -138,7 +138,24 @@ type uploadDocumentOutput struct {
 // frame (this file's own package doc comment) — the same choice
 // boxDocumentResult already makes (write_boxes.go) for the same
 // underlying reason.
+//
+// Defensiver Nil-Check: go-fileee garantiert heute (Upload/UploadResult-
+// Doc-Kommentar, "Result befüllen UND Fehler liefern"), dass res UND
+// res.Document auf BEIDEN Erfolgspfaden (frischer Upload wie erkanntes
+// Duplikat) nicht nil sind — uploadDocumentFromService unten ruft diese
+// Funktion ausschliesslich auf genau diesen beiden Pfaden auf. Der
+// Vertrag hält heute nachweislich; er ist aber eine stille Zusage einer
+// fremden Bibliothek, keine vom Compiler erzwungene Garantie. Ein Panic
+// in einem Tool-Handler beendet nachweislich den GESAMTEN Prozess (kein
+// recover() im go-sdk-Dispatch, internal/jsonrpc2/conn.go handleAsync
+// startet die Handler-Goroutine ohne recover) — eine künftige, stille
+// Vertragsverletzung von go-fileee wäre damit ein harter Totalausfall
+// (DoS) statt eines normalen Fehlers. Der Check hier tauscht das gegen
+// einen gewöhnlichen, für den Aufrufer sichtbaren Fehler ein.
 func uploadDocumentResult(res *fileee.UploadResult, isDuplicate bool) (*mcp.CallToolResult, uploadDocumentOutput, error) {
+	if res == nil || res.Document == nil {
+		return nil, uploadDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: go-fileee returned no document result", ToolUploadDocument)
+	}
 	return &mcp.CallToolResult{}, uploadDocumentOutput{ID: res.Document.ID, IsDuplicate: isDuplicate}, nil
 }
 
