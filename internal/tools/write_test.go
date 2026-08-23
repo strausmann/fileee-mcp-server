@@ -577,3 +577,61 @@ func TestCreateContactHandlerAkzeptiertEinenReinenFirmenkontaktOhneNamen(t *test
 		t.Errorf("ein reiner Firmenkontakt (nur CompanyName) wurde faelschlich als 'nichts angegeben' abgewiesen: %v", err)
 	}
 }
+
+// TestCreateContactInputSchemaFordertWederFirstNameNochLastName ist
+// Fix-Runde 1's eigener Pflicht-Test (HIGH-Finding, am echten
+// Abhaengigkeits-Code bewiesen): er prueft die JSON-Schema-EBENE, nicht
+// den Handler direkt. Ein Handler-Test wie
+// TestCreateContactHandlerAkzeptiertEinenReinenFirmenkontaktOhneNamen
+// oben ruft createContactHandler als reine Go-Funktion auf und umgeht
+// damit die Schema-Validierungsschicht des go-sdk vollstaendig
+// (mcp/tool.go, resolved.Validate laeuft VOR dem Handler) — genau das
+// hat den urspruenglichen Fehler unsichtbar gemacht: die Handler-Ebene
+// behauptete "company-only geht", waehrend das generierte Schema
+// firstName+lastName als "required" auswies und einen solchen Aufruf
+// nie bis zum Handler durchliess.
+//
+// registeredReadTools() macht denselben echten
+// AddTool→Server→tools/list-Rundlauf, den ein echter MCP-Client sieht
+// (names.go's eigener Doc-Kommentar) — das InputSchema, das dabei
+// zurueckkommt, ist laut go-sdk's eigenem Doc-Kommentar auf
+// Tool.InputSchema ("From the client, this field will hold the default
+// JSON marshaling of the server's input schema") ein map[string]any,
+// keine jsonschema.Schema-Struct — exakt das, was ein echter Caller
+// (und dessen eigene Schema-Validierung) zu sehen bekommt.
+func TestCreateContactInputSchemaFordertWederFirstNameNochLastName(t *testing.T) {
+	var found *mcp.Tool
+	for _, tool := range registeredReadTools() {
+		if tool.Name == ToolCreateContact {
+			found = tool
+		}
+	}
+	if found == nil {
+		t.Fatalf("Werkzeug %q wurde nicht angemeldet", ToolCreateContact)
+	}
+
+	schema, ok := found.InputSchema.(map[string]any)
+	if !ok {
+		t.Fatalf("InputSchema ist %T, want map[string]any", found.InputSchema)
+	}
+
+	requiredRaw, present := schema["required"]
+	if !present {
+		// Kein "required"-Schluessel im Schema ueberhaupt — das ist die
+		// staerkste moegliche Form von "weder firstName noch lastName
+		// sind required", die Pruefung unten ist dann trivial erfuellt.
+		return
+	}
+	required, ok := requiredRaw.([]any)
+	if !ok {
+		t.Fatalf("schema[\"required\"] ist %T, want []any", requiredRaw)
+	}
+	for _, r := range required {
+		name, _ := r.(string)
+		if name == "firstName" || name == "lastName" {
+			t.Errorf("create_contact-Schema fordert %q als required — ein reiner "+
+				"Firmenkontakt (nur companyName) wuerde bereits auf der Schema-Ebene "+
+				"abgelehnt, bevor createContactHandler je laeuft. required = %v", name, required)
+		}
+	}
+}

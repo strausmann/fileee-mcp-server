@@ -266,11 +266,27 @@ type contactCreateService interface {
 // existing contact to merge onto, so "the caller didn't mention this
 // field" and "the caller wants this field empty" are the same thing
 // here (an empty string either way).
+//
+// FirstName and LastName carry omitempty — deliberately, and NOT an
+// oversight (Fix-Runde 1, HIGH finding, dependency-code-proven): the
+// go-sdk's jsonschema-go turns every field WITHOUT omitempty into a
+// JSON-Schema "required" entry, and the go-sdk validates every tool
+// call against that schema (mcp/tool.go, resolved.Validate) BEFORE
+// createContactHandler ever runs. Without omitempty here, a
+// company-only contact (no firstName/lastName, only companyName) would
+// be rejected at the schema layer — unreachable by
+// createContactHandler's own "not all three empty" check below, no
+// matter how correct that check is. See
+// TestCreateContactInputSchemaFordertWederFirstNameNochLastName
+// (write_test.go), which asserts this at the schema layer directly —
+// a handler-level test alone (calling createContactHandler as a plain
+// Go function) cannot catch this class of bug, because it bypasses the
+// go-sdk's own schema-validation layer entirely.
 type createContactInput struct {
 	// FirstName is the new contact's first name.
-	FirstName string `json:"firstName"`
+	FirstName string `json:"firstName,omitempty"`
 	// LastName is the new contact's last name.
-	LastName string `json:"lastName"`
+	LastName string `json:"lastName,omitempty"`
 	// CompanyName is the new contact's company name (for a company
 	// contact).
 	CompanyName string `json:"companyName,omitempty"`
@@ -287,7 +303,7 @@ type createContactInput struct {
 // display name is exactly as foreign here as an updated contact's is
 // (supplied by the caller through this very call, but still not
 // Fileee's own account-holder data) and goes into
-// CallToolResult.Content via wrapUntrusted instead, never into a field
+// CallToolResult.Content via wrapUntrustedLines instead, never into a field
 // that would land in CallToolResult.StructuredContent (see
 // createContactResult below).
 type createContactOutput struct {
@@ -297,22 +313,26 @@ type createContactOutput struct {
 
 // createContactResult builds createContactHandler's success return from
 // created, the contact fileee.Contacts.Create handed back — the same
-// split updateContactResult establishes above, so wrapUntrusted's own
-// error path has a single call site independent of the backend call
-// around it.
+// split updateContactResult establishes above, so wrapUntrustedLines'
+// own error path has a single call site independent of the backend
+// call around it.
 //
 // The new contact's own display name goes into result.Content via
-// wrapUntrusted (read.go) — the same channel updateContactResult's own
-// wrapUntrustedLines call uses for an updated contact's display name —
-// never into a field of the returned createContactOutput (see this
-// type's own doc comment above and write.go's package doc comment on
-// the foreign-text invariant).
+// wrapUntrustedLines (read_generic.go) — the exact same call
+// updateContactResult's own wrapUntrustedLines call makes for an
+// updated contact's display name (aligned in Fix-Runde 1; a direct
+// wrapUntrusted call worked identically for the validated path, since
+// contactDisplayName always returns non-empty text there, but
+// wrapUntrustedLines is the sibling's own template and drops an empty
+// line instead of framing an empty block) — never into a field of the
+// returned createContactOutput (see this type's own doc comment above
+// and write.go's package doc comment on the foreign-text invariant).
 func createContactResult(created *fileee.Contact) (*mcp.CallToolResult, createContactOutput, error) {
-	result, err := wrapUntrusted(contactDisplayName(created))
+	result, err := wrapUntrustedLines([]string{contactDisplayName(created)})
 	if err != nil {
 		return nil, createContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateContact, err)
 	}
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, createContactOutput{ID: created.ID}, nil
+	return result, createContactOutput{ID: created.ID}, nil
 }
 
 // createContactFromService is createContactHandler's logic below client
