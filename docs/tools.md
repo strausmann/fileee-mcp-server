@@ -153,8 +153,12 @@ vorzeitig zu beenden — alles danach erschiene dann als „vertrauenswürdig“
 Aufruf **neu** erzeugten Zufallsmarke (`crypto/rand`, 16 Byte) kann vorab verfasster Text die
 tatsächliche Marke nicht kennen; eine nachgeahmte schließende Marke bleibt als sichtbarer,
 unwirksamer Text innerhalb des Blocks stehen. Das ist **keine Garantie** — die primäre Absicherung
-bleibt der Funktionsumfang selbst (nicht registrierte Werkzeuge sind nicht aufrufbar, siehe
-ADR-0013 Punkt 4) — aber es macht eine plausible, feste Nachahmung wirkungslos.
+ist, dass ein Client anhand der `ToolAnnotations` (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`) und der eigenen Freigabe-Entscheidung (Always allow / Needs approval /
+Blocked) selbst kontrolliert, welches Werkzeug ausgeführt wird — nicht ein serverseitig nicht
+registriertes Werkzeug (siehe [ADR-0018](adr/0018-werkzeug-freigabe-und-client-steuerung.md),
+das [ADR-0013](adr/0013-prompt-injection-schutz.md) Punkt 4 in diesem Punkt überholt) — aber
+die Zufallsmarke macht eine plausible, feste Nachahmung des Rahmens wirkungslos.
 
 Werkzeuge ohne fremdbestimmten Text (siehe Tabelle oben) enthalten keine solche Umrandung — ein
 leeres Textergebnis ist bei ihnen normal, kein Fehler.

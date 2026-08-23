@@ -174,8 +174,10 @@ func getRuntimeStatsHandler(logger *slog.Logger) mcp.ToolHandlerFor[getRuntimeSt
 // disappear.
 //
 // Title mirrors the tool's own mcp.ToolAnnotations.Title (registerOpsTools
-// and every other registration site set one) — empty only if a tool were
-// ever registered without one, which every currently mounted tool is not.
+// and every other registration site set one) — every currently mounted
+// tool has one (TestEveryMountedToolHasATitle). getToolManifestHandler
+// falls back to the tool's Name if a future tool were ever mounted
+// without a Title, so this field is never empty even then.
 type toolManifestEntry struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
@@ -266,8 +268,15 @@ func getToolManifestHandler(s *mcp.Server, logger *slog.Logger) mcp.ToolHandlerF
 
 		out := getToolManifestOutput{Total: len(mounted), Tools: make([]toolManifestEntry, 0, len(mounted))}
 		for _, tool := range mounted {
-			var title string
-			if tool.Annotations != nil {
+			// TestEveryMountedToolHasATitle (descriptions_test.go) guarantees every
+			// currently mounted tool sets Annotations.Title — this branch is
+			// unreachable today. It stays as a defensive fallback to tool.Name
+			// rather than an empty string so the manifest's own promise ("every
+			// entry includes ... title") cannot be silently violated by a future
+			// tool that skips that test's coverage (e.g. one registered on a
+			// different *mcp.Server never exercised by registeredReadTools()).
+			title := tool.Name
+			if tool.Annotations != nil && tool.Annotations.Title != "" {
 				title = tool.Annotations.Title
 			}
 			out.Tools = append(out.Tools, toolManifestEntry{Name: tool.Name, Title: title, Description: tool.Description, Kind: toolManifestKind})
