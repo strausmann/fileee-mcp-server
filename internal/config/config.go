@@ -63,10 +63,6 @@ type Account struct {
 	TOTPSeed string
 	// Subjects sind die Claim-Werte, die auf dieses Konto abbilden.
 	Subjects []string
-	// Capabilities schraenkt den Funktionsumfang dieses Kontos ein.
-	Capabilities Set
-	// HasCapabilities gibt an, ob ueberhaupt eine Einschraenkung konfiguriert ist.
-	HasCapabilities bool
 }
 
 // OIDCProvider waehlt den Identity Provider. Jeder Wert hat einen eigenen
@@ -90,13 +86,12 @@ const (
 // Config buendelt die gesamte Laufzeitkonfiguration. Sie entsteht ausschliesslich
 // in LoadConfig — keine andere Stelle im Server liest Umgebungsvariablen.
 type Config struct {
-	AuthMode            AuthMode
-	OIDCProvider        OIDCProvider
-	OIDCIssuer          string
-	OIDCClientID        string
-	OIDCSubjectClaim    string
-	OIDCCapabilityClaim string
-	OIDCRequiredScopes  []string
+	AuthMode           AuthMode
+	OIDCProvider       OIDCProvider
+	OIDCIssuer         string
+	OIDCClientID       string
+	OIDCSubjectClaim   string
+	OIDCRequiredScopes []string
 	// OIDCAdvertisedScopes wird, wenn gesetzt, statt OIDCRequiredScopes VOR
 	// jedem Token-Austausch angekuendigt (WWW-Authenticate "scope"-Parameter
 	// und RFC-9728 scopes_supported, siehe internal/server/server.go,
@@ -116,14 +111,6 @@ type Config struct {
 
 	AccountMode AccountMode
 	Accounts    []Account
-
-	Capabilities Set
-	// AllowDestructive ist bereits vollstaendig verdrahtet, nicht bloss
-	// geladen: LoadConfig selbst weist den Start ab, wenn Capabilities
-	// CapDestructive enthaelt, aber AllowDestructive nicht true ist (siehe
-	// unten, direkt nach dem Einlesen) — anders als die anderen in dieser
-	// Aufgabe (#42) geprueften Einstellungen ist hier also nichts offen.
-	AllowDestructive bool
 
 	// MaxDownloadBytes und MaxUploadBytes sind fuer kuenftige Download-/
 	// Upload-Werkzeuge vorgesehen (Capability-Gruppen read/write, siehe
@@ -238,7 +225,6 @@ func LoadConfig(env Env) (*Config, error) {
 		// Der Vorgabewert haengt vom Anbieter ab und wird deshalb erst in
 		// resolveProvider gesetzt — hier steht nur die ausdrueckliche Angabe.
 		OIDCSubjectClaim:     strings.TrimSpace(env("MCP_OIDC_SUBJECT_CLAIM")),
-		OIDCCapabilityClaim:  strings.TrimSpace(env("MCP_OIDC_CAPABILITY_CLAIM")),
 		OIDCRequiredScopes:   splitListe(env("MCP_OIDC_REQUIRED_SCOPES")),
 		OIDCAdvertisedScopes: splitListe(env("MCP_OIDC_ADVERTISED_SCOPES")),
 		ResourceURL:          strings.TrimSpace(env("MCP_RESOURCE_URL")),
@@ -273,16 +259,6 @@ func LoadConfig(env Env) (*Config, error) {
 	case ModeSingle, ModeMulti:
 	default:
 		return nil, fmt.Errorf("FILEEE_MODE = %q — erlaubt sind single, multi", cfg.AccountMode)
-	}
-
-	var err error
-	if cfg.Capabilities, err = ParseCapabilities(orDefault(env("FILEEE_CAPABILITIES"), string(CapRead))); err != nil {
-		return nil, fmt.Errorf("FILEEE_CAPABILITIES: %w", err)
-	}
-	cfg.AllowDestructive = env("FILEEE_ALLOW_DESTRUCTIVE") == "true"
-	if cfg.Capabilities.Has(CapDestructive) && !cfg.AllowDestructive {
-		return nil, fmt.Errorf("FILEEE_CAPABILITIES enthaelt destructive, aber FILEEE_ALLOW_DESTRUCTIVE " +
-			"ist nicht true — Fileees Hard-DELETE ist unwiderruflich und braucht zwei bewusste Schalter")
 	}
 
 	if err := ladeZahlenwerte(cfg, env); err != nil {
@@ -717,20 +693,6 @@ func ladeKonten(cfg *Config, env Env) error {
 		}
 		if konto.Username == "" || konto.Password == "" {
 			return fmt.Errorf("%s_USERNAME und %s_PASSWORD sind Pflicht", praefix, praefix)
-		}
-
-		if roh := env(praefix + "_CAPABILITIES"); roh != "" {
-			caps, err := ParseCapabilities(roh)
-			if err != nil {
-				return fmt.Errorf("%s_CAPABILITIES: %w", praefix, err)
-			}
-			if caps.Intersect(cfg.Capabilities) != caps {
-				return fmt.Errorf("%s_CAPABILITIES = %q ueberschreitet die Obergrenze %q aus "+
-					"FILEEE_CAPABILITIES — ein Konto kann nur einschraenken, nie erweitern",
-					praefix, caps.String(), cfg.Capabilities.String())
-			}
-			konto.Capabilities = caps
-			konto.HasCapabilities = true
 		}
 
 		for _, subject := range konto.Subjects {

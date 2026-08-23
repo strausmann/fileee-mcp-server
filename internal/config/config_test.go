@@ -53,9 +53,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.AccountMode != ModeSingle {
 		t.Errorf("AccountMode = %q, erwartet %q", cfg.AccountMode, ModeSingle)
 	}
-	if got := cfg.Capabilities.String(); got != "read" {
-		t.Errorf("Capabilities = %q, erwartet %q — der sichere Default ist read", got, "read")
-	}
 	if cfg.OIDCSubjectClaim != "sub" {
 		t.Errorf("OIDCSubjectClaim = %q, erwartet %q — sub ist der stabile Identitaetsanker",
 			cfg.OIDCSubjectClaim, "sub")
@@ -72,9 +69,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Key != defaultAccountKey {
 		t.Fatalf("erwartet genau ein Konto mit Key %q, bekommen %+v", defaultAccountKey, cfg.Accounts)
-	}
-	if cfg.AllowDestructive {
-		t.Error("AllowDestructive = true, erwartet false")
 	}
 }
 
@@ -270,30 +264,6 @@ func TestLoadConfigFailFast(t *testing.T) {
 			erwartet: "zwei Konten",
 		},
 		{
-			name: "konto-capability ueberschreitet die obergrenze",
-			env: func() map[string]string {
-				e := minimalOIDC()
-				e["FILEEE_CAPABILITIES"] = "read"
-				e["FILEEE_MODE"] = "multi"
-				e["FILEEE_ACCOUNTS"] = "anna"
-				e["FILEEE_ACCOUNT_ANNA_USERNAME"] = "anna@example.com"
-				e["FILEEE_ACCOUNT_ANNA_PASSWORD"] = "geheim"
-				e["FILEEE_ACCOUNT_ANNA_SUBJECTS"] = "anna"
-				e["FILEEE_ACCOUNT_ANNA_CAPABILITIES"] = "read,write"
-				return e
-			},
-			erwartet: "Obergrenze",
-		},
-		{
-			name: "destructive ohne das zweite gate",
-			env: func() map[string]string {
-				e := minimalToken()
-				e["FILEEE_CAPABILITIES"] = "read,destructive"
-				return e
-			},
-			erwartet: "FILEEE_ALLOW_DESTRUCTIVE",
-		},
-		{
 			name: "unbekannter auth-modus",
 			env: func() map[string]string {
 				e := minimalToken()
@@ -310,15 +280,6 @@ func TestLoadConfigFailFast(t *testing.T) {
 				return e
 			},
 			erwartet: "FILEEE_MODE",
-		},
-		{
-			name: "unbekannte capability",
-			env: func() map[string]string {
-				e := minimalToken()
-				e["FILEEE_CAPABILITIES"] = "read,admin"
-				return e
-			},
-			erwartet: "unbekannte capability",
 		},
 		{
 			name: "nicht numerisches limit",
@@ -423,12 +384,10 @@ func TestLoadConfigMultiAccount(t *testing.T) {
 	delete(env, "FILEEE_USERNAME")
 	delete(env, "FILEEE_PASSWORD")
 	env["FILEEE_MODE"] = "multi"
-	env["FILEEE_CAPABILITIES"] = "read,write,share"
 	env["FILEEE_ACCOUNTS"] = "anna, bob"
 	env["FILEEE_ACCOUNT_ANNA_USERNAME"] = "anna@example.com"
 	env["FILEEE_ACCOUNT_ANNA_PASSWORD"] = "geheim"
 	env["FILEEE_ACCOUNT_ANNA_SUBJECTS"] = "anna-sub, anna-zweit"
-	env["FILEEE_ACCOUNT_ANNA_CAPABILITIES"] = "read"
 	env["FILEEE_ACCOUNT_BOB_USERNAME"] = "bob@example.com"
 	env["FILEEE_ACCOUNT_BOB_PASSWORD"] = "geheim"
 	env["FILEEE_ACCOUNT_BOB_SUBJECTS"] = "bob-sub"
@@ -447,13 +406,6 @@ func TestLoadConfigMultiAccount(t *testing.T) {
 	}
 	if len(anna.Subjects) != 2 {
 		t.Errorf("Subjects = %v, erwartet zwei Eintraege", anna.Subjects)
-	}
-	if !anna.HasCapabilities || anna.Capabilities.String() != "read" {
-		t.Errorf("Capabilities = %q (gesetzt: %v), erwartet %q",
-			anna.Capabilities.String(), anna.HasCapabilities, "read")
-	}
-	if cfg.Accounts[1].HasCapabilities {
-		t.Error("bob hat keine eigene Capability-Einstellung, HasCapabilities muss false sein")
 	}
 
 	if key, ok := cfg.AccountBySubject("anna-zweit"); !ok || key != "anna" {
