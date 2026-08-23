@@ -112,25 +112,29 @@ type Config struct {
 	AccountMode AccountMode
 	Accounts    []Account
 
-	// MaxDownloadBytes und MaxUploadBytes sind fuer kuenftige Download-/
-	// Upload-Werkzeuge vorgesehen (siehe README "Funktionsumfang"). Die
-	// Bibliotheksfaehigkeit dafuer EXISTIERT bereits in go-fileee — DocumentService.Upload(ctx, r
-	// io.Reader, meta UploadMetadata), DocumentService.DownloadPDF(ctx, id,
-	// mode) io.ReadCloser, DocumentService.DownloadPageImage(...)
-	// io.ReadCloser, dazu die Freigabe-seitigen Gegenstuecke
-	// ShareClient.DownloadSharedPDF/DownloadSharedPage/DownloadPageImage —
-	// ein fruehere Fassung dieses Kommentars behauptete faelschlich das
-	// Gegenteil. Was fehlt, ist ausschliesslich die AUFRUFSTELLE: dieser
-	// Server registriert heute keinerlei Werkzeug, das eine dieser
-	// Methoden je aufruft (nur list_documents/search_documents, beide rein
-	// lesend ueber Documents.Query/Search, kein Binaertransfer) — deshalb
-	// gibt es fuer diese beiden Werte noch keinen Code, um den sie
-	// herumgelegt werden koennten. Ihr natuerlicher Ort ist absehbar: um
-	// den io.Reader/io.ReadCloser herum, den die jeweilige Methode
-	// entgegennimmt bzw. zurueckliefert (io.LimitReader bzw. ein
-	// limitierender io.ReadCloser-Wrapper) — NICHT die HTTP-Ebene dieses
-	// Servers. Das ist die Aufgabe des kuenftigen Werkzeug-Handlers, nicht
-	// dieser Konfiguration.
+	// MaxUploadBytes wird seit dem write-tools-Increment (Task 5,
+	// internal/tools/write_documents.go, uploadDocumentHandler) tatsaechlich
+	// durchgesetzt: upload_document lehnt einen Aufruf ab, sobald entweder
+	// die aus der base64-kodierten Laenge konservativ hochgerechnete
+	// Obergrenze oder die tatsaechlich dekodierte Bytezahl von
+	// contentBase64 diesen Wert ueberschreitet — bevor go-fileees
+	// DocumentService.Upload(ctx, r io.Reader, meta UploadMetadata) je
+	// aufgerufen wird. Eine fruehere Fassung dieses Kommentars behauptete,
+	// es gebe fuer diesen Wert noch KEINE Aufrufstelle — das galt bis zu
+	// diesem Increment und ist jetzt ueberholt.
+	//
+	// MaxDownloadBytes ist davon UNABHAENGIG weiterhin unverdrahtet: die
+	// beiden binaerliefernden Lese-Werkzeuge, die es heute bereits gibt
+	// (get_document_pdf/get_page_image, internal/tools/read_binary.go,
+	// DocumentService.DownloadPDF/DownloadPageImage), lesen diesen Wert
+	// NICHT — sie erzwingen ihre eigene, fest verdrahtete 8-MiB-Obergrenze
+	// (maxBinaryBytes, read_binary.go) unabhaengig von jeder Konfiguration.
+	// Ihr natuerlicher Ort fuer MaxDownloadBytes waere absehbar derselbe wie
+	// bei MaxUploadBytes: um den io.ReadCloser herum, den die jeweilige
+	// Methode zurueckliefert (ein limitierender io.ReadCloser-Wrapper) —
+	// NICHT die HTTP-Ebene dieses Servers. Das ist die Aufgabe eines
+	// kuenftigen Umbaus dieser beiden Werkzeuge auf einen konfigurierbaren
+	// statt fest verdrahteten Grenzwert, nicht dieser Konfiguration.
 	//
 	// MaxRequestBodyBytes ist davon unabhaengig abgeleitet
 	// (ladeZahlenwerte) und WUERDE den 4-MiB-Default des MCP-SDK
