@@ -737,34 +737,55 @@ func splitListe(roh string) []string {
 // maxRequestBodyBytesFor berechnet MaxUploadBytes*4/3 + 64 KiB — dieselbe
 // Formel, die LoadConfig frueher direkt inline schrieb (Base64s
 // Aufblaeh-Faktor 4/3 plus ein 64-KiB-Rahmen fuer JSON-RPC/HTTP) —
-// saettigt aber auf math.MaxInt64 statt in int64 zu ueberlaufen, wenn
-// maxUploadBytes sehr gross ist.
+// saettigt aber auf math.MaxInt64, wenn und NUR wenn das tatsaechliche
+// Endergebnis (inklusive des Rahmen-Zuschlags) nicht mehr in int64
+// passt.
 //
 // FILEEE_MAX_UPLOAD_BYTES akzeptiert jeden nicht-negativen int64-Wert
 // (intWert unten weist nur NEGATIVE Werte zurueck) — ein Betreiber kann
-// ihn also beliebig nah an math.MaxInt64 setzen. Die urspruengliche
-// Inline-Formel rechnete das in zwei Schritten, von denen JEDER fuer
-// sich bei einem solchen Wert ueberlaufen kann: maxUploadBytes*4 laeuft
-// bereits ueber, sobald maxUploadBytes math.MaxInt64/4 uebersteigt —
-// lange bevor die anschliessende /3 den Wert wieder senken wuerde —,
-// und selbst ein Zwischenergebnis, das Multiplikation und Division
-// unbeschadet uebersteht, kann beim abschliessenden + 64<<10 noch
-// ueberlaufen, wenn es bereits nahe math.MaxInt64 liegt. Beide
-// Ueberlaeufe kippen in ein NEGATIVES MaxRequestBodyBytes — genau der
-// Fehler, den intWerts eigener Kommentar unten fuer einen negativen
-// EINGABEWERT beschreibt, hier aber ueber einen Wert erreichbar, den
-// intWert als voellig gueltig durchlaesst (einen sehr grossen
-// positiven). Das ist dieselbe Ueberlauf-Klasse, vor der
-// internal/tools/write_documents.go's base64EncodedLenFor beim
-// Groessen-Gate fuer die kodierte Laenge schuetzt — siehe dessen
-// eigenen Doc-Kommentar fuer die allgemeine Begruendung. Hier steht
-// bewusst eine zweite, eigenstaendig kommentierte Implementierung statt
-// eines gemeinsamen Helfers: beide liegen in verschiedenen Paketen
-// (hier internal/config, dort internal/tools) und berechnen zwei
+// ihn also beliebig nah an math.MaxInt64 setzen. Eine erste Fassung
+// dieser Funktion pruefte den EINGABEWERT direkt gegen math.MaxInt64/4,
+// bevor ueberhaupt gerechnet wurde (dieselbe Form wie die urspruengliche
+// Inline-Formel) — das saettigte aber deutlich zu FRUEH: Fuer
+// Upload-Limits zwischen math.MaxInt64/4 und rund 3*math.MaxInt64/4
+// ueberlief zwar die NAIVE Zwischenrechnung maxUploadBytes*4, das
+// tatsaechlich gewuenschte Endergebnis maxUploadBytes*4/3 + 64<<10
+// passte aber noch bequem in int64 — die Pruefung schuetzte also vor
+// dem Ueberlauf einer Zwischengroesse, die diese Funktion gar nicht
+// mehr braucht, sobald man die Rechnung anders aufteilt, und lieferte
+// dafuer einen viel LOCKEREREN Wert als konfiguriert, statt eines
+// genauen (Fund: Codex-Review, 23.08.2026, Beispiel maxUploadBytes =
+// 3000000000000000000 — muesste 4000000000000065536 ergeben, lieferte
+// aber math.MaxInt64).
+//
+// Die Loesung ist die uebliche Umformung ueber Quotient und Rest:
+// n*4/3 == (n/3)*4 + (n%3)*4/3 — jeder Teilterm bleibt dabei klein
+// genug, um NICHT vorzeitig zu ueberlaufen, waehrend das mathematische
+// Ergebnis unveraendert bleibt (n = 3*(n/3) + (n%3), also n*4 =
+// 3*(n/3)*4 + (n%3)*4, und der erste Summand ist durch 3 teilbar —
+// die Division /3 verteilt sich exakt auf beide Anteile). (n%3)*4/3
+// ist immer klein (n%3 in {0,1,2}, also max. 8/3), (n/3)*4 kann NUR
+// dann noch ueberlaufen, wenn n/3 bereits groesser als math.MaxInt64/4
+// ist — und GENAU dann ist auch das wahre, unbeschraenkte Endergebnis
+// bereits groesser als math.MaxInt64 (denn (math.MaxInt64/4 + 1)*4
+// liegt schon ueber math.MaxInt64), saettigen ist an dieser Stelle also
+// nicht verfrueht, sondern der fruehestmoegliche Punkt, an dem das
+// Endergebnis nachweislich nicht mehr passt. Das ist dieselbe
+// Ueberlauf-Klasse, vor der internal/tools/write_documents.go's
+// base64EncodedLenFor beim Groessen-Gate fuer die kodierte Laenge
+// schuetzt — dort aber bereits von Anfang an ohne dieses Problem, weil
+// die Division dort VOR der Multiplikation steht (ceil(n/3)*4, eine
+// einzelne, bereits praezise Multiplikation) statt wie hier zuerst zu
+// multiplizieren und danach zu dividieren.
+//
+// Hier steht bewusst eine zweite, eigenstaendig kommentierte
+// Implementierung statt eines gemeinsamen Helfers mit
+// base64EncodedLenFor: beide liegen in verschiedenen Paketen (hier
+// internal/config, dort internal/tools) und berechnen zwei
 // UNTERSCHIEDLICHE Ausdruecke (dieser hier addiert obendrauf einen
 // festen Rahmen-Zuschlag und rundet ab, statt auf den naechsten
 // Base64-Block aufzurunden) — ein gemeinsames Paket ueber diese
-// Paketgrenze hinweg fuer zwei Zeilen saettigender Arithmetik waere
+// Paketgrenze hinweg fuer wenige Zeilen saettigender Arithmetik waere
 // mehr Aufwand als die Duplikation, die es einsparen wuerde.
 //
 // Saettigung (statt auf 0 abzuschneiden oder in Panic zu geraten) haelt
@@ -775,10 +796,19 @@ func splitListe(roh string) []string {
 // im Sinne dieses Werts weiterhin ein korrekter Deckel ist).
 func maxRequestBodyBytesFor(maxUploadBytes int64) int64 {
 	const rahmenZuschlag = 64 << 10 // 64 KiB Spielraum fuer JSON-RPC/HTTP-Rahmen
-	if maxUploadBytes > math.MaxInt64/4 {
+
+	quotient, rest := maxUploadBytes/3, maxUploadBytes%3
+	// quotient*4 kann selbst noch ueberlaufen, wenn maxUploadBytes so
+	// gross ist, dass schon dieser Anteil nicht mehr in int64 passt —
+	// und genau dann ist auch das wahre Endergebnis (das noch groesser
+	// waere) garantiert nicht mehr darstellbar. Hier zu saettigen
+	// verliert also keine Praezision gegenueber einer spaeteren Pruefung.
+	if quotient > math.MaxInt64/4 {
 		return math.MaxInt64
 	}
-	aufgeblaeht := maxUploadBytes * 4 / 3
+	// rest ist immer 0, 1 oder 2 -- rest*4 (max. 8) kann nie ueberlaufen.
+	aufgeblaeht := quotient*4 + (rest*4)/3
+
 	if aufgeblaeht > math.MaxInt64-rahmenZuschlag {
 		return math.MaxInt64
 	}

@@ -153,7 +153,15 @@ func TestMaxRequestBodyBytesForGrenzfaelle(t *testing.T) {
 		t.Errorf("maxRequestBodyBytesFor(3000000) = %d, want %d (unveraendert gegenueber der alten Formel)", got, want)
 	}
 
-	// maxUploadBytes*4 selbst liefe hier ueber, noch bevor /3 greift.
+	// TestMaxRequestBodyBytesForKeinVerfruehtesSaettigen (Codex-Review,
+	// 23.08.2026) ist der eigentliche Regressionstest fuer den
+	// Nachbesserungs-Fund unten -- als eigener Test, damit er unabhaengig
+	// von den anderen Grenzfaellen hier gelesen und (bei einer
+	// Gegenprobe) isoliert rot werden kann.
+
+	// maxUploadBytes*4 selbst liefe hier ueber, noch bevor /3 greift --
+	// UND das wahre, unbeschraenkte Endergebnis liegt bereits weit
+	// jenseits von math.MaxInt64: Saettigen ist hier korrekt.
 	if got := maxRequestBodyBytesFor(math.MaxInt64); got != math.MaxInt64 {
 		t.Errorf("maxRequestBodyBytesFor(math.MaxInt64) = %d, want %d (math.MaxInt64)", got, int64(math.MaxInt64))
 	}
@@ -161,12 +169,66 @@ func TestMaxRequestBodyBytesForGrenzfaelle(t *testing.T) {
 		t.Errorf("maxRequestBodyBytesFor(math.MaxInt64) = %d, wollte einen POSITIVEN Wert", got)
 	}
 
-	// Ein Wert knapp unter der *4-Ueberlaufgrenze: *4/3 selbst laeuft
-	// nicht ueber, aber das anschliessende +64<<10 koennte es -- auch das
-	// muss saettigen statt zu kippen.
-	knappUnterGrenze := int64(math.MaxInt64/4) - 1
-	if got := maxRequestBodyBytesFor(knappUnterGrenze); got <= 0 {
-		t.Errorf("maxRequestBodyBytesFor(%d) = %d, wollte einen POSITIVEN Wert", knappUnterGrenze, got)
+	// Der zweite Saettigungspfad: (maxUploadBytes/3)*4 liegt hier NOCH
+	// unter der math.MaxInt64/4-Schranke (der erste Guard greift also
+	// NICHT), aber die anschliessende Addition des Rahmen-Zuschlags
+	// (+64<<10) selbst wuerde ueberlaufen. n so gewaehlt, dass
+	// quotient = math.MaxInt64/4 (die groesstmoegliche noch zulaessige
+	// Quotienten-Groesse) und rest = 2 (der groesstmoegliche Rest) --
+	// aufgeblaeht liegt dann bei math.MaxInt64-1, was innerhalb von
+	// 64<<10 an math.MaxInt64 liegt und die zweite Pruefung ausloest.
+	quotientAnDerSchranke := int64(math.MaxInt64 / 4)
+	nAnDerZweitenSchranke := 3*quotientAnDerSchranke + 2
+	if got := maxRequestBodyBytesFor(nAnDerZweitenSchranke); got != math.MaxInt64 {
+		t.Errorf("maxRequestBodyBytesFor(%d) = %d, want %d (math.MaxInt64) -- der erste Guard (quotient*4) greift hier NICHT, nur die Addition des Rahmen-Zuschlags liefe ueber",
+			nAnDerZweitenSchranke, got, int64(math.MaxInt64))
+	}
+}
+
+// TestMaxRequestBodyBytesForKeinVerfruehtesSaettigen belegt den
+// Nachbesserungs-Fund (Codex-Review, 23.08.2026): die urspruengliche
+// Fassung dieser Funktion pruefte den EINGABEWERT direkt gegen
+// math.MaxInt64/4, bevor ueberhaupt gerechnet wurde -- das saettigte
+// fuer Upload-Limits zwischen math.MaxInt64/4 und rund
+// 3*math.MaxInt64/4 deutlich zu FRUEH: die naive Zwischenrechnung
+// maxUploadBytes*4 lief zwar ueber, das tatsaechlich gewuenschte
+// Endergebnis maxUploadBytes*4/3 + 64<<10 passte aber noch bequem in
+// int64. Konkretes Beispiel aus dem Review: maxUploadBytes =
+// 3000000000000000000 muss GENAU 4000000000000065536 ergeben (nicht
+// gesaettigt) -- die alte Fassung lieferte hier math.MaxInt64.
+func TestMaxRequestBodyBytesForKeinVerfruehtesSaettigen(t *testing.T) {
+	t.Parallel()
+
+	const maxUploadBytes = 3000000000000000000
+	const want = 4000000000000065536
+
+	if got := maxRequestBodyBytesFor(maxUploadBytes); got != want {
+		t.Errorf("maxRequestBodyBytesFor(%d) = %d, want %d (exaktes, NICHT gesaettigtes Ergebnis)", int64(maxUploadBytes), got, int64(want))
+	}
+}
+
+// TestLoadConfigMaxRequestBodyBytesNichtVerfruehtGesaettigt ist derselbe
+// Fund wie TestMaxRequestBodyBytesForKeinVerfruehtesSaettigen, aber ueber
+// den tatsaechlich verdrahteten Pfad (LoadConfig liest
+// FILEEE_MAX_UPLOAD_BYTES als String aus der Umgebung) statt nur ueber
+// den nackten Helfer -- dieselbe Begruendung wie bei
+// TestLoadConfigMaxRequestBodyBytesSaettigtBeiSehrGrossemUploadLimit
+// oben.
+func TestLoadConfigMaxRequestBodyBytesNichtVerfruehtGesaettigt(t *testing.T) {
+	t.Parallel()
+
+	env := minimalToken()
+	env["FILEEE_MAX_UPLOAD_BYTES"] = "3000000000000000000"
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+
+	const want = 4000000000000065536
+	if cfg.MaxRequestBodyBytes != want {
+		t.Errorf("MaxRequestBodyBytes = %d, want %d (exaktes, NICHT gesaettigtes Ergebnis) fuer FILEEE_MAX_UPLOAD_BYTES = 3000000000000000000",
+			cfg.MaxRequestBodyBytes, int64(want))
 	}
 }
 
