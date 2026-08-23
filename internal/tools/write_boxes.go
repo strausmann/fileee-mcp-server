@@ -255,8 +255,9 @@ func registerBoxWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logge
 			"and documentId (both required) — use list_boxes/get_box to find a box's ID and " +
 			"list_documents/search_documents to find a document's ID. Returns the box ID, document " +
 			"ID, and whether the operation completed. Calling this again for a document already " +
-			"removed from the box changes nothing further. It does not delete the document itself — " +
-			"only its membership in this box.",
+			"removed from the box does not change its box membership further; whether that repeat " +
+			"call itself succeeds silently or returns an error has not been verified. It does not " +
+			"delete the document itself — only its membership in this box.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Remove document from box",
 			ReadOnlyHint:    false,
