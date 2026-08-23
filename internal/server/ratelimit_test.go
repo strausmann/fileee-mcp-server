@@ -19,20 +19,6 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/tools"
 )
 
-// testUnlimitedLimiter baut einen toolCallLimiter mit so grosszuegigen
-// Grenzen, dass er in Tests, die NICHT die Ratenbegrenzung selbst pruefen
-// (TestEveryReachableCapabilitySetHasAnInstance,
-// TestBuildInstancesRegistersReadToolsOnlyWhenCapRead), niemals eingreift.
-// buildInstances braucht seit dieser Aufgabe immer einen Limiter — dieser
-// hier hat praktisch unbegrenztes Kontingent.
-func testUnlimitedLimiter() *toolCallLimiter {
-	return newToolCallLimiter(&config.Config{
-		RateRPS: 1000, RateBurst: 1000,
-		RateGlobalRPS: 1000, RateGlobalBurst: 1000,
-		MaxInflight: 1000,
-	})
-}
-
 // --- toolCallLimiter.acquire: die reine Entscheidung, ohne Netzwerk -------
 
 // TestToolCallLimiterEnforcesGlobalBurst belegt, dass das globale Kontingent
