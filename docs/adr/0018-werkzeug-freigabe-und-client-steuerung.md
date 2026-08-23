@@ -57,8 +57,8 @@ mehr für „dieser Aufrufer darf Werkzeug X nicht sehen".
    liefert nach erfolgreicher Authentifizierung und Scope-Prüfung immer dieselbe Instanz zurück.
 3. **`FILEEE_CAPABILITIES`, `FILEEE_ALLOW_DESTRUCTIVE` und `MCP_OIDC_CAPABILITY_CLAIM` entfallen**
    vollständig aus der Konfiguration — nicht mit einem Default versehen, nicht als deprecated
-   weiterhin akzeptiert. Ein Deployment, das sie dennoch setzt, bekommt dieselbe Ablehnung als
-   unbekannte Variable wie jede andere veraltete Einstellung, kein stilles Ignorieren.
+   weiterhin akzeptiert. Ein Deployment, das sie dennoch setzt, wird still ignoriert — `LoadConfig` prüft nicht auf unbekannte Variablen. Ein
+   Warnhinweis beim Start ist als Follow-up (Issue #66) vorgesehen.
 4. **Konto-Isolation und Inhalts-Einrahmung bleiben unverändert.** [ADR-0012](0012-multi-account-mapping.md)
    entscheidet weiterhin, gegen welches Fileee-Konto ein Aufruf läuft;
    [ADR-0013](0013-prompt-injection-schutz.md) rahmt Dokumentinhalte weiterhin als fremdbestimmte
@@ -99,7 +99,8 @@ mehr für „dieser Aufrufer darf Werkzeug X nicht sehen".
   (eine Frage des Code-Reviews je Werkzeug).
 - Betreiber, die sich auf `FILEEE_CAPABILITIES`, `FILEEE_ALLOW_DESTRUCTIVE` oder
   `MCP_OIDC_CAPABILITY_CLAIM` verlassen, müssen sie aus ihrer Deployment-Konfiguration entfernen;
-  der Server lehnt sie als unbekannt ab, statt sie still zu akzeptieren und zu ignorieren.
+  der Server ignoriert sie still (keine Prüfung auf unbekannte Variablen); ein Warnhinweis
+  beim Start ist als Follow-up (Issue #66) vorgesehen.
 
 ## Referenzen
 
