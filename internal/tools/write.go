@@ -242,6 +242,139 @@ func updateContactHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 	}
 }
 
+// createContactEndpoint is create_contact's own wire endpoint for
+// diagnostic logging (logToolEnd) — go-fileee's contactService.Create
+// (contacts.go), the single POST that persists the caller's new
+// contact. Unlike update_contact there is no preceding Get to fold
+// into the same logged call: a contact that does not exist yet has
+// nothing to merge onto.
+const createContactEndpoint = "POST /api/contacts/rest"
+
+// contactCreateService is what create_contact needs from
+// *fileee.Client.Contacts — narrowed to the single method this tool
+// calls, the same "narrow the fake to what the tool actually calls"
+// pattern contactWriteService above establishes for update_contact.
+// client.Contacts is a fileee.WriteService[fileee.Contact], whose
+// method set is a superset of this interface's, so it satisfies
+// contactCreateService without any adapter.
+type contactCreateService interface {
+	Create(ctx context.Context, entity *fileee.Contact) (*fileee.Contact, error)
+}
+
+// createContactInput is create_contact's parameters — plain fields, not
+// updateContactInput's pointer-per-field patch shape: there is no
+// existing contact to merge onto, so "the caller didn't mention this
+// field" and "the caller wants this field empty" are the same thing
+// here (an empty string either way).
+type createContactInput struct {
+	// FirstName is the new contact's first name.
+	FirstName string `json:"firstName"`
+	// LastName is the new contact's last name.
+	LastName string `json:"lastName"`
+	// CompanyName is the new contact's company name (for a company
+	// contact).
+	CompanyName string `json:"companyName,omitempty"`
+	// Email is the new contact's email address.
+	Email string `json:"email,omitempty"`
+	// PhoneNumber is the new contact's phone number.
+	PhoneNumber string `json:"phoneNumber,omitempty"`
+}
+
+// createContactOutput is create_contact's structured result — just the
+// new contact's ID. Exactly like updateContactOutput (this file's own
+// package doc comment, "foreign-text invariant"), it deliberately
+// carries NO name/display field: the newly created contact's own
+// display name is exactly as foreign here as an updated contact's is
+// (supplied by the caller through this very call, but still not
+// Fileee's own account-holder data) and goes into
+// CallToolResult.Content via wrapUntrusted instead, never into a field
+// that would land in CallToolResult.StructuredContent (see
+// createContactResult below).
+type createContactOutput struct {
+	// ID is the newly created contact's ID.
+	ID string `json:"id"`
+}
+
+// createContactResult builds createContactHandler's success return from
+// created, the contact fileee.Contacts.Create handed back — the same
+// split updateContactResult establishes above, so wrapUntrusted's own
+// error path has a single call site independent of the backend call
+// around it.
+//
+// The new contact's own display name goes into result.Content via
+// wrapUntrusted (read.go) — the same channel updateContactResult's own
+// wrapUntrustedLines call uses for an updated contact's display name —
+// never into a field of the returned createContactOutput (see this
+// type's own doc comment above and write.go's package doc comment on
+// the foreign-text invariant).
+func createContactResult(created *fileee.Contact) (*mcp.CallToolResult, createContactOutput, error) {
+	result, err := wrapUntrusted(contactDisplayName(created))
+	if err != nil {
+		return nil, createContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateContact, err)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, createContactOutput{ID: created.ID}, nil
+}
+
+// createContactFromService is createContactHandler's logic below client
+// resolution — split out so a test can drive it against a
+// contactCreateService fake (fakeContactCreateService, write_test.go)
+// instead of a live *fileee.Client, the same pattern
+// updateContactFromService already establishes above.
+func createContactFromService(ctx context.Context, service contactCreateService, in createContactInput) (*mcp.CallToolResult, createContactOutput, error) {
+	created, err := service.Create(ctx, &fileee.Contact{
+		FirstName:   in.FirstName,
+		LastName:    in.LastName,
+		CompanyName: in.CompanyName,
+		Email:       in.Email,
+		PhoneNumber: in.PhoneNumber,
+	})
+	if err != nil {
+		return nil, createContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateContact, err)
+	}
+	return createContactResult(created)
+}
+
+// createContactHandler resolves create_contact. The
+// nothing-to-identify-the-contact-by check runs before clientFor — the
+// same order updateContactHandler already uses for its own required
+// parameter (empty ID) above — so a caller's input mistake (every one
+// of FirstName, LastName, and CompanyName left empty, a contact with
+// literally nothing to call it) is rejected without spending a login
+// round trip on it, and so this path is testable without a
+// *clientpool.Pool at all (see write_test.go). A caller supplying only
+// CompanyName (a company contact, no personal name) is deliberately
+// still accepted here — only the all-three-empty case is rejected; the
+// backend's own POST is left to reject anything more specific than
+// that (createContactFromService above).
+func createContactHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[createContactInput, createContactOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in createContactInput) (*mcp.CallToolResult, createContactOutput, error) {
+		start := time.Now()
+		// No slog.String args here (unlike updateContactHandler's own
+		// slog.String("id", ...)): there is no server-issued ID yet to
+		// log, and FirstName/LastName/CompanyName are exactly the
+		// caller-supplied, potentially foreign text createContactResult
+		// already keeps out of CallToolResult.StructuredContent (see
+		// this file's own package doc comment) — the same caution
+		// applies to this server's own diagnostic logs.
+		logToolStart(ctx, logger, ToolCreateContact)
+
+		if strings.TrimSpace(in.FirstName) == "" && strings.TrimSpace(in.LastName) == "" && strings.TrimSpace(in.CompanyName) == "" {
+			err := fmt.Errorf("fileee-mcp: tools: %s: firstName, lastName, and companyName must not all be empty", ToolCreateContact)
+			logToolEnd(ctx, logger, ToolCreateContact, start, "", 0, err)
+			return nil, createContactOutput{}, err
+		}
+
+		client, err := clientFor(ctx, p)
+		if err != nil {
+			logToolEnd(ctx, logger, ToolCreateContact, start, "", 0, err)
+			return nil, createContactOutput{}, err
+		}
+		result, out, err := createContactFromService(ctx, client.Contacts, in)
+		logToolEnd(ctx, logger, ToolCreateContact, start, createContactEndpoint, 1, err)
+		return result, out, err
+	}
+}
+
 // registerWriteTools mounts this server's write-class tools onto s —
 // called once from RegisterAll (read.go), the same call site
 // registerPeopleTools/registerBoxTools/... already use for their own
@@ -266,6 +399,22 @@ func registerWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) 
 			IdempotentHint:  true,
 		},
 	}, updateContactHandler(p, logger))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: ToolCreateContact,
+		Description: "Create a new contact in the calling user's Fileee account. Pass firstName " +
+			"and lastName for a personal contact, or companyName for a company contact — at least " +
+			"one of the three is required, plus optionally email, phoneNumber. Returns the new " +
+			"contact's ID and, as clearly marked, untrusted text, its display name — since it was " +
+			"supplied through this very call, not written by the account holder. This always " +
+			"creates a new contact; it never updates an existing one — use update_contact for that.",
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Create contact",
+			ReadOnlyHint:    false,
+			DestructiveHint: boolPtr(false),
+			IdempotentHint:  false,
+		},
+	}, createContactHandler(p, logger))
 }
 
 // boolPtr returns a pointer to v — mcp.ToolAnnotations.DestructiveHint

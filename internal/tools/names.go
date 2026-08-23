@@ -125,6 +125,13 @@ const (
 	// fileee.WriteService[fileee.Contact], the template every later
 	// write tool in this file follows.
 	ToolUpdateContact = "update_contact"
+
+	// ToolCreateContact is create_contact's registered name (Task 2,
+	// write.go) — the second write-class tool: a single
+	// fileee.WriteService[fileee.Contact].Create call, no prior Get
+	// (there is nothing to merge onto — the contact does not exist
+	// yet).
+	ToolCreateContact = "create_contact"
 )
 
 // registeredReadTools mounts RegisterAll onto a throwaway server and reads

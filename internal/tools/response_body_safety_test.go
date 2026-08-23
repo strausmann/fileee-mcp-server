@@ -33,13 +33,14 @@
 // 2026-08-14) confirmed this by hand across all tools registered at the
 // time (35) — found no go-fileee Marshaler type reachable from any
 // response body, directly or transitively. registeredReadTools() mounts
-// 37 tools today (32 fileee-backed read tools, 4 operational tools:
-// get_runtime_stats, get_tool_manifest, self_check, whoami, plus the
-// first write-class tool, update_contact, since Task 1/write.go) — the
-// count grew after that audit, registeredResponseBodyTypes below
-// reflects the current set. The same guardrail applies to write tools'
-// response bodies unchanged: updateContactOutput is exactly as much a
-// hand-written, all-primitive DTO as any read tool's output.
+// 38 tools today (32 fileee-backed read tools, 4 operational tools:
+// get_runtime_stats, get_tool_manifest, self_check, whoami, plus two
+// write-class tools so far, update_contact and create_contact, Task
+// 1/2 in write.go) — the count grew after that audit,
+// registeredResponseBodyTypes below reflects the current set. The same
+// guardrail applies to write tools' response bodies unchanged:
+// updateContactOutput/createContactOutput are exactly as much
+// hand-written, all-primitive DTOs as any read tool's output.
 //
 // A hand audit is a snapshot, not a standing guarantee. This test is the
 // mechanical guardrail that keeps that finding true going forward: it
@@ -117,6 +118,7 @@ var registeredResponseBodyTypes = []reflect.Type{
 	reflect.TypeOf(getSelfCheckOutput{}),                               // self_check
 	reflect.TypeOf(whoamiOutput{}),                                     // whoami
 	reflect.TypeOf(updateContactOutput{}),                              // update_contact
+	reflect.TypeOf(createContactOutput{}),                              // create_contact
 }
 
 // jsonMarshalerType is the reflect.Type of the standard library's

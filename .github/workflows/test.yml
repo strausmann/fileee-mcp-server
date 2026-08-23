@@ -153,15 +153,20 @@ jobs:
           # an clientFor-aequivalenter Identitaetsaufloesung aus dem Kontext, aus diesem
           # White-Box-Paket heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar.
           #
-          # internal/tools/write.go (Task 1, write-Tools-Plan, homelab-management repo):
-          # neu, erste Datei des Write-Werkzeug-Baukastens (update_contact, Patch/Merge-Vorlage
-          # fuer alle spaeteren Write-Werkzeuge). Business-Logik-Stufe (80) wie read.go/
+          # internal/tools/write.go (Task 1+2, write-Tools-Plan, homelab-management repo):
+          # erste Datei des Write-Werkzeug-Baukastens. Task 1 (update_contact, Patch/Merge-
+          # Vorlage) und Task 2 (create_contact, ein einzelner Create-Aufruf, kein
+          # vorheriges Get) teilen sich die Datei. Business-Logik-Stufe (80) wie read.go/
           # read_sync.go/read_people.go/names.go/ops.go oben — die Kernlogik
           # (applyContactPatch, contactDisplayName, updateContactResult,
-          # updateContactFromService) ist ueber ein Fake (fakeContactWriteService,
-          # write_test.go) vollstaendig ohne Netzwerk testbar, nur updateContactHandlers duenne
-          # clientFor-Huelle traegt denselben strukturellen weissen Fleck wie
-          # getAccountStatusHandler/getBoxHandler (read_account.go/read_boxes.go oben).
+          # updateContactFromService, createContactResult, createContactFromService) ist
+          # ueber Fakes (fakeContactWriteService/fakeContactCreateService, write_test.go)
+          # vollstaendig ohne Netzwerk testbar. updateContactHandlers/createContactHandlers
+          # duenne clientFor-Huelle traegt denselben strukturellen weissen Fleck wie
+          # getAccountStatusHandler/getBoxHandler (read_account.go/read_boxes.go oben) —
+          # createContactHandler haelt sich trotzdem bei ueber 80%, weil seine eigene
+          # Vor-clientFor-Pruefung (FirstName/LastName/CompanyName nicht alle leer, das
+          # Gegenstueck zu updateContactHandlers leere-ID-Pruefung) direkt testbar ist.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \

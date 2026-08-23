@@ -346,3 +346,234 @@ func TestContactDisplayNameBevorzugtVorUndNachname(t *testing.T) {
 // updateContactInput's patch fields are all pointers, and every test in
 // this file above needs several one-off pointers to string literals.
 func ptr[T any](v T) *T { return &v }
+
+// --- create_contact (Task 2) ---
+//
+// Dieselbe Vorlage wie update_contact oben, nur ohne Patch/Merge: kein
+// vorheriges Get, ein einzelner Backend-Aufruf (Contacts.Create), das
+// Ergebnis ist eine ID plus, gerahmt in CallToolResult.Content, der neu
+// angelegte Anzeigename — NIE strukturiert in createContactOutput (siehe
+// write.go's Paket-Doc-Kommentar zur foreign-text invariant).
+
+func TestCreateContactInputFeldlisteIstAbgeschlossen(t *testing.T) {
+	want := []string{"FirstName", "LastName", "CompanyName", "Email", "PhoneNumber"}
+	got := fieldNames(createContactInput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("createContactInput-Feldliste = %v, want %v", got, want)
+	}
+}
+
+func TestCreateContactOutputFeldlisteIstAbgeschlossen(t *testing.T) {
+	// KEIN Fremdtext-Feld — der neu angelegte Anzeigename landet
+	// ausschliesslich gerahmt in CallToolResult.Content (siehe
+	// TestCreateContactHappyPath unten), nie strukturiert in
+	// CallToolResult.StructuredContent.
+	want := []string{"ID"}
+	got := fieldNames(createContactOutput{})
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("createContactOutput-Feldliste = %v, want %v", got, want)
+	}
+}
+
+func TestRegisterWriteToolsMeldetCreateContactAn(t *testing.T) {
+	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
+
+	registerWriteTools(s, (*clientpool.Pool)(nil), discardLogger())
+
+	names := toolNamesOf(t, s)
+	if !names[ToolCreateContact] {
+		t.Errorf("Werkzeug %q wurde nicht angemeldet", ToolCreateContact)
+	}
+}
+
+// TestCreateContactWerkzeugIstAlsSchreibendUndNichtDestruktivAnnotiert
+// belegt den Auftrag woertlich: create_contact traegt ReadOnlyHint:false
+// (es ist KEIN Lesewerkzeug), DestructiveHint:false (ein Create ist
+// additiv, es ueberschreibt nichts Bestehendes) und
+// IdempotentHint:false (derselbe Aufruf zweimal legt zwei Kontakte an,
+// keinen einzigen).
+func TestCreateContactWerkzeugIstAlsSchreibendUndNichtDestruktivAnnotiert(t *testing.T) {
+	var found *mcp.Tool
+	for _, tool := range registeredReadTools() {
+		if tool.Name == ToolCreateContact {
+			found = tool
+		}
+	}
+	if found == nil {
+		t.Fatalf("Werkzeug %q wurde nicht angemeldet", ToolCreateContact)
+	}
+	if found.Annotations == nil {
+		t.Fatalf("Werkzeug %q hat keine Annotations", ToolCreateContact)
+	}
+	if found.Annotations.Title != "Create contact" {
+		t.Errorf("Title = %q, want %q", found.Annotations.Title, "Create contact")
+	}
+	if found.Annotations.ReadOnlyHint {
+		t.Error("ReadOnlyHint = true, want false — create_contact schreibt")
+	}
+	if found.Annotations.DestructiveHint == nil || *found.Annotations.DestructiveHint {
+		t.Errorf("DestructiveHint = %v, want a pointer to false — ein Create ist additiv, ueberschreibt nichts",
+			found.Annotations.DestructiveHint)
+	}
+	if found.Annotations.IdempotentHint {
+		t.Error("IdempotentHint = true, want false — derselbe Aufruf zweimal legt zwei Kontakte an")
+	}
+}
+
+// fakeContactCreateService is contactCreateService's test double —
+// narrower than fakeContactWriteService above (only Create, no
+// Get/Update), the same "narrow the fake to what the tool actually
+// calls" pattern write.go's own contactWriteService doc comment
+// establishes for update_contact.
+type fakeContactCreateService struct {
+	createCalledWith *fileee.Contact
+	createResult     *fileee.Contact
+	createErr        error
+}
+
+func (f *fakeContactCreateService) Create(_ context.Context, entity *fileee.Contact) (*fileee.Contact, error) {
+	f.createCalledWith = entity
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	if f.createResult != nil {
+		return f.createResult, nil
+	}
+	return entity, nil
+}
+
+// TestCreateContactHappyPath is the task's own named case: Create is
+// called with a *fileee.Contact carrying the caller's supplied fields,
+// the result surfaces the new ID structured and the new contact's
+// display name framed in CallToolResult.Content — never as a field of
+// createContactOutput (see this file's own doc comment on the
+// foreign-text invariant).
+func TestCreateContactHappyPath(t *testing.T) {
+	service := &fakeContactCreateService{
+		createResult: &fileee.Contact{ID: "c-neu", FirstName: "Max", LastName: "Testmann"},
+	}
+	in := createContactInput{FirstName: "Max", LastName: "Testmann", Email: "max@x.de"}
+
+	result, out, err := createContactFromService(context.Background(), service, in)
+	if err != nil {
+		t.Fatalf("createContactFromService: %v", err)
+	}
+
+	if service.createCalledWith == nil {
+		t.Fatal("Create wurde nicht aufgerufen")
+	}
+	if service.createCalledWith.FirstName != "Max" {
+		t.Errorf("Create erhielt FirstName = %q, want %q", service.createCalledWith.FirstName, "Max")
+	}
+	if service.createCalledWith.LastName != "Testmann" {
+		t.Errorf("Create erhielt LastName = %q, want %q", service.createCalledWith.LastName, "Testmann")
+	}
+	if service.createCalledWith.Email != "max@x.de" {
+		t.Errorf("Create erhielt Email = %q, want %q", service.createCalledWith.Email, "max@x.de")
+	}
+
+	if out.ID != "c-neu" {
+		t.Errorf("out.ID = %q, want %q", out.ID, "c-neu")
+	}
+	// Struktur-Teil bleibt frei vom fremdbestimmten Anzeigenamen —
+	// dieselbe Pruefung wie TestUpdateContactPatchMerge oben.
+	if strings.Contains(fmt.Sprint(out), "Max") {
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen strukturiert — der gehoert "+
+			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+	}
+
+	if len(result.Content) != 1 {
+		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+	}
+	if !strings.Contains(text.Text, "Max Testmann") {
+		t.Errorf("Content enthaelt nicht den Anzeigenamen %q: %q", "Max Testmann", text.Text)
+	}
+	if !strings.Contains(text.Text, "<untrusted_external_content") {
+		t.Errorf("Content ist nicht als fremdbestimmter Text gerahmt (ADR-0013): %q", text.Text)
+	}
+}
+
+// TestCreateContactFromServiceWickeltEinenNetzwerkfehlerMitDemWerkzeugnamenEin
+// ist die Network-Error-Haelfte der Mutations-Test-Pflicht.
+func TestCreateContactFromServiceWickeltEinenNetzwerkfehlerMitDemWerkzeugnamenEin(t *testing.T) {
+	networkErr := errors.New("dial tcp: connection refused")
+	service := &fakeContactCreateService{createErr: networkErr}
+
+	_, out, err := createContactFromService(context.Background(), service, createContactInput{FirstName: "Max"})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !errors.Is(err, networkErr) {
+		t.Errorf("Fehler wickelt %v nicht ein, bekam: %v", networkErr, err)
+	}
+	if !strings.Contains(err.Error(), ToolCreateContact) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolCreateContact)
+	}
+	if (out != createContactOutput{}) {
+		t.Errorf("out = %+v, want den Nullwert — kein Teilerfolg bei einem gescheiterten Create", out)
+	}
+}
+
+// TestCreateContactFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin
+// ist die Backend-error(4xx/5xx)-Haelfte.
+func TestCreateContactFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *testing.T) {
+	backendErr := &fileee.APIError{HTTPStatus: 400, Code: "INVALID_CONTACT", Message: "firstName required"}
+	service := &fakeContactCreateService{createErr: backendErr}
+
+	_, out, err := createContactFromService(context.Background(), service, createContactInput{})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("Fehler wickelt %v nicht ein, bekam: %v", backendErr, err)
+	}
+	if !strings.Contains(err.Error(), ToolCreateContact) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolCreateContact)
+	}
+	if (out != createContactOutput{}) {
+		t.Errorf("out = %+v, want den Nullwert — Create scheiterte, kein Teilerfolg zu behaupten", out)
+	}
+}
+
+// TestCreateContactHandlerLehntEinenKontaktOhneJedeIdentifikationOhneNetzwerkzugriffAb
+// belegt createContactHandler's eigene, vor clientFor laufende Pruefung
+// (dieselbe Reihenfolge wie updateContactHandler's leere-ID-Pruefung
+// oben): FirstName, LastName UND CompanyName leer heisst "nichts, woran
+// man den Kontakt erkennen koennte" — abgewiesen, ohne einen
+// Login-Rundlauf dafuer auszugeben.
+func TestCreateContactHandlerLehntEinenKontaktOhneJedeIdentifikationOhneNetzwerkzugriffAb(t *testing.T) {
+	handler := createContactHandler(nil, discardLogger())
+
+	_, _, err := handler(context.Background(), nil, createContactInput{FirstName: "  ", LastName: "", CompanyName: "  "})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus")
+	}
+	if !strings.Contains(err.Error(), ToolCreateContact) {
+		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolCreateContact)
+	}
+}
+
+// TestCreateContactHandlerAkzeptiertEinenReinenFirmenkontaktOhneNamen ist
+// die Gegenprobe zum vorigen Test: CompanyName allein (kein
+// FirstName/LastName) darf NICHT abgewiesen werden — ein Firmenkontakt
+// ohne Personennamen ist gueltig, nur der Fall "alle drei leer" ist es
+// nicht. Da hier keine echte *clientpool.Pool bereitsteht, laeuft der
+// Aufruf ueber die Pruefung hinaus bis zu clientFor und scheitert dort
+// (nil-Pool) — das beweist bereits, dass die vorgelagerte Pruefung
+// diesen Fall passieren liess, ohne einen echten Backend-Rundlauf zu
+// brauchen.
+func TestCreateContactHandlerAkzeptiertEinenReinenFirmenkontaktOhneNamen(t *testing.T) {
+	handler := createContactHandler(nil, discardLogger())
+
+	_, _, err := handler(context.Background(), nil, createContactInput{CompanyName: "ACME GmbH"})
+	if err == nil {
+		t.Fatal("erwarteter Fehler blieb aus (clientFor mit nil-Pool muss scheitern)")
+	}
+	if strings.Contains(err.Error(), "must not all be empty") {
+		t.Errorf("ein reiner Firmenkontakt (nur CompanyName) wurde faelschlich als 'nichts angegeben' abgewiesen: %v", err)
+	}
+}
