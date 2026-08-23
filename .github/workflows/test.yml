@@ -152,6 +152,68 @@ jobs:
           # read_boxes.go/read_binary.go/read_account.go oben — die duenne Anmelde-Huelle haengt
           # an clientFor-aequivalenter Identitaetsaufloesung aus dem Kontext, aus diesem
           # White-Box-Paket heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar.
+          #
+          # internal/tools/write.go (Task 1+2, write-Tools-Plan, homelab-management repo):
+          # erste Datei des Write-Werkzeug-Baukastens. Task 1 (update_contact, Patch/Merge-
+          # Vorlage) und Task 2 (create_contact, ein einzelner Create-Aufruf, kein
+          # vorheriges Get) teilen sich die Datei. Business-Logik-Stufe (80) wie read.go/
+          # read_sync.go/read_people.go/names.go/ops.go oben — die Kernlogik
+          # (applyContactPatch, contactDisplayName, updateContactResult,
+          # updateContactFromService, createContactResult, createContactFromService) ist
+          # ueber Fakes (fakeContactWriteService/fakeContactCreateService, write_test.go)
+          # vollstaendig ohne Netzwerk testbar. updateContactHandlers/createContactHandlers
+          # duenne clientFor-Huelle traegt denselben strukturellen weissen Fleck wie
+          # getAccountStatusHandler/getBoxHandler (read_account.go/read_boxes.go oben) —
+          # createContactHandler haelt sich trotzdem bei ueber 80%, weil seine eigene
+          # Vor-clientFor-Pruefung (FirstName/LastName/CompanyName nicht alle leer, das
+          # Gegenstueck zu updateContactHandlers leere-ID-Pruefung) direkt testbar ist.
+          #
+          # internal/tools/write_people.go (Task 3, write-Tools-Plan): create_reminder +
+          # update_reminder, dieselben zwei Muster wie write.go (Create ohne vorheriges Get /
+          # Get-apply-Update-Patch-Merge), diesmal ueber fileee.ReminderService. Kernlogik
+          # (applyReminderPatch, reminderResult, createReminderFromService,
+          # updateReminderFromService) ueber Fakes (fakeReminderCreateService/
+          # fakeReminderWriteService, write_people_test.go) vollstaendig ohne Netzwerk testbar.
+          # Beide duennen clientFor-Huellen (createReminderHandler/updateReminderHandler)
+          # bekommen zusaetzlich je einen Gegenprobe-Test, der eine GUELTIGE Eingabe bis zu
+          # clientFor durchlaesst (TestCreateReminderHandlerLaesstEineGueltigeBeschreibung...,
+          # TestUpdateReminderHandlerLaesstEineGueltigeKennung...) — dieselbe Idee wie
+          # createContactHandlers eigener Firmenkontakt-Test oben, hier zusaetzlich fuer
+          # update_reminder nachgezogen (update_contact hat diesen Gegenprobe-Test bislang
+          # nicht). Datei liegt bei 85,0% — komfortabel ueber der 80%-Business-Logik-Stufe,
+          # keine Ausnahme noetig.
+          #
+          # internal/tools/write_boxes.go (Task 4, write-Tools-Plan): box_add_document +
+          # box_remove_document, ueber fileee.BoxService.AddDocument/RemoveDocument — anders
+          # als jedes Muster in write.go/write_people.go (kein Create, kein Get/apply/Update-
+          # Patch-Merge): ein einzelner Aufruf, der nur einen Fehler zurueckgibt, keine
+          # aktualisierte Entitaet. Kernlogik (boxDocumentResult, addBoxDocumentFromService,
+          # removeBoxDocumentFromService) ueber Fakes (fakeBoxDocumentAddService/
+          # fakeBoxDocumentRemoveService, write_boxes_test.go) vollstaendig ohne Netzwerk
+          # testbar, inklusive Netzwerk- und Backend-Fehlerpfad — hier besonders wichtig, da
+          # es ohne Rueckgabewert nichts anderes zu pruefen gibt als "kein Teilerfolg". Beide
+          # duennen clientFor-Huellen bekommen je zwei Vor-clientFor-Ablehnungstests (leere
+          # BoxID/DocumentID) und einen Gegenprobe-Test mit gueltiger Eingabe, dieselbe Idee
+          # wie write_people.go oben. Datei liegt bei 86,7% — komfortabel ueber der
+          # 80%-Business-Logik-Stufe, keine Ausnahme noetig.
+          #
+          # internal/tools/write_documents.go (Task 5+6, write-Tools-Plan): upload_document
+          # und update_document (Title-Patch/Merge). upload_document geht
+          # ueber *fileee.Client.Documents.Upload — ein einzelner Aufruf wie
+          # create_contact/create_reminder, dessen eigener Fehlerrueckgabewert
+          # (fileee.ErrDuplicateDocument) bewusst als normaler, informativer Erfolg behandelt
+          # wird statt als Fehlschlag (siehe die Datei eigenen Package-Doc-Kommentar).
+          # Kernlogik (uploadDocumentResult, uploadDocumentFromService) ueber ein Fake
+          # (fakeDocumentUploadService, write_documents_test.go) vollstaendig ohne Netzwerk
+          # testbar, inklusive Duplikat-, Netzwerk- und Backend-Fehlerpfad sowie zwei
+          # dedizierten Gegenprobe-Tests (Duplikat faelschlich als Fehler behandelt; roher
+          # base64-String statt dekodierter Bytes durchgereicht — beide mutationsgeprueft,
+          # beide faerben den jeweils zugehoerigen Test rot). Die duenne clientFor-Huelle
+          # (uploadDocumentHandler) traegt denselben strukturellen weissen Fleck wie
+          # addBoxDocumentHandler/updateContactHandler oben, haelt sich aber bei 80% dank der
+          # eigenen Vor-clientFor-Pruefung (ungueltiges base64 wird ohne Netzwerkzugriff
+          # abgelehnt, inklusive Gegenprobe mit gueltigem base64). Datei liegt bei 87,0% —
+          # komfortabel ueber der 80%-Business-Logik-Stufe, keine Ausnahme noetig.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -171,6 +233,10 @@ jobs:
             internal/tools/read_binary.go:68 \
             internal/tools/read_account.go:50 \
             internal/tools/ops.go:80 \
+            internal/tools/write.go:80 \
+            internal/tools/write_people.go:80 \
+            internal/tools/write_boxes.go:80 \
+            internal/tools/write_documents.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |

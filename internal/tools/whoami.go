@@ -18,11 +18,23 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 )
 
-// ServerInfo carries the per-instance fact whoami reports that is not
-// derivable from the request: the server's account mode ("single" /
-// "multi"). Filled in at registration time.
+// ServerInfo carries per-instance facts that tool handlers need but
+// cannot derive from the request itself — filled in once at
+// registration time (RegisterAll, read.go) from config.Config
+// (internal/server/server.go).
 type ServerInfo struct {
+	// Mode is whoami's own fact: the server's account mode ("single" /
+	// "multi").
 	Mode string
+	// MaxUploadBytes is upload_document's own fact: the configured
+	// upload size ceiling (FILEEE_MAX_UPLOAD_BYTES, config.go,
+	// Config.MaxUploadBytes), enforced by uploadDocumentHandler
+	// (write_documents.go) against both the incoming base64 string's
+	// length (before decoding) and the decoded byte count. This is
+	// currently the ONLY consumer of this value — see config.go's own
+	// doc comment on Config.MaxUploadBytes/MaxDownloadBytes for why a
+	// future download tool would need its own, separate enforcement.
+	MaxUploadBytes int64
 }
 
 // whoamiInput is whoami's parameters — deliberately empty, like the other

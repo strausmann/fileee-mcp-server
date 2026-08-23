@@ -118,6 +118,57 @@ const (
 	// (its plain login email) and the server's mode/capabilities. Not
 	// Fileee-backed either.
 	ToolWhoami = "whoami"
+
+	// ToolUpdateContact is update_contact's registered name (Task 1,
+	// write.go) — the first write-class tool: a patch/merge update
+	// (Get, apply the caller's supplied fields, Update) over
+	// fileee.WriteService[fileee.Contact], the template every later
+	// write tool in this file follows.
+	ToolUpdateContact = "update_contact"
+
+	// ToolCreateContact is create_contact's registered name (Task 2,
+	// write.go) — the second write-class tool: a single
+	// fileee.WriteService[fileee.Contact].Create call, no prior Get
+	// (there is nothing to merge onto — the contact does not exist
+	// yet).
+	ToolCreateContact = "create_contact"
+
+	// ToolCreateReminder and ToolUpdateReminder are create_reminder's
+	// and update_reminder's registered names (Task 3, write_people.go)
+	// — the third and fourth write-class tools, over
+	// fileee.ReminderService the same way ToolCreateContact/
+	// ToolUpdateContact are over fileee.Client.Contacts: a single
+	// Create call (no prior Get) and a Get/apply/Update patch/merge,
+	// respectively.
+	ToolCreateReminder = "create_reminder"
+	ToolUpdateReminder = "update_reminder"
+
+	// ToolBoxAddDocument and ToolBoxRemoveDocument are
+	// box_add_document's and box_remove_document's registered names
+	// (Task 4, write_boxes.go) — the fifth and sixth write-class
+	// tools, over fileee.BoxService: neither creates nor patch/merges
+	// an entity the way every write tool above does, each is a single
+	// AddDocument/RemoveDocument call toggling one document's
+	// membership in one box.
+	ToolBoxAddDocument    = "box_add_document"
+	ToolBoxRemoveDocument = "box_remove_document"
+
+	// ToolUploadDocument is upload_document's registered name (Task 5,
+	// write_documents.go) — the seventh write-class tool, over
+	// *fileee.Client.Documents.Upload: a single call, like
+	// ToolCreateContact/ToolCreateReminder, but one whose own error
+	// return (fileee.ErrDuplicateDocument) is treated as a normal,
+	// informative success rather than a failure — see write_documents.go's
+	// own package doc comment.
+	ToolUploadDocument = "upload_document"
+
+	// ToolUpdateDocument is update_document's registered name (Task 6,
+	// write_documents.go) — the eighth and final write-class tool from
+	// this spec, over *fileee.Client.Documents.Get/Update: a
+	// Get/apply/Update patch/merge, the same shape ToolUpdateContact/
+	// ToolUpdateReminder already establish, scoped by this spec's own
+	// YAGNI note to just the document's Title field.
+	ToolUpdateDocument = "update_document"
 )
 
 // registeredReadTools mounts RegisterAll onto a throwaway server and reads

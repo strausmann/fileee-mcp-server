@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/netip"
 	"net/url"
@@ -112,25 +113,29 @@ type Config struct {
 	AccountMode AccountMode
 	Accounts    []Account
 
-	// MaxDownloadBytes und MaxUploadBytes sind fuer kuenftige Download-/
-	// Upload-Werkzeuge vorgesehen (siehe README "Funktionsumfang"). Die
-	// Bibliotheksfaehigkeit dafuer EXISTIERT bereits in go-fileee — DocumentService.Upload(ctx, r
-	// io.Reader, meta UploadMetadata), DocumentService.DownloadPDF(ctx, id,
-	// mode) io.ReadCloser, DocumentService.DownloadPageImage(...)
-	// io.ReadCloser, dazu die Freigabe-seitigen Gegenstuecke
-	// ShareClient.DownloadSharedPDF/DownloadSharedPage/DownloadPageImage —
-	// ein fruehere Fassung dieses Kommentars behauptete faelschlich das
-	// Gegenteil. Was fehlt, ist ausschliesslich die AUFRUFSTELLE: dieser
-	// Server registriert heute keinerlei Werkzeug, das eine dieser
-	// Methoden je aufruft (nur list_documents/search_documents, beide rein
-	// lesend ueber Documents.Query/Search, kein Binaertransfer) — deshalb
-	// gibt es fuer diese beiden Werte noch keinen Code, um den sie
-	// herumgelegt werden koennten. Ihr natuerlicher Ort ist absehbar: um
-	// den io.Reader/io.ReadCloser herum, den die jeweilige Methode
-	// entgegennimmt bzw. zurueckliefert (io.LimitReader bzw. ein
-	// limitierender io.ReadCloser-Wrapper) — NICHT die HTTP-Ebene dieses
-	// Servers. Das ist die Aufgabe des kuenftigen Werkzeug-Handlers, nicht
-	// dieser Konfiguration.
+	// MaxUploadBytes wird seit dem write-tools-Increment (Task 5,
+	// internal/tools/write_documents.go, uploadDocumentHandler) tatsaechlich
+	// durchgesetzt: upload_document lehnt einen Aufruf ab, sobald entweder
+	// die aus der base64-kodierten Laenge konservativ hochgerechnete
+	// Obergrenze oder die tatsaechlich dekodierte Bytezahl von
+	// contentBase64 diesen Wert ueberschreitet — bevor go-fileees
+	// DocumentService.Upload(ctx, r io.Reader, meta UploadMetadata) je
+	// aufgerufen wird. Eine fruehere Fassung dieses Kommentars behauptete,
+	// es gebe fuer diesen Wert noch KEINE Aufrufstelle — das galt bis zu
+	// diesem Increment und ist jetzt ueberholt.
+	//
+	// MaxDownloadBytes ist davon UNABHAENGIG weiterhin unverdrahtet: die
+	// beiden binaerliefernden Lese-Werkzeuge, die es heute bereits gibt
+	// (get_document_pdf/get_page_image, internal/tools/read_binary.go,
+	// DocumentService.DownloadPDF/DownloadPageImage), lesen diesen Wert
+	// NICHT — sie erzwingen ihre eigene, fest verdrahtete 8-MiB-Obergrenze
+	// (maxBinaryBytes, read_binary.go) unabhaengig von jeder Konfiguration.
+	// Ihr natuerlicher Ort fuer MaxDownloadBytes waere absehbar derselbe wie
+	// bei MaxUploadBytes: um den io.ReadCloser herum, den die jeweilige
+	// Methode zurueckliefert (ein limitierender io.ReadCloser-Wrapper) —
+	// NICHT die HTTP-Ebene dieses Servers. Das ist die Aufgabe eines
+	// kuenftigen Umbaus dieser beiden Werkzeuge auf einen konfigurierbaren
+	// statt fest verdrahteten Grenzwert, nicht dieser Konfiguration.
 	//
 	// MaxRequestBodyBytes ist davon unabhaengig abgeleitet
 	// (ladeZahlenwerte) und WUERDE den 4-MiB-Default des MCP-SDK
@@ -349,7 +354,12 @@ func ladeZahlenwerte(cfg *Config, env Env) error {
 	// Base64 blaeht den Nutzinhalt um Faktor 4/3 auf, dazu kommt der
 	// JSON-RPC-Rahmen. Ohne diese Ableitung wuerde der 4-MiB-Default des SDK
 	// groessere Uploads mit 413 abweisen, bevor der Tool-Handler laeuft.
-	cfg.MaxRequestBodyBytes = cfg.MaxUploadBytes*4/3 + 64<<10
+	// maxRequestBodyBytesFor saettigt statt zu ueberlaufen, wenn
+	// FILEEE_MAX_UPLOAD_BYTES sehr gross gewaehlt ist (deren eigener
+	// Doc-Kommentar erklaert, warum genau dieselbe Ueberlaufklasse hier
+	// wie in internal/tools/write_documents.go's base64EncodedLenFor
+	// auftreten kann).
+	cfg.MaxRequestBodyBytes = maxRequestBodyBytesFor(cfg.MaxUploadBytes)
 	return nil
 }
 
@@ -722,6 +732,87 @@ func splitListe(roh string) []string {
 		}
 	}
 	return out
+}
+
+// maxRequestBodyBytesFor berechnet MaxUploadBytes*4/3 + 64 KiB — dieselbe
+// Formel, die LoadConfig frueher direkt inline schrieb (Base64s
+// Aufblaeh-Faktor 4/3 plus ein 64-KiB-Rahmen fuer JSON-RPC/HTTP) —
+// saettigt aber auf math.MaxInt64, wenn und NUR wenn das tatsaechliche
+// Endergebnis (inklusive des Rahmen-Zuschlags) nicht mehr in int64
+// passt.
+//
+// FILEEE_MAX_UPLOAD_BYTES akzeptiert jeden nicht-negativen int64-Wert
+// (intWert unten weist nur NEGATIVE Werte zurueck) — ein Betreiber kann
+// ihn also beliebig nah an math.MaxInt64 setzen. Eine erste Fassung
+// dieser Funktion pruefte den EINGABEWERT direkt gegen math.MaxInt64/4,
+// bevor ueberhaupt gerechnet wurde (dieselbe Form wie die urspruengliche
+// Inline-Formel) — das saettigte aber deutlich zu FRUEH: Fuer
+// Upload-Limits zwischen math.MaxInt64/4 und rund 3*math.MaxInt64/4
+// ueberlief zwar die NAIVE Zwischenrechnung maxUploadBytes*4, das
+// tatsaechlich gewuenschte Endergebnis maxUploadBytes*4/3 + 64<<10
+// passte aber noch bequem in int64 — die Pruefung schuetzte also vor
+// dem Ueberlauf einer Zwischengroesse, die diese Funktion gar nicht
+// mehr braucht, sobald man die Rechnung anders aufteilt, und lieferte
+// dafuer einen viel LOCKEREREN Wert als konfiguriert, statt eines
+// genauen (Fund: Codex-Review, 23.08.2026, Beispiel maxUploadBytes =
+// 3000000000000000000 — muesste 4000000000000065536 ergeben, lieferte
+// aber math.MaxInt64).
+//
+// Die Loesung ist die uebliche Umformung ueber Quotient und Rest:
+// n*4/3 == (n/3)*4 + (n%3)*4/3 — jeder Teilterm bleibt dabei klein
+// genug, um NICHT vorzeitig zu ueberlaufen, waehrend das mathematische
+// Ergebnis unveraendert bleibt (n = 3*(n/3) + (n%3), also n*4 =
+// 3*(n/3)*4 + (n%3)*4, und der erste Summand ist durch 3 teilbar —
+// die Division /3 verteilt sich exakt auf beide Anteile). (n%3)*4/3
+// ist immer klein (n%3 in {0,1,2}, also max. 8/3), (n/3)*4 kann NUR
+// dann noch ueberlaufen, wenn n/3 bereits groesser als math.MaxInt64/4
+// ist — und GENAU dann ist auch das wahre, unbeschraenkte Endergebnis
+// bereits groesser als math.MaxInt64 (denn (math.MaxInt64/4 + 1)*4
+// liegt schon ueber math.MaxInt64), saettigen ist an dieser Stelle also
+// nicht verfrueht, sondern der fruehestmoegliche Punkt, an dem das
+// Endergebnis nachweislich nicht mehr passt. Das ist dieselbe
+// Ueberlauf-Klasse, vor der internal/tools/write_documents.go's
+// base64EncodedLenFor beim Groessen-Gate fuer die kodierte Laenge
+// schuetzt — dort aber bereits von Anfang an ohne dieses Problem, weil
+// die Division dort VOR der Multiplikation steht (ceil(n/3)*4, eine
+// einzelne, bereits praezise Multiplikation) statt wie hier zuerst zu
+// multiplizieren und danach zu dividieren.
+//
+// Hier steht bewusst eine zweite, eigenstaendig kommentierte
+// Implementierung statt eines gemeinsamen Helfers mit
+// base64EncodedLenFor: beide liegen in verschiedenen Paketen (hier
+// internal/config, dort internal/tools) und berechnen zwei
+// UNTERSCHIEDLICHE Ausdruecke (dieser hier addiert obendrauf einen
+// festen Rahmen-Zuschlag und rundet ab, statt auf den naechsten
+// Base64-Block aufzurunden) — ein gemeinsames Paket ueber diese
+// Paketgrenze hinweg fuer wenige Zeilen saettigender Arithmetik waere
+// mehr Aufwand als die Duplikation, die es einsparen wuerde.
+//
+// Saettigung (statt auf 0 abzuschneiden oder in Panic zu geraten) haelt
+// MaxRequestBodyBytes einen gueltigen, nutzbaren — wenn auch absurd
+// grosszuegigen — Byte-Deckel, statt einen Wert, der den Server jeden
+// Upload ablehnen liesse (siehe base64EncodedLenFor's eigenen
+// Doc-Kommentar dafuer, warum ein gesaettigter, aber positiver Deckel
+// im Sinne dieses Werts weiterhin ein korrekter Deckel ist).
+func maxRequestBodyBytesFor(maxUploadBytes int64) int64 {
+	const rahmenZuschlag = 64 << 10 // 64 KiB Spielraum fuer JSON-RPC/HTTP-Rahmen
+
+	quotient, rest := maxUploadBytes/3, maxUploadBytes%3
+	// quotient*4 kann selbst noch ueberlaufen, wenn maxUploadBytes so
+	// gross ist, dass schon dieser Anteil nicht mehr in int64 passt —
+	// und genau dann ist auch das wahre Endergebnis (das noch groesser
+	// waere) garantiert nicht mehr darstellbar. Hier zu saettigen
+	// verliert also keine Praezision gegenueber einer spaeteren Pruefung.
+	if quotient > math.MaxInt64/4 {
+		return math.MaxInt64
+	}
+	// rest ist immer 0, 1 oder 2 -- rest*4 (max. 8) kann nie ueberlaufen.
+	aufgeblaeht := quotient*4 + (rest*4)/3
+
+	if aufgeblaeht > math.MaxInt64-rahmenZuschlag {
+		return math.MaxInt64
+	}
+	return aufgeblaeht + rahmenZuschlag
 }
 
 func intWert(env Env, key string, fallback int64) (int64, error) {

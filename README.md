@@ -4,7 +4,7 @@
 
 Ein **inoffizieller** MCP-Server für [Fileee](https://www.fileee.com), der die eigenen Dokumente für AI-Clients zugänglich macht — als lokaler Server über einen statischen Token oder als **Remote-Connector mit OAuth-Anmeldung**, etwa in der Claude.ai-Web-UI.
 
-> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die lesenden Werkzeuge sind vollständig angemeldet: **32 fileee-Werkzeuge** (siehe [`docs/tools.md`](docs/tools.md)) plus **4 Betriebswerkzeuge** (`get_runtime_stats`, `get_tool_manifest`, `self_check`, `whoami`) — **36 Werkzeuge** insgesamt. Schreibende, teilende und löschende Werkzeuge entstehen in den folgenden Umsetzungsschritten.
+> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die lesenden UND die schreibenden Werkzeuge sind vollständig angemeldet: **32 lesende** plus **8 schreibende fileee-Werkzeuge** (siehe [`docs/tools.md`](docs/tools.md)) plus **4 Betriebswerkzeuge** (`get_runtime_stats`, `get_tool_manifest`, `self_check`, `whoami`) — **44 Werkzeuge** insgesamt. Teilende und löschende Werkzeuge entstehen weiterhin in den folgenden Umsetzungsschritten.
 
 Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/strausmann/go-fileee) und ist damit Geschwisterprojekt von [`strausmann/fileee-server`](https://github.com/strausmann/fileee-server) (REST-API für n8n/CI). Der Unterschied: `fileee-server` kennt genau ein Fileee-Konto und ein statisches Token; dieser Server bindet die **Identität des anfragenden Benutzers** an ein Fileee-Konto.
 
@@ -124,10 +124,18 @@ Werkzeuge** über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dok
 Kontakte/Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
 Seiten-OCR und Kontostand — vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert,
 inklusive der Absicherung gegen präparierte, fremdbestimmte Inhalte (Dokumenttitel, Firmen-/
-Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text). Schreibende, teilende
-und löschende Werkzeuge entstehen in den folgenden Umsetzungsschritten — jedes davon wird, sobald
-es existiert, ebenso angemeldet und über seine `ToolAnnotations` beschrieben (siehe
-[ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)).
+Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text).
+
+Die schreibenden Werkzeuge sind ebenfalls vollständig angemeldet — **8 Werkzeuge** über Kontakte
+(`create_contact`/`update_contact`), Erinnerungen (`create_reminder`/`update_reminder`), Boxen
+(`box_add_document`/`box_remove_document`) und Dokumente (`upload_document`/`update_document`),
+jedes mit wahrheitsgemäßen `ToolAnnotations` (`destructiveHint`, `idempotentHint`) — ebenfalls
+vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert, im Abschnitt „`write` — schreibende
+Werkzeuge".
+
+Teilende und löschende Werkzeuge entstehen weiterhin in den folgenden Umsetzungsschritten — jedes
+davon wird, sobald es existiert, ebenso angemeldet und über seine `ToolAnnotations` beschrieben
+(siehe [ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)).
 
 ## Sicherheit
 
@@ -146,7 +154,7 @@ Jeder Aufruf eines Werkzeugs (`tools/call`) muss drei unabhängige Kontingente p
 | `FILEEE_RATE_GLOBAL_RPS` / `FILEEE_RATE_GLOBAL_BURST` | Anfragerate **über alle Anrufer hinweg** — das globale Kontingent, das die README bereits vor dieser Einstellung beschrieb, tatsächlich durchgesetzt | `1` RPS, Burst `3` |
 | `FILEEE_MAX_INFLIGHT` | Obergrenze **gleichzeitig laufender** Werkzeugaufrufe, über alle Anrufer hinweg — schützt die eine, je Fileee-Konto geteilte Verbindung ([`internal/clientpool`](internal/clientpool)) vor Überlastung durch Parallelität, unabhängig von der Rate | `8` |
 
-`FILEEE_MAX_UPLOAD_BYTES` wird geladen, aber **noch nicht durchgesetzt** — es gibt noch kein Upload-Werkzeug (Teil B, `write`), das es aufrufen könnte.
+`FILEEE_MAX_UPLOAD_BYTES` wird von `upload_document` durchgesetzt (`internal/tools/write_documents.go`, `uploadDocumentHandler`): Der Aufruf wird abgelehnt, **bevor** irgendetwas dekodiert wird, sobald allein die Länge der base64-kodierten `contentBase64`-Zeichenkette beweist, dass der dekodierte Inhalt das Limit überschreiten müsste — und ein zweites Mal auf der tatsächlichen dekodierten Bytezahl, falls die erste, konservative Prüfung eine Eingabe durchlässt, die sich erst nach dem Dekodieren als zu groß herausstellt. Ein Wert von `0` bedeutet dabei **nicht** „unbegrenzt", sondern wird wie jede andere Obergrenze durchgesetzt (lehnt jeden nicht-leeren Upload ab) — dieselbe Konvention, die `FILEEE_MAX_INFLIGHT` bei `0` bereits hat (siehe „Ratenbegrenzung" oben).
 
 `FILEEE_MAX_DOWNLOAD_BYTES` wird ebenfalls geladen, ist aber **nicht mit den beiden inzwischen existierenden Download-Werkzeugen verbunden**: `get_document_pdf` und `get_page_image` (siehe [`docs/tools.md`](docs/tools.md)) begrenzen ihren jeweiligen Datenstrom über eine eigene, im Code fest verdrahtete Obergrenze von 8 MiB (`maxBinaryBytes`, `internal/tools/read_binary.go`), unabhängig vom konfigurierten Wert dieser Variable (Default 1 MiB) — wer `FILEEE_MAX_DOWNLOAD_BYTES` setzt, ändert damit **nichts** am tatsächlichen Verhalten dieser beiden Werkzeuge. Das ist eine offene Inkonsistenz, keine bewusste Entscheidung; bis sie aufgelöst ist (entweder `maxBinaryBytes` auf `cfg.MaxDownloadBytes` umstellen oder die Variable als für diese Werkzeuge nicht zuständig dokumentieren), gilt für einen Betreiber: **die tatsächliche Grenze ist die feste 8-MiB-Konstante im Code, nicht `FILEEE_MAX_DOWNLOAD_BYTES`.**
 

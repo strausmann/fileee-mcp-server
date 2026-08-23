@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -583,4 +584,67 @@ func TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp(t *testing.T) {
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
+}
+
+// TestWrapUntrustedLinesWithBoundaryEmptyLinesProducesEmptyResult ist
+// wrapUntrustedLinesWithBoundary's eigener Leerfall — dieselbe Wahl wie
+// bei wrapUntrustedLines (keine nicht-leere Zeile → kein Rahmen, reine
+// Rauschvermeidung, siehe wrapUntrustedLines' eigenen Kommentar).
+func TestWrapUntrustedLinesWithBoundaryEmptyLinesProducesEmptyResult(t *testing.T) {
+	boundary, err := newUntrustedBoundary()
+	if err != nil {
+		t.Fatalf("newUntrustedBoundary: %v", err)
+	}
+	result := wrapUntrustedLinesWithBoundary(boundary, []string{"", "   ", "\t"})
+	if result == nil {
+		t.Fatal("result ist nil, want ein leeres *mcp.CallToolResult{}")
+	}
+	if len(result.Content) != 0 {
+		t.Errorf("Content hat %d Eintraege, want 0 — es gibt hier keine nicht-leere Zeile zu rahmen", len(result.Content))
+	}
+}
+
+// TestWrapUntrustedLinesWithBoundaryMatchesWrapUntrustedLinesFormat ist
+// die vom Auftrag geforderte Formattreue-Pruefung: wrapUntrustedLines
+// erzeugt bei jedem Aufruf einen frischen, unvorhersagbaren Boundary-
+// String (newUntrustedBoundary, read.go) — dieser Test extrahiert genau
+// diesen Boundary-String aus wrapUntrustedLines' eigenem Output und
+// speist ihn in wrapUntrustedLinesWithBoundary — bei gleichem Boundary
+// und gleichen Zeilen MUESSEN beide Pfade byte-identischen Text liefern,
+// sonst hat der Umbau (Fix 3, homelab-management-Repo) die bestehende
+// Rahmung veraendert statt nur ihren Erzeugungszeitpunkt zu verschieben.
+func TestWrapUntrustedLinesWithBoundaryMatchesWrapUntrustedLinesFormat(t *testing.T) {
+	lines := []string{"Erste Zeile", "", "  ", "Zweite Zeile mit Umlauten: ä ö ü ß"}
+
+	original, err := wrapUntrustedLines(lines)
+	if err != nil {
+		t.Fatalf("wrapUntrustedLines: %v", err)
+	}
+	if len(original.Content) != 1 {
+		t.Fatalf("wrapUntrustedLines Content hat %d Eintraege, want 1", len(original.Content))
+	}
+	originalText, ok := original.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", original.Content[0])
+	}
+
+	boundaryPattern := regexp.MustCompile(`boundary="([0-9a-f]+)"`)
+	match := boundaryPattern.FindStringSubmatch(originalText.Text)
+	if match == nil {
+		t.Fatalf("kein boundary=\"...\" im Output von wrapUntrustedLines gefunden: %q", originalText.Text)
+	}
+	boundary := match[1]
+
+	rebuilt := wrapUntrustedLinesWithBoundary(boundary, lines)
+	if len(rebuilt.Content) != 1 {
+		t.Fatalf("wrapUntrustedLinesWithBoundary Content hat %d Eintraege, want 1", len(rebuilt.Content))
+	}
+	rebuiltText, ok := rebuilt.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", rebuilt.Content[0])
+	}
+
+	if rebuiltText.Text != originalText.Text {
+		t.Errorf("wrapUntrustedLinesWithBoundary liefert bei gleichem Boundary-String einen ANDEREN Text als wrapUntrustedLines:\n--- wrapUntrustedLines ---\n%s\n--- wrapUntrustedLinesWithBoundary ---\n%s", originalText.Text, rebuiltText.Text)
+	}
 }
