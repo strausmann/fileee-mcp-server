@@ -168,24 +168,33 @@ func contactDisplayName(c *fileee.Contact) string {
 }
 
 // updateContactResult builds updateContactHandler's success return from
-// upd, the contact fileee.Contacts.Update handed back — split out from
-// updateContactFromService so wrapUntrustedLines' own error path (see
-// newUntrustedBoundary's doc comment, read.go) has a single call site,
-// independent of the two backend calls around it.
+// boundary, the untrusted-block boundary the caller already generated
+// BEFORE its own mutating service.Update call (see
+// updateContactFromService below), and upd, the contact
+// fileee.Contacts.Update handed back — split out from
+// updateContactFromService so wrapUntrustedLinesWithBoundary's call
+// site stays independent of the two backend calls around it.
+//
+// Anders als vor diesem Umbau erzeugt diese Funktion selbst KEINE
+// Boundary mehr und hat deshalb auch keinen Fehler-Rückgabewert mehr:
+// wrapUntrustedLinesWithBoundary (read_generic.go) kann nicht
+// fehlschlagen, weil boundary bereits vorliegt. Vorher generierte
+// wrapUntrustedLines seine Boundary per crypto/rand ERST HIER — also
+// NACH dem bereits abgeschlossenen service.Update-Aufruf in
+// updateContactFromService — ein Fehlschlag an dieser Stelle hätte die
+// längst persistierte Änderung fälschlich als gescheitert gemeldet und
+// einen duplizierenden Retry provoziert.
 //
 // The updated contact's own display name goes into result.Content via
-// wrapUntrustedLines (read_generic.go) — the exact same call
-// documentFromService (read.go) already makes for a document's Title —
-// never into a field of the returned updateContactOutput: that struct
-// lands in CallToolResult.StructuredContent, and every tool in this
-// package keeps that channel free of foreign text (see this file's own
-// package doc comment).
-func updateContactResult(upd *fileee.Contact) (*mcp.CallToolResult, updateContactOutput, error) {
-	result, err := wrapUntrustedLines([]string{contactDisplayName(upd)})
-	if err != nil {
-		return nil, updateContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateContact, err)
-	}
-	return result, updateContactOutput{ID: upd.ID, Modified: upd.Modified}, nil
+// wrapUntrustedLinesWithBoundary (read_generic.go) — the exact same
+// call documentFromService (read.go) already makes for a document's
+// Title — never into a field of the returned updateContactOutput: that
+// struct lands in CallToolResult.StructuredContent, and every tool in
+// this package keeps that channel free of foreign text (see this
+// file's own package doc comment).
+func updateContactResult(boundary string, upd *fileee.Contact) (*mcp.CallToolResult, updateContactOutput) {
+	result := wrapUntrustedLinesWithBoundary(boundary, []string{contactDisplayName(upd)})
+	return result, updateContactOutput{ID: upd.ID, Modified: upd.Modified}
 }
 
 // updateContactFromService is updateContactHandler's logic below client
@@ -201,8 +210,19 @@ func updateContactResult(upd *fileee.Contact) (*mcp.CallToolResult, updateContac
 // not claim the contact was partially changed (it wasn't; Update either
 // replaces the whole entity server-side or fails outright), it reports
 // the Update error and nothing else.
+//
+// boundary wird NACH dem (lesenden) Get, aber VOR dem mutierenden
+// service.Update erzeugt (newUntrustedBoundary, read.go): schlägt die
+// crypto/rand-Erzeugung fehl, bricht dieser Aufruf ab, BEVOR der
+// Kontakt tatsächlich verändert wird — statt, wie vor diesem Umbau,
+// erst nach einem bereits erfolgreich persistierten Update an einem
+// Boundary-Fehler zu scheitern und dadurch einen Retry zu provozieren.
 func updateContactFromService(ctx context.Context, service contactWriteService, in updateContactInput) (*mcp.CallToolResult, updateContactOutput, error) {
 	cur, err := service.Get(ctx, in.ID)
+	if err != nil {
+		return nil, updateContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateContact, err)
+	}
+	boundary, err := newUntrustedBoundary()
 	if err != nil {
 		return nil, updateContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateContact, err)
 	}
@@ -211,7 +231,8 @@ func updateContactFromService(ctx context.Context, service contactWriteService, 
 	if err != nil {
 		return nil, updateContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateContact, err)
 	}
-	return updateContactResult(upd)
+	result, out := updateContactResult(boundary, upd)
+	return result, out, nil
 }
 
 // updateContactHandler resolves update_contact. The empty-ID check runs
@@ -312,27 +333,31 @@ type createContactOutput struct {
 }
 
 // createContactResult builds createContactHandler's success return from
-// created, the contact fileee.Contacts.Create handed back — the same
-// split updateContactResult establishes above, so wrapUntrustedLines'
-// own error path has a single call site independent of the backend
-// call around it.
+// boundary, the untrusted-block boundary the caller already generated
+// BEFORE its own mutating service.Create call (see
+// createContactFromService below), and created, the contact
+// fileee.Contacts.Create handed back — the same split
+// updateContactResult establishes above, so
+// wrapUntrustedLinesWithBoundary's call site stays independent of the
+// backend call around it.
+//
+// Anders als vor diesem Umbau erzeugt diese Funktion selbst KEINE
+// Boundary mehr und hat deshalb auch keinen Fehler-Rückgabewert mehr —
+// dieselbe Begründung wie bei updateContactResult oben: eine
+// crypto/rand-Erzeugung, die erst NACH dem bereits abgeschlossenen
+// service.Create-Aufruf läuft, hätte einen neu angelegten Kontakt
+// fälschlich als gescheiterten Aufruf gemeldet.
 //
 // The new contact's own display name goes into result.Content via
-// wrapUntrustedLines (read_generic.go) — the exact same call
-// updateContactResult's own wrapUntrustedLines call makes for an
-// updated contact's display name (aligned in Fix-Runde 1; a direct
-// wrapUntrusted call worked identically for the validated path, since
-// contactDisplayName always returns non-empty text there, but
-// wrapUntrustedLines is the sibling's own template and drops an empty
-// line instead of framing an empty block) — never into a field of the
-// returned createContactOutput (see this type's own doc comment above
-// and write.go's package doc comment on the foreign-text invariant).
-func createContactResult(created *fileee.Contact) (*mcp.CallToolResult, createContactOutput, error) {
-	result, err := wrapUntrustedLines([]string{contactDisplayName(created)})
-	if err != nil {
-		return nil, createContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateContact, err)
-	}
-	return result, createContactOutput{ID: created.ID}, nil
+// wrapUntrustedLinesWithBoundary (read_generic.go) — the exact same
+// call updateContactResult's own wrapUntrustedLinesWithBoundary call
+// makes for an updated contact's display name — never into a field of
+// the returned createContactOutput (see this type's own doc comment
+// above and write.go's package doc comment on the foreign-text
+// invariant).
+func createContactResult(boundary string, created *fileee.Contact) (*mcp.CallToolResult, createContactOutput) {
+	result := wrapUntrustedLinesWithBoundary(boundary, []string{contactDisplayName(created)})
+	return result, createContactOutput{ID: created.ID}
 }
 
 // createContactFromService is createContactHandler's logic below client
@@ -340,7 +365,18 @@ func createContactResult(created *fileee.Contact) (*mcp.CallToolResult, createCo
 // contactCreateService fake (fakeContactCreateService, write_test.go)
 // instead of a live *fileee.Client, the same pattern
 // updateContactFromService already establishes above.
+//
+// boundary wird VOR service.Create erzeugt (newUntrustedBoundary,
+// read.go): schlägt die crypto/rand-Erzeugung fehl, bricht dieser
+// Aufruf ab, BEVOR überhaupt ein Kontakt beim Backend angelegt wird —
+// statt, wie vor diesem Umbau, nach einem bereits erfolgreich
+// persistierten Kontakt an einem Boundary-Fehler zu scheitern und
+// dadurch einen Retry zu provozieren, der den Kontakt dupliziert.
 func createContactFromService(ctx context.Context, service contactCreateService, in createContactInput) (*mcp.CallToolResult, createContactOutput, error) {
+	boundary, err := newUntrustedBoundary()
+	if err != nil {
+		return nil, createContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateContact, err)
+	}
 	created, err := service.Create(ctx, &fileee.Contact{
 		FirstName:   in.FirstName,
 		LastName:    in.LastName,
@@ -351,7 +387,8 @@ func createContactFromService(ctx context.Context, service contactCreateService,
 	if err != nil {
 		return nil, createContactOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateContact, err)
 	}
-	return createContactResult(created)
+	result, out := createContactResult(boundary, created)
+	return result, out, nil
 }
 
 // createContactHandler resolves create_contact. The

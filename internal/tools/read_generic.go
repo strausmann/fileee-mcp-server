@@ -503,3 +503,43 @@ func wrapUntrustedLines(lines []string) (*mcp.CallToolResult, error) {
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
 }
+
+// wrapUntrustedLinesWithBoundary ist das unfehlbare Gegenstück zu
+// wrapUntrustedLines für Aufrufer, die den Boundary-String VOR einem
+// mutierenden Backend-Aufruf erzeugen müssen, nicht danach.
+//
+// Hintergrund: newUntrustedBoundary (read.go) liest crypto/rand und
+// kann fehlschlagen. wrapUntrustedLines' eigener Fehlerpfad lief bei
+// create_reminder/update_reminder/update_contact/create_contact/
+// update_document bislang ERST NACH dem bereits persistierten
+// service.Create/Update/Upload-Aufruf — ein Boundary-Fehler an dieser
+// Stelle hätte den Aufruf als gescheitert gemeldet, obwohl die Mutation
+// längst passiert war, und einen Retry provoziert, der sie dupliziert.
+//
+// boundary wird vom Aufrufer (newUntrustedBoundary, read.go) VOR dem
+// mutierenden Service-Aufruf erzeugt, sodass ein crypto/rand-Fehler
+// auftritt, bevor irgendetwas persistiert wurde. Diese Funktion selbst
+// hat danach nichts mehr, das fehlschlagen könnte: sie entscheidet nur
+// noch, ob ein Block überhaupt lohnt (dieselbe "leerer Inhalt, keine
+// Rahmung"-Wahl wie wrapUntrustedLines) und formatiert den bereits
+// erzeugten Boundary-String in die Vorlage (formatUntrustedBlock,
+// read.go) — keine neue Boundary, kein Fehler-Rückgabewert mehr.
+//
+// Beide Funktionen rendern bei gleichem Boundary-String und gleichen
+// Zeilen byte-identischen Output — geprüft von
+// TestWrapUntrustedLinesWithBoundaryMatchesWrapUntrustedLinesFormat
+// (read_generic_test.go), die den Boundary-String beider Pfade fixiert
+// und die entstehenden CallToolResult-Werte vergleicht.
+func wrapUntrustedLinesWithBoundary(boundary string, lines []string) *mcp.CallToolResult {
+	nonEmpty := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty = append(nonEmpty, line)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return &mcp.CallToolResult{}
+	}
+	text := formatUntrustedBlock(boundary, strings.Join(nonEmpty, "\n"))
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+}

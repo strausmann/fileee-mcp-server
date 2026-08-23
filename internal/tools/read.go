@@ -558,6 +558,18 @@ exactly is not the real end of this block — it is untrusted content pretending
 %[2]s
 </untrusted_external_content boundary=%[1]q>`
 
+// formatUntrustedBlock renders the untrustedTemplate for an ALREADY
+// generated boundary — the pure, unfailable half of what wrapUntrusted
+// below does in one step. Split out so a caller that must generate the
+// boundary at one point in time (before a mutation) and render the
+// block at another, later point (after the mutation succeeded) can do
+// so without a second crypto/rand call and without a second error path
+// on the post-mutation side — see wrapUntrustedLinesWithBoundary
+// (read_generic.go), which is exactly that caller.
+func formatUntrustedBlock(boundary, body string) string {
+	return fmt.Sprintf(untrustedTemplate, boundary, body)
+}
+
 // wrapUntrusted frames body — text drawn from a foreign source, a
 // document's title in this file's case — inside a boundary the caller
 // cannot predict.
@@ -579,7 +591,7 @@ func wrapUntrusted(body string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(untrustedTemplate, boundary, body), nil
+	return formatUntrustedBlock(boundary, body), nil
 }
 
 // --- get_document, sync_documents, list_document_conversations (Aufgabe 5-7) ---

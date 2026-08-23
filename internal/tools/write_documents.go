@@ -294,22 +294,31 @@ func applyDocumentTitlePatch(cur *fileee.Document, in updateDocumentInput) {
 }
 
 // updateDocumentResult builds updateDocumentHandler's success return
-// from upd, the document fileee.Documents.Update handed back — the
-// same split updateContactResult establishes (write.go), so
-// wrapUntrustedLines' own error path has a single call site.
+// from boundary, the untrusted-block boundary the caller already
+// generated BEFORE its own mutating service.Update call (see
+// updateDocumentFromService below), and upd, the document
+// fileee.Documents.Update handed back — the same split
+// updateContactResult establishes (write.go), so
+// wrapUntrustedLinesWithBoundary's call site stays independent of the
+// two backend calls around it.
+//
+// Anders als vor diesem Umbau erzeugt diese Funktion selbst KEINE
+// Boundary mehr und hat deshalb auch keinen Fehler-Rückgabewert mehr —
+// dieselbe Begründung wie bei updateContactResult (write.go): eine
+// crypto/rand-Erzeugung, die erst NACH dem bereits abgeschlossenen
+// service.Update-Aufruf läuft, hätte ein längst verändertes Dokument
+// fälschlich als gescheiterten Aufruf gemeldet und einen duplizierenden
+// Retry provoziert (hier: eine erneute, unnötige Update-Anfrage).
 //
 // upd's own Title (post-update — the new title if the caller set one
 // via in.Title, the unchanged existing title otherwise) goes into
-// result.Content via wrapUntrustedLines — the exact same call
-// documentFromService (read.go) makes for a document's Title on the
-// read side — never into a field of the returned updateDocumentOutput
-// (see that type's own doc comment above).
-func updateDocumentResult(upd *fileee.Document) (*mcp.CallToolResult, updateDocumentOutput, error) {
-	result, err := wrapUntrustedLines([]string{upd.Attributes.Title})
-	if err != nil {
-		return nil, updateDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateDocument, err)
-	}
-	return result, updateDocumentOutput{ID: upd.ID}, nil
+// result.Content via wrapUntrustedLinesWithBoundary — the exact same
+// call documentFromService (read.go) makes for a document's Title on
+// the read side — never into a field of the returned
+// updateDocumentOutput (see that type's own doc comment above).
+func updateDocumentResult(boundary string, upd *fileee.Document) (*mcp.CallToolResult, updateDocumentOutput) {
+	result := wrapUntrustedLinesWithBoundary(boundary, []string{upd.Attributes.Title})
+	return result, updateDocumentOutput{ID: upd.ID}
 }
 
 // updateDocumentFromService is updateDocumentHandler's logic below
@@ -327,8 +336,19 @@ func updateDocumentResult(upd *fileee.Document) (*mcp.CallToolResult, updateDocu
 // update_contact's own unconditional Update call rather than
 // short-circuiting on "nothing to patch" (see updateContactFromService,
 // write.go).
+//
+// boundary wird NACH dem (lesenden) Get, aber VOR dem mutierenden
+// service.Update erzeugt (newUntrustedBoundary, read.go): schlägt die
+// crypto/rand-Erzeugung fehl, bricht dieser Aufruf ab, BEVOR das
+// Dokument tatsächlich verändert wird — statt, wie vor diesem Umbau,
+// erst nach einem bereits erfolgreich persistierten Update an einem
+// Boundary-Fehler zu scheitern.
 func updateDocumentFromService(ctx context.Context, service documentUpdateService, in updateDocumentInput) (*mcp.CallToolResult, updateDocumentOutput, error) {
 	cur, err := service.Get(ctx, in.ID)
+	if err != nil {
+		return nil, updateDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateDocument, err)
+	}
+	boundary, err := newUntrustedBoundary()
 	if err != nil {
 		return nil, updateDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateDocument, err)
 	}
@@ -337,7 +357,8 @@ func updateDocumentFromService(ctx context.Context, service documentUpdateServic
 	if err != nil {
 		return nil, updateDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateDocument, err)
 	}
-	return updateDocumentResult(upd)
+	result, out := updateDocumentResult(boundary, upd)
+	return result, out, nil
 }
 
 // updateDocumentHandler resolves update_document. The empty-ID check

@@ -176,27 +176,38 @@ func applyReminderPatch(cur *fileee.Reminder, in updateReminderInput) {
 }
 
 // reminderResult builds both createReminderFromService's and
-// updateReminderFromService's success return from r, the reminder
+// updateReminderFromService's success return from boundary, the
+// untrusted-block boundary the caller already generated BEFORE its own
+// mutating service.Create/Update call (see createReminderFromService/
+// updateReminderFromService below and this package's own note on
+// "Framing-Boundary VOR der Mutation"), and r, the reminder
 // fileee.Reminders.Create/Update handed back — the single call site
-// both share for wrapUntrustedLines (this file's own package doc
-// comment), the same split updateContactResult/createContactResult
-// establish independently for update_contact/create_contact (write.go)
-// where the two tools' response shapes differ (ID+Modified vs. just
-// ID); here both tools share the exact same reminderOutput shape, so
-// one function serves both instead of two near-identical ones.
+// both share for wrapUntrustedLinesWithBoundary, the same split
+// updateContactResult/createContactResult establish independently for
+// update_contact/create_contact (write.go) where the two tools'
+// response shapes differ (ID+Modified vs. just ID); here both tools
+// share the exact same reminderOutput shape, so one function serves
+// both instead of two near-identical ones.
+//
+// Anders als vor diesem Umbau erzeugt diese Funktion selbst KEINE
+// Boundary mehr und hat deshalb auch keinen Fehler-Rückgabewert mehr:
+// wrapUntrustedLinesWithBoundary (read_generic.go) kann nicht
+// fehlschlagen, weil boundary bereits vorliegt. Vorher generierte
+// wrapUntrustedLines seine Boundary per crypto/rand ERST HIER — also
+// NACH dem bereits abgeschlossenen service.Create/Update-Aufruf in
+// createReminderFromService/updateReminderFromService — ein Fehlschlag
+// an dieser Stelle hätte die längst persistierte Mutation faelschlich
+// als gescheitert gemeldet und einen duplizierenden Retry provoziert.
 //
 // The reminder's own Description goes into result.Content via
-// wrapUntrustedLines (read_generic.go) — the exact same call
-// reminderDescriptor's own UntrustedLine closure feeds for
+// wrapUntrustedLinesWithBoundary (read_generic.go) — the exact same
+// call reminderDescriptor's own UntrustedLine closure feeds for
 // list_reminders/get_reminder (read_people.go) — never into a field of
 // the returned reminderOutput (see this file's own package doc
 // comment).
-func reminderResult(r *fileee.Reminder) (*mcp.CallToolResult, reminderOutput, error) {
-	result, err := wrapUntrustedLines([]string{r.Description})
-	if err != nil {
-		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: reminder: %w", err)
-	}
-	return result, reminderOutput{ID: r.ID, Done: r.Done}, nil
+func reminderResult(boundary string, r *fileee.Reminder) (*mcp.CallToolResult, reminderOutput) {
+	result := wrapUntrustedLinesWithBoundary(boundary, []string{r.Description})
+	return result, reminderOutput{ID: r.ID, Done: r.Done}
 }
 
 // createReminderFromService is createReminderHandler's logic below
@@ -204,7 +215,18 @@ func reminderResult(r *fileee.Reminder) (*mcp.CallToolResult, reminderOutput, er
 // reminderCreateService fake (fakeReminderCreateService,
 // write_people_test.go) instead of a live *fileee.Client, the same
 // pattern createContactFromService already establishes (write.go).
+//
+// boundary wird VOR service.Create erzeugt (newUntrustedBoundary,
+// read.go): schlägt die crypto/rand-Erzeugung fehl, bricht dieser
+// Aufruf ab, BEVOR überhaupt etwas beim Backend angelegt wird — statt,
+// wie vor diesem Umbau, nach einer bereits erfolgreich persistierten
+// Erinnerung an einem Boundary-Fehler zu scheitern und dadurch einen
+// Retry zu provozieren, der die Erinnerung dupliziert.
 func createReminderFromService(ctx context.Context, service reminderCreateService, in createReminderInput) (*mcp.CallToolResult, reminderOutput, error) {
+	boundary, err := newUntrustedBoundary()
+	if err != nil {
+		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateReminder, err)
+	}
 	created, err := service.Create(ctx, &fileee.Reminder{
 		Description:         in.Description,
 		DetailedDescription: in.DetailedDescription,
@@ -214,10 +236,7 @@ func createReminderFromService(ctx context.Context, service reminderCreateServic
 	if err != nil {
 		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateReminder, err)
 	}
-	result, out, err := reminderResult(created)
-	if err != nil {
-		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolCreateReminder, err)
-	}
+	result, out := reminderResult(boundary, created)
 	return result, out, nil
 }
 
@@ -274,8 +293,19 @@ func createReminderHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHand
 // function's own error, wrapped with the tool's name — never as a
 // partial success, the same "no partial-state claim" guarantee
 // updateContactFromService's own doc comment documents (write.go).
+//
+// boundary wird NACH dem (lesenden) Get, aber VOR dem mutierenden
+// service.Update erzeugt (newUntrustedBoundary, read.go): schlägt die
+// crypto/rand-Erzeugung fehl, bricht dieser Aufruf ab, BEVOR die
+// Erinnerung tatsächlich verändert wird — statt, wie vor diesem Umbau,
+// erst nach einem bereits erfolgreich persistierten Update an einem
+// Boundary-Fehler zu scheitern und dadurch einen Retry zu provozieren.
 func updateReminderFromService(ctx context.Context, service reminderWriteService, in updateReminderInput) (*mcp.CallToolResult, reminderOutput, error) {
 	cur, err := service.Get(ctx, in.ID)
+	if err != nil {
+		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateReminder, err)
+	}
+	boundary, err := newUntrustedBoundary()
 	if err != nil {
 		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateReminder, err)
 	}
@@ -284,10 +314,7 @@ func updateReminderFromService(ctx context.Context, service reminderWriteService
 	if err != nil {
 		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateReminder, err)
 	}
-	result, out, err := reminderResult(upd)
-	if err != nil {
-		return nil, reminderOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolUpdateReminder, err)
-	}
+	result, out := reminderResult(boundary, upd)
 	return result, out, nil
 }
 
