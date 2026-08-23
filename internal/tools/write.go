@@ -435,6 +435,12 @@ func registerWriteTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) 
 			IdempotentHint:  false,
 		},
 	}, createContactHandler(p, logger))
+
+	// create_reminder/update_reminder (Task 3) live in their own file,
+	// write_people.go — see that file's own package doc comment for
+	// why (write.go outgrew a comfortable single-topic size once
+	// update_contact/create_contact were both in it).
+	registerReminderWriteTools(s, p, logger)
 }
 
 // boolPtr returns a pointer to v — mcp.ToolAnnotations.DestructiveHint

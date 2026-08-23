@@ -167,6 +167,21 @@ jobs:
           # createContactHandler haelt sich trotzdem bei ueber 80%, weil seine eigene
           # Vor-clientFor-Pruefung (FirstName/LastName/CompanyName nicht alle leer, das
           # Gegenstueck zu updateContactHandlers leere-ID-Pruefung) direkt testbar ist.
+          #
+          # internal/tools/write_people.go (Task 3, write-Tools-Plan): create_reminder +
+          # update_reminder, dieselben zwei Muster wie write.go (Create ohne vorheriges Get /
+          # Get-apply-Update-Patch-Merge), diesmal ueber fileee.ReminderService. Kernlogik
+          # (applyReminderPatch, reminderResult, createReminderFromService,
+          # updateReminderFromService) ueber Fakes (fakeReminderCreateService/
+          # fakeReminderWriteService, write_people_test.go) vollstaendig ohne Netzwerk testbar.
+          # Beide duennen clientFor-Huellen (createReminderHandler/updateReminderHandler)
+          # bekommen zusaetzlich je einen Gegenprobe-Test, der eine GUELTIGE Eingabe bis zu
+          # clientFor durchlaesst (TestCreateReminderHandlerLaesstEineGueltigeBeschreibung...,
+          # TestUpdateReminderHandlerLaesstEineGueltigeKennung...) — dieselbe Idee wie
+          # createContactHandlers eigener Firmenkontakt-Test oben, hier zusaetzlich fuer
+          # update_reminder nachgezogen (update_contact hat diesen Gegenprobe-Test bislang
+          # nicht). Datei liegt bei 85,0% — komfortabel ueber der 80%-Business-Logik-Stufe,
+          # keine Ausnahme noetig.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -187,6 +202,7 @@ jobs:
             internal/tools/read_account.go:50 \
             internal/tools/ops.go:80 \
             internal/tools/write.go:80 \
+            internal/tools/write_people.go:80 \
             cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |

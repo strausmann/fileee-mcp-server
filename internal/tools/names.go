@@ -132,6 +132,16 @@ const (
 	// (there is nothing to merge onto — the contact does not exist
 	// yet).
 	ToolCreateContact = "create_contact"
+
+	// ToolCreateReminder and ToolUpdateReminder are create_reminder's
+	// and update_reminder's registered names (Task 3, write_people.go)
+	// — the third and fourth write-class tools, over
+	// fileee.ReminderService the same way ToolCreateContact/
+	// ToolUpdateContact are over fileee.Client.Contacts: a single
+	// Create call (no prior Get) and a Get/apply/Update patch/merge,
+	// respectively.
+	ToolCreateReminder = "create_reminder"
+	ToolUpdateReminder = "update_reminder"
 )
 
 // registeredReadTools mounts RegisterAll onto a throwaway server and reads
