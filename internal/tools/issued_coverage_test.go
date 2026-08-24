@@ -38,11 +38,26 @@
 // Umfangsentscheidung vor stillschweigendem Veralten schützt: er geht
 // über die ECHTE, laufende Werkzeugliste (session.Tools) und schlägt
 // laut fehl, sobald der Name eines Lese-Werkzeugs weder zu den zehn
-// gehört, die diese Datei prüft, noch zu den 26 bekanntermaßen
-// außerhalb des Umfangs liegenden — ein künftiges handgeschriebenes
-// Werkzeug, das sowohl einen Record-Aufruf als auch einen Eintrag hier
-// vergisst, kann nicht unbemerkt durchrutschen; es schlägt bei seinem
-// Erscheinen fehl, genau wie der Auftrag dieser Aufgabe es verlangt.
+// gehört, die diese Datei prüft, noch zu den generischen Deskriptor-
+// Werkzeugen mit gesetztem IDOf, noch zu den fünf entitätslosen
+// Ops-/Konto-Werkzeugen — ein künftiges handgeschriebenes Werkzeug, das
+// sowohl einen Record-Aufruf als auch einen Eintrag hier vergisst, kann
+// nicht unbemerkt durchrutschen; es schlägt bei seinem Erscheinen fehl,
+// genau wie der Auftrag dieser Aufgabe es verlangt.
+//
+// WICHTIG (Fix nach Review-Fund, siehe TestAlleLeseWerkzeugeSindEinsortiert's
+// eigener Doc-Kommentar für die volle Geschichte): die Zugehörigkeit zu
+// den rund 21 generischen Deskriptor-Werkzeugen wird NICHT mehr über
+// eine zweite, handgetippte Namensliste geprüft — eine solche Liste
+// akzeptierte jeden dort eingetragenen Namen blind, auch einen
+// generischen Deskriptor mit kaputtem (nil) IDOf, was den gesamten
+// Serverprozess beim ersten echten Aufruf abstürzen lässt (kein
+// recover() im SDK-Dispatch-Pfad, Issue #70). Stattdessen wird die
+// Zugehörigkeit aus tools.GenericReadToolStatus() (generic_ids_export_test.go,
+// package tools) ABGELEITET — aus denselben 14 Deskriptor-Konstruktoren,
+// die Aufgabe 4s eigener TestAlleGenerischenDeskriptorenHabenEinIDOf
+// bereits einzeln prüft, nicht aus einer zweiten, unabhängig gepflegten
+// Liste.
 //
 // Zwei bewusste "Nein"-Entscheidungen, die diese Datei direkt prüft
 // (nicht nur in Prosa behauptet) — siehe
@@ -229,37 +244,25 @@ var handWrittenReadTools = map[string]bool{
 	tools.ToolGetPageOCR:                true,
 }
 
-// knownOutOfScopeReadTools sind alle ANDEREN Lese-Werkzeuge, die
-// RegisterAll mountet — die rund 21 generischen Deskriptor-Werkzeuge
-// (bereits abgesichert durch read_generic_test.go, Aufgabe 4) plus die
-// fünf Ops-/Konto-Werkzeuge, die keine fileee-eigene Entitäts-ID
-// ausliefern. Benannt über dieselben exportierten Konstanten, aus
-// demselben Grund wie handWrittenReadTools. Ihre Rolle ist NICHT, diesen
-// Werkzeugen für immer einen Freifahrtschein zu geben — sie ist das, was
-// TestAlleLeseWerkzeugeSindEinsortiert jeden ANDEREN Werkzeugnamen
-// dagegen prüft: ein Eintrag hier ist eine festgehaltene, prüfbare
-// Entscheidung ("dieses hier ist anderswo abgedeckt"), keine
-// stillschweigende Auslassung.
-var knownOutOfScopeReadTools = map[string]bool{
-	// generische Deskriptor-Werkzeuge (read_reference.go via registerReferenceTools)
-	tools.ToolListTags: true, tools.ToolGetTag: true,
-	tools.ToolListCompanies: true, tools.ToolGetCompany: true,
-	tools.ToolListDocumentTypes: true, tools.ToolGetDocumentType: true,
-	tools.ToolListDocumentTypeSchemes: true, tools.ToolGetDocumentTypeScheme: true,
-	// generische Deskriptor-Werkzeuge (read_people.go via registerPeopleTools)
-	tools.ToolListContacts: true, tools.ToolGetContact: true,
-	tools.ToolListReminders: true, tools.ToolGetReminder: true,
-	tools.ToolListConversations: true, tools.ToolGetConversation: true,
-	// generische Sync-Werkzeuge (read_sync.go via registerSyncTools)
-	tools.ToolSyncTags: true, tools.ToolSyncCompanies: true,
-	tools.ToolSyncDocumentTypes: true, tools.ToolSyncDocumentTypeSchemes: true,
-	tools.ToolSyncContacts: true, tools.ToolSyncReminders: true,
-	tools.ToolSyncConversations: true,
-	// Ops-/Meta-Werkzeuge (ops.go) — fassen fileee-Daten überhaupt nicht an
+// knownNonEntityReadTools sind die fünf Werkzeuge, die überhaupt KEINE
+// fileee-eigene Entitäts-ID ausliefern und NICHT über den generischen
+// Deskriptor-Pfad laufen — die vier Ops-/Meta-Werkzeuge (ops.go, fassen
+// fileee-Daten gar nicht an) plus get_account_status (read_account.go,
+// AccountTypeID ist ein Abo-Plan-Code, kein Verweis auf etwas, das ein
+// anderes Werkzeug anfassen könnte). Für DIESE fünf ist eine kleine,
+// handgepflegte Liste unproblematisch: sie laufen nicht über
+// registerReadService/registerSync und tragen deshalb nicht das Risiko,
+// das knownOutOfScopeReadTools früher hatte (siehe TestAlleLeseWerkzeugeSindEinsortiert's
+// eigener Doc-Kommentar) — es gibt kein IDOf, das hier je nil sein
+// könnte, also auch keinen Riss, den eine Ableitung schließen müsste.
+//
+// Die rund 21 generischen Deskriptor-Werkzeuge stehen bewusst NICHT
+// mehr in einer Liste dieser Art — ihre Mitgliedschaft wird jetzt aus
+// tools.GenericReadToolStatus() abgeleitet (siehe
+// TestAlleLeseWerkzeugeSindEinsortiert).
+var knownNonEntityReadTools = map[string]bool{
 	tools.ToolGetRuntimeStats: true, tools.ToolGetToolManifest: true,
 	tools.ToolSelfCheck: true, tools.ToolWhoami: true,
-	// read_account.go — AccountTypeID ist ein Abo-Plan-Code, kein Verweis
-	// auf etwas, das ein anderes Werkzeug anfassen könnte
 	tools.ToolGetAccountStatus: true,
 }
 
@@ -414,14 +417,42 @@ func assertNoneIssued(t *testing.T, rec *issued.Store, identityCtx context.Conte
 // TestAlleLeseWerkzeugeSindEinsortiert leitet die lebende Menge der
 // Lese-Werkzeuge aus dem ECHTEN, gemounteten Server ab (session.Tools,
 // gefiltert genau wie ops.go's eigenes deriveToolManifestKind es schon
-// tut: Annotations.ReadOnlyHint) und schlägt laut fehl, sobald ein
-// Werkzeugname weder in handWrittenReadTools noch in
-// knownOutOfScopeReadTools steht — keine hand-gepflegte Liste von
-// Werkzeugnamen entscheidet hier, was GEPRÜFT wird, nur, in welchen
-// Eimer es einsortiert wird; ein unbekannter Eimer ist ein harter
-// Fehlschlag, kein stilles Überspringen.
+// tut: Annotations.ReadOnlyHint) und prüft jeden Namen gegen DREI
+// Quellen, in dieser Reihenfolge:
+//
+//  1. tools.GenericReadToolStatus() — ABGELEITET aus den 14 echten
+//     Deskriptor-Konstruktoren (generic_ids_export_test.go), nicht
+//     getippt. Steht der Name dort mit true: erledigt, von Aufgabe 4s
+//     eigenem Guardrail (read_generic_test.go) abgedeckt. Steht er dort
+//     mit false: harter Fehlschlag MIT SPEZIFISCHER MELDUNG — dieser
+//     generische Deskriptor hat ein nil IDOf, das ist im Deskriptor zu
+//     reparieren, nicht hier einzutragen.
+//  2. handWrittenReadTools — die zehn Werkzeuge dieser Aufgabe, mit
+//     eigenen Fixtures unten geprüft.
+//  3. knownNonEntityReadTools — die fünf Ops-/Konto-Werkzeuge ohne jede
+//     Entitäts-ID (siehe deren eigenen Doc-Kommentar, warum eine kleine
+//     Handliste dafür unproblematisch ist).
+//
+// Ein Name, der in KEINER der drei Quellen auftaucht, ist ein
+// unbekanntes, neu aufgetauchtes Lese-Werkzeug — harter Fehlschlag, kein
+// stilles Überspringen.
+//
+// Vorher prüfte dieser Test Punkt 1 über eine zweite, unabhängig
+// getippte Namensliste (knownOutOfScopeReadTools) — die akzeptierte
+// JEDEN dort eingetragenen Namen, unabhängig davon, ob er zu einem
+// echten, gesund verdrahteten Deskriptor gehörte. Ein Review fand und
+// reproduzierte den Riss real: ein generischer Deskriptor mit IDOf: nil,
+// gemountet und in diese Liste eingetragen — genau der Weg, den die
+// alte Fehlermeldung selbst vorschlug — blieb hier UND in Aufgabe 4s
+// eigenem TestAlleGenerischenDeskriptorenHabenEinIDOf unbemerkt grün,
+// bis der erste echte Aufruf mit einer Nil-Pointer-Panik in
+// read_generic.go:444 (d.IDOf(&entry)) den GESAMTEN Serverprozess
+// mitriss (kein recover() im gesamten SDK-Dispatch-Pfad, Issue #70) —
+// nicht nur den aufrufenden Request. Siehe generic_ids_export_test.go's
+// eigenen Doc-Kommentar für die vollständige Begründung des Fixes.
 func TestAlleLeseWerkzeugeSindEinsortiert(t *testing.T) {
 	session, _, _ := newCoverageSession(t)
+	genericStatus := tools.GenericReadToolStatus()
 
 	for tool, err := range session.Tools(context.Background(), nil) {
 		if err != nil {
@@ -430,15 +461,33 @@ func TestAlleLeseWerkzeugeSindEinsortiert(t *testing.T) {
 		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 			continue // ein schreibendes/mutierendes Werkzeug — außerhalb des Umfangs dieses Guardrails
 		}
-		if handWrittenReadTools[tool.Name] || knownOutOfScopeReadTools[tool.Name] {
+		if idOf, isGeneric := genericStatus[tool.Name]; isGeneric {
+			if !idOf {
+				t.Errorf("Lese-Werkzeug %q läuft über einen generischen Deskriptor "+
+					"(registerReadService/registerSync), dessen IDOf-Feld nil ist — das gehört im "+
+					"jeweiligen Deskriptor-Konstruktor gesetzt (siehe readServiceDescriptor.IDOf/"+
+					"syncDescriptor.IDOf, read_generic.go/read_sync.go), NICHT hier irgendwo "+
+					"eingetragen. Ein gemountetes Werkzeug mit nil IDOf stürzt beim ersten echten "+
+					"Aufruf den gesamten Serverprozess ab (read_generic.go:444, kein recover() im "+
+					"SDK-Dispatch-Pfad, Issue #70)", tool.Name)
+			}
 			continue
 		}
-		t.Errorf("Lese-Werkzeug %q steht weder in handWrittenReadTools noch in knownOutOfScopeReadTools — "+
-			"ein neues Lese-Werkzeug ist aufgetaucht. Entscheiden: läuft es über registerReadService/"+
-			"registerSync (bereits abgedeckt durch read_generic_test.go) — dann in knownOutOfScopeReadTools "+
-			"eintragen — oder ist es ein handgeschriebener Handler, der eine eigene rec.Record-Verdrahtung "+
-			"UND eine eigene Fixture/Zusicherung in dieser Datei braucht — dann in handWrittenReadTools "+
-			"eintragen und unten mitprüfen", tool.Name)
+		if handWrittenReadTools[tool.Name] {
+			continue
+		}
+		if knownNonEntityReadTools[tool.Name] {
+			continue
+		}
+		t.Errorf("Lese-Werkzeug %q ist in keiner der drei bekannten Quellen (tools.GenericReadToolStatus, "+
+			"handWrittenReadTools, knownNonEntityReadTools) — ein neues Lese-Werkzeug ist aufgetaucht. "+
+			"Entscheiden: läuft es über registerReadService/registerSync mit gesetztem IDOf — dann "+
+			"gehört es automatisch zu tools.GenericReadToolStatus(), nichts hier einzutragen, nur "+
+			"prüfen, dass IDOf im Deskriptor gesetzt ist — oder ist es ein handgeschriebener Handler, "+
+			"der eine eigene rec.Record-Verdrahtung UND eine eigene Fixture/Zusicherung in dieser Datei "+
+			"braucht — dann in handWrittenReadTools eintragen und unten mitprüfen — oder liefert es "+
+			"nachweislich keine fileee-eigene Entitäts-ID — dann in knownNonEntityReadTools eintragen",
+			tool.Name)
 	}
 }
 
