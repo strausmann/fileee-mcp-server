@@ -45,14 +45,14 @@ type Server struct {
 	// gebaute internal/issued.Store (siehe deren eigene Doc-Kommentare) —
 	// gehalten, aber noch NICHT an tools.RegisterAll durchgereicht: dessen
 	// Signatur erweitert erst eine Folgeaufgabe um einen *issued.Store-
-	// Parameter, den die Lese-/Schreib-Werkzeuge dann tatsaechlich
+	// Parameter, den die Lese-/Schreib-Werkzeuge dann tatsächlich
 	// befragen (Record beim Ausliefern, Check vor einer destruktiven
-	// Operation). Bis dahin ist issuedStore ausschliesslich ueber
+	// Operation). Bis dahin ist issuedStore ausschließlich über
 	// TestNewWiresConfiguredIssuedIDLimitsIntoTheStore (white-box,
 	// gleiches Paket) beobachtbar — dieser Test ist bewusst KEIN
-	// Ueberbleibsel, sondern der Beleg, dass die beiden Konfigurationswerte
-	// tatsaechlich (nicht nur geladen) im gebauten Store ankommen; siehe
-	// dessen eigenen Doc-Kommentar fuer den Bezug zum PR-#68-Fehlerbild.
+	// Überbleibsel, sondern der Beleg, dass die beiden Konfigurationswerte
+	// tatsächlich (nicht nur geladen) im gebauten Store ankommen; siehe
+	// dessen eigenen Doc-Kommentar für den Bezug zum PR-#68-Fehlerbild.
 	issuedStore *issued.Store
 }
 
@@ -211,59 +211,70 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	}
 	logger := diag.New(cfg.LogLevel, logOutput)
 
-	// slog.SetDefault(logger) makes the package-level default logger (what
-	// slog.InfoContext/DebugContext etc. — called with NO explicit logger —
-	// resolve to) the SAME level-gated, masked logger every other part of
-	// this process already uses. Without this, log/slog's own zero-value
-	// default (an unmasked slog.TextHandler writing to os.Stderr at
-	// LevelInfo, ignoring cfg.LogLevel entirely) is a silent second logging
-	// path that never passes through diag's redactingHandler.
+	// slog.SetDefault(logger) macht den paketweiten Standard-Logger (das,
+	// worauf slog.InfoContext/DebugContext etc. — OHNE explizit übergebenen
+	// Logger aufgerufen — zurückgreifen) zu demselben stufengegatterten,
+	// maskierten Logger, den jeder andere Teil dieses Prozesses bereits
+	// nutzt. Ohne diese Zeile bleibt log/slog's eigener Nullwert-Default
+	// (ein unmaskierter slog.TextHandler auf os.Stderr, fest auf LevelInfo,
+	// unabhängig von cfg.LogLevel) ein stiller zweiter Protokollierungsweg,
+	// der internal/diag's redactingHandler nie durchläuft.
 	//
-	// This exists for exactly one caller today: internal/issued.Store.Record
-	// logs its per-identity-cap eviction count via slog.DebugContext — the
-	// package-level default, not a logger New() takes as a parameter (see
-	// that package's own doc comment on WHY: Store.New's signature is
-	// Task 1/2's already-reviewed, 100%-covered contract, and changing it
-	// here — to thread a *slog.Logger through Record and grow every caller,
-	// test, and mock accordingly — is a bigger and riskier edit than the one
-	// line below, for a single debug-level line that never carries the ID
-	// itself (see Record's doc comment). Two rejected alternatives, for the
-	// record: (a) grow issued.New's signature to take a logger — rejected
-	// per the above; (c) leave the eviction line on the untouched default —
-	// rejected because that default is stderr/unmasked/always-Info, so
-	// FILEEE_LOG_LEVEL=debug would never actually surface this line, and
-	// FILEEE_LOG_LEVEL=info would still leak it to stderr unmasked — exactly
-	// the "loaded but not enforced" defect this task exists to close, just
-	// for a logger setting instead of a config value.
+	// Das existiert heute für genau EINEN Aufrufer: internal/issued.Store.Record
+	// protokolliert die Anzahl der wegen des Deckels je Identität
+	// verdrängten Einträge über slog.DebugContext — den paketweiten
+	// Default, nicht einen Logger, den New() als Parameter entgegennimmt
+	// (siehe den Doc-Kommentar dieses Pakets für das WARUM: Store.New's
+	// Signatur ist Aufgabe 1/2's bereits reviewter, 100%-gedeckter Vertrag,
+	// und sie jetzt zu ändern — um einen *slog.Logger durch Record zu
+	// fädeln und jeden Aufrufer, Test und jede Attrappe entsprechend
+	// mitwachsen zu lassen — ist ein größerer und riskanterer Eingriff als
+	// die eine Zeile unten, für eine einzelne Debug-Zeile, die nie die ID
+	// selbst trägt (siehe Records Doc-Kommentar). Zwei verworfene
+	// Alternativen, für das Protokoll: (a) issued.New's Signatur um einen
+	// Logger erweitern — verworfen aus dem genannten Grund; (c) die
+	// Verdrängungszeile am unveränderten Default belassen — verworfen,
+	// weil dieser Default stderr/unmaskiert/immer-Info ist: FILEEE_LOG_LEVEL=debug
+	// würde diese Zeile nie sichtbar machen, und FILEEE_LOG_LEVEL=info
+	// würde sie trotzdem ungefiltert nach stderr schreiben, unmaskiert —
+	// genau der Fehler "geladen, aber nicht durchgesetzt", den diese
+	// Aufgabe schließen soll, hier nur für eine Logger-Einstellung statt
+	// für einen Konfigurationswert.
 	//
-	// Side effects, checked (grep for slog.Info/Debug/Warn/Error/Default
-	// across the module before this change): internal/issued.Record is the
-	// ONLY call site anywhere in this codebase that touches the package-level
-	// default logger — nothing else in this process reads or writes it, so
-	// there is no other package whose behavior this call could silently
-	// change. cmd/fileee-mcp-server/main.go's own startup/shutdown lines use
-	// plain fmt.Fprintf, not log/slog, and stay untouched either way.
+	// Nebenwirkungen geprüft (grep nach slog.Info/Debug/Warn/Error/Default
+	// im gesamten Modul vor dieser Änderung): internal/issued.Record ist
+	// die EINZIGE Aufrufstelle in diesem gesamten Repo, die den paketweiten
+	// Default-Logger berührt — kein anderes Paket in diesem Prozess liest
+	// oder schreibt ihn, es gibt also kein anderes Paket, dessen Verhalten
+	// sich durch diesen Aufruf still ändern könnte. cmd/fileee-mcp-server/main.go's
+	// eigene Start-/Shutdown-Zeilen nutzen durchgehend fmt.Fprintf, nicht
+	// log/slog, und bleiben so oder so unberührt.
 	//
-	// Known limitation for tests, not production: SetDefault mutates
-	// process-global state. New() is called once in the real binary, so this
-	// is inert there. Several tests in this package call New() repeatedly
-	// (and some run t.Parallel()) without redirecting logOutput — each call
-	// re-points the global default at ITS OWN logger. slog.SetDefault itself
-	// is safe under the race detector (an atomic pointer swap), but a test
-	// that both (a) triggers an eviction AND (b) asserts on the resulting
-	// log line's content would be flaky if another parallel test's New()
-	// call raced the default out from under it in between. No existing test
-	// does both — server_diag_test.go asserts on its own `logger` variable
-	// directly (not the package default), and issued.Store's own eviction
-	// tests build a *Store directly with issued.New/SetClock and never go
-	// through server.New at all. If a future test needs to assert on this
-	// specific line's output, it must NOT run t.Parallel() with any other
-	// test that also calls New() without WithLogOutput.
+	// Bekannte Einschränkung für Tests, nicht für den Produktivbetrieb:
+	// SetDefault verändert prozessglobalen Zustand. New() wird in der
+	// echten Binary genau einmal aufgerufen, dort bleibt das folgenlos.
+	// Mehrere Tests in diesem Paket rufen New() wiederholt auf, ohne
+	// logOutput umzuleiten — jeder Aufruf zeigt den globalen Default neu auf
+	// SEINEN eigenen Logger. Kein Test in internal/server nutzt aktuell
+	// t.Parallel() (Stand dieser Änderung, per grep bestätigt) — die
+	// wiederholten Aufrufe laufen also sequenziell, nicht gleichzeitig.
+	// slog.SetDefault selbst ist unter dem Race-Detector sicher (ein
+	// atomarer Zeiger-Tausch), aber sollte ein künftiger Test parallel
+	// laufen UND gleichzeitig (a) eine Verdrängung auslösen UND (b) den
+	// Inhalt der resultierenden Logzeile prüfen, wäre er anfällig für
+	// ein Wettrennen mit einem parallel laufenden New()-Aufruf. Kein
+	// bestehender Test tut beides — server_diag_test.go prüft die eigene
+	// `logger`-Variable direkt (nicht den paketweiten Default), und
+	// issued.Store's eigene Verdrängungs-Tests bauen einen *Store direkt
+	// über issued.New/SetClock und laufen nie über server.New. Sollte ein
+	// künftiger Test genau das prüfen wollen, darf er kein t.Parallel()
+	// zusammen mit einem anderen Test verwenden, der ebenfalls New() ohne
+	// WithLogOutput aufruft.
 	slog.SetDefault(logger)
 
-	// issuedStore ist der aus den beiden Task-3-Einstellungen gebaute
+	// issuedStore ist der aus den beiden Aufgabe-3-Einstellungen gebaute
 	// internal/issued.Store — siehe Server.issuedStore's eigenen
-	// Doc-Kommentar dafuer, warum er hier zwar gebaut, aber noch nicht an
+	// Doc-Kommentar dafür, warum er hier zwar gebaut, aber noch nicht an
 	// tools.RegisterAll durchgereicht wird.
 	issuedStore := issued.New(
 		time.Duration(cfg.IssuedIDTTLSeconds)*time.Second,

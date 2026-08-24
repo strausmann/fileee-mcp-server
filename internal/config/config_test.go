@@ -682,7 +682,7 @@ func TestLoadConfigLogLevelDebug(t *testing.T) {
 
 // TestLoadConfigIssuedIDDefaults belegt die Vorgabewerte von
 // FILEEE_ISSUED_ID_TTL_SECONDS/FILEEE_ISSUED_ID_MAX_PER_IDENTITY — 30
-// Minuten bzw. 1000 IDs je Identitaet (Config.IssuedIDTTLSeconds/
+// Minuten bzw. 1000 IDs je Identität (Config.IssuedIDTTLSeconds/
 // IssuedIDMaxPerIdentity eigene Doc-Kommentare).
 func TestLoadConfigIssuedIDDefaults(t *testing.T) {
 	t.Parallel()
@@ -700,7 +700,7 @@ func TestLoadConfigIssuedIDDefaults(t *testing.T) {
 }
 
 // TestLoadConfigIssuedIDWerteAusDerUmgebung belegt, dass beide Werte aus der
-// Umgebung tatsaechlich ankommen — das Gegenstueck zum Default-Test oben.
+// Umgebung tatsächlich ankommen — das Gegenstück zum Default-Test oben.
 func TestLoadConfigIssuedIDWerteAusDerUmgebung(t *testing.T) {
 	t.Parallel()
 

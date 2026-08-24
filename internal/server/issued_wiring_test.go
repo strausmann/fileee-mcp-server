@@ -20,35 +20,35 @@ import (
 //
 // internal/issued's eigene
 // TestKonfigurierterDeckelGoverniertDenAusDerConfigGebautenStore (Schritt 5,
-// dort untergebracht — siehe dessen Doc-Kommentar fuer die Begruendung, warum
-// gerade DIESER Test PR #68s Fehlerbild fangen wuerde) belegt bereits, dass
+// dort untergebracht — siehe dessen Doc-Kommentar für die Begründung, warum
+// gerade DIESER Test PR #68s Fehlerbild fangen würde) belegt bereits, dass
 // die FORMEL "issued.New(time.Duration(cfg.IssuedIDTTLSeconds)*time.Second,
-// int(cfg.IssuedIDMaxPerIdentity))" korrekt ist. Was jener Test NICHT prueft:
-// ob server.go's New() diese Formel tatsaechlich woertlich verwendet, statt
+// int(cfg.IssuedIDMaxPerIdentity))" korrekt ist. Was jener Test NICHT prüft:
+// ob server.go's New() diese Formel tatsächlich wörtlich verwendet, statt
 // z. B. einen hartcodierten Wert oder eine vertauschte Reihenfolge der
 // beiden Felder.
 //
-// Dieser Test schliesst genau diese Luecke, indem er den ECHTEN, ueber New()
+// Dieser Test schließt genau diese Lücke, indem er den ECHTEN, über New()
 // gebauten *issued.Store liest (s.issuedStore, unexportiertes Feld,
 // erreichbar weil diese Datei im selben Paket liegt) und ihn mit einer
-// ECHT authentifizierten Identitaet befragt — dieselbe Sicherheitszusage,
-// die internal/issued/issued_test.go's ctxMitIdentitaet fuer den Store
-// isoliert bereits durchsetzt (siehe deren eigenen, ausfuehrlichen
-// Doc-Kommentar zu WARUM ein echter Gangway-Rundlauf noetig ist statt einer
+// ECHT authentifizierten Identität befragt — dieselbe Sicherheitszusage,
+// die internal/issued/issued_test.go's ctxMitIdentitaet für den Store
+// isoliert bereits durchsetzt (siehe deren eigenen, ausführlichen
+// Doc-Kommentar zu WARUM ein echter Gangway-Rundlauf nötig ist statt einer
 // selbstgebauten Attrappe).
 //
-// Der Gangway-Server, der die Identitaet fuer diesen Test ausstellt, ist
+// Der Gangway-Server, der die Identität für diesen Test ausstellt, ist
 // bewusst ein EIGENER, separat von s.gw aufgesetzter (analog
 // ctxMitIdentitaet) — nicht s.gw selbst: tools.RegisterAll (internal/tools)
-// kennt s.issuedStore in dieser Aufgabe noch nicht (das aendert erst eine
+// kennt s.issuedStore in dieser Aufgabe noch nicht (das ändert erst eine
 // Folgeaufgabe, siehe Server.issuedStore's Doc-Kommentar), es gibt also
-// keinen ueber s.Handler() erreichbaren Werkzeugaufruf, dessen ctx
-// s.issuedStore je sehen wuerde. serve.IdentityFrom liest die Identitaet
+// keinen über s.Handler() erreichbaren Werkzeugaufruf, dessen ctx
+// s.issuedStore je sehen würde. serve.IdentityFrom liest die Identität
 // aber rein aus dem context.Context-Wert, den IRGENDEINE Gangway-
 // Authentifizierung dort abgelegt hat — welcher *serve.Server-Instanz sie
-// entstammt, ist ihm gleichgueltig. Der separate Gangway-Server hier dient
-// deshalb ausschliesslich dazu, ein echtes, durch echte Middleware
-// gelaufenes ctx zu gewinnen; der Store, den dieses ctx anschliessend
+// entstammt, ist ihm gleichgültig. Der separate Gangway-Server hier dient
+// deshalb ausschließlich dazu, ein echtes, durch echte Middleware
+// gelaufenes ctx zu gewinnen; der Store, den dieses ctx anschließend
 // befragt, ist trotzdem der ECHTE aus New().
 func TestNewWiresConfiguredIssuedIDLimitsIntoTheStore(t *testing.T) {
 	// New() discovers MCP_OIDC_ISSUER for real at construction time
@@ -95,21 +95,21 @@ func TestNewWiresConfiguredIssuedIDLimitsIntoTheStore(t *testing.T) {
 	}
 
 	if err := s.issuedStore.Check(authCtx, "a"); !errors.Is(err, issued.ErrNotIssued) {
-		t.Fatalf("erste (aelteste) ID im ECHTEN, ueber New() gebauten Store bei konfiguriertem Deckel 2: "+
-			"%v, want ErrNotIssued — New() haelt sich nicht an den konfigurierten Deckel", err)
+		t.Fatalf("erste (älteste) ID im ECHTEN, über New() gebauten Store bei konfiguriertem Deckel 2: "+
+			"%v, want ErrNotIssued — New() hält sich nicht an den konfigurierten Deckel", err)
 	}
 	for _, id := range []string{"b", "c"} {
 		if err := s.issuedStore.Check(authCtx, id); err != nil {
-			t.Fatalf("ID %q nach Ueberlauf: %v, want nil", id, err)
+			t.Fatalf("ID %q nach Überlauf: %v, want nil", id, err)
 		}
 	}
 }
 
 // authenticatedCtx spiegelt internal/issued/issued_test.go's
-// ctxMitIdentitaet (siehe deren Doc-Kommentar fuer die vollstaendige
-// Begruendung) — hier lokal nachgebaut statt importiert: ein Test-Helfer
-// eines fremden Pakets ist ausserhalb dieses Pakets nicht sichtbar, und ein
-// eigenes Test-Hilfspaket waere fuer diese eine Funktion unverhaeltnismaessig.
+// ctxMitIdentitaet (siehe deren Doc-Kommentar für die vollständige
+// Begründung) — hier lokal nachgebaut statt importiert: ein Test-Helfer
+// eines fremden Pakets ist außerhalb dieses Pakets nicht sichtbar, und ein
+// eigenes Test-Hilfspaket wäre für diese eine Funktion unverhältnismäßig.
 // bearerRoundTripper und mustPrefix sind bereits Teil dieses Pakets
 // (server_test.go) und werden hier wiederverwendet statt erneut definiert.
 func authenticatedCtx(t *testing.T, subject string) context.Context {
