@@ -361,6 +361,24 @@ func (s *Store) Check(ctx context.Context, id string) error {
 // isExpired meldet, ob eine bei recorded aufgenommene ID inzwischen
 // verfallen ist. Nur von Check aufgerufen, selbst unter s.mu.
 //
+// Semantik am exakten Übergang (bewusst festgelegt, nicht zufällig):
+// eine ID bleibt gültig, solange ihr Alter HÖCHSTENS ttl beträgt — der
+// Vergleich unten ist ">", nicht ">=". Bei Alter == ttl auf die
+// Nanosekunde genau ist die ID also noch gültig; verfallen ist sie erst
+// eine Nanosekunde später. Begründung: ttl beschreibt, wie lange eine ID
+// gültig BLEIBT — der Moment, an dem genau ttl Zeit vergangen ist, ist
+// noch der letzte Moment innerhalb dieser Gültigkeitsdauer, nicht schon
+// der erste danach. Diese Wahl ist NICHT durch einen Test aus dem
+// Auftrag erzwungen — TestEineIDVerfaelltNachAblaufDerGueltigkeit prüft
+// nur 29 und 31 Minuten bei einer Ttl von 30 Minuten, beide klar auf
+// einer Seite des Übergangs, der Übergang selbst blieb dort ungeprüft
+// (vertauscht man unten "> " gegen ">=", bleiben alle bis dahin
+// existierenden Tests unverändert grün — Review-Befund). Erst
+// TestGrenzfallGenauBeiTtlIstNochGueltig nagelt diese Wahl fest: Alter ==
+// ttl (auf die Nanosekunde) → noch gültig, Alter == ttl + 1ns →
+// verfallen; per Gegenprobe bestätigt (">" gegen ">=" getauscht → dieser
+// Test färbt rot).
+//
 // Grenzfall s.ttl <= 0: siehe Store.ttls eigenen Doc-Kommentar — wird
 // bewusst als "sofort verfallen" durchgesetzt, unabhängig vom
 // tatsächlichen Zeitabstand. Ohne diesen expliziten Vorab-Guard würde ein

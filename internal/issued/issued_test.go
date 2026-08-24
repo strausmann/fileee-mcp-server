@@ -352,8 +352,8 @@ func TestMaxPerIdentityKleinerGleichNullMerktSichNichts(t *testing.T) {
 // TestTtlKleinerGleichNullIstSofortVerfallen belegt isExpired's
 // Vorab-Guard (Store.ttls eigener Doc-Kommentar): ein ttl <= 0 gilt als
 // sofort verfallen, auch wenn Record und Check im selben Moment laufen
-// (s.now().Sub(recorded) waere dann 0, "0 > 0" allein waere false — genau
-// die Luecke, die der Guard schliesst). Die von
+// (s.now().Sub(recorded) wäre dann 0, "0 > 0" allein wäre false — genau
+// die Lücke, die der Guard schließt). Die von
 // TestEineIDVerfaelltNachAblaufDerGueltigkeit geprüfte Ttl (30 Minuten)
 // erreicht isExpired's Vorab-Guard nie — dieser Test deckt ihn gezielt ab,
 // für 0 und einen negativen Wert, ohne die Uhr überhaupt vorzurücken.
@@ -365,11 +365,45 @@ func TestTtlKleinerGleichNullIstSofortVerfallen(t *testing.T) {
 			s.SetClock(u.Now)
 			ctx := ctxMitIdentitaet(t, "alice")
 
-			s.Record(ctx, "doc-1") // gleicher Zeitpunkt, Uhr wird nicht vorgerueckt
+			s.Record(ctx, "doc-1") // gleicher Zeitpunkt, Uhr wird nicht vorgerückt
 
 			if err := s.Check(ctx, "doc-1"); !errors.Is(err, ErrNotIssued) {
 				t.Fatalf("Check im selben Moment mit ttl=%s: %v, want ErrNotIssued", ttl, err)
 			}
 		})
+	}
+}
+
+// TestGrenzfallGenauBeiTtlIstNochGueltig nagelt die von isExpired
+// getroffene Wahl am exakten Übergang fest (siehe dessen eigenen
+// Doc-Kommentar für die Begründung): eine ID bleibt gültig, solange ihr
+// Alter höchstens ttl beträgt — Alter == ttl (auf die Nanosekunde genau)
+// ist noch gültig, Alter == ttl + 1ns ist verfallen.
+//
+// Ohne diesen Test bleibt der eigentliche Entscheidungspunkt ungeprüft:
+// TestEineIDVerfaelltNachAblaufDerGueltigkeit prüft nur 29 und 31 Minuten
+// bei einer Ttl von 30 Minuten — beide liegen klar auf einer Seite des
+// Übergangs. Vertauscht man in isExpired "s.now().Sub(recorded) > s.ttl"
+// gegen ">=", bleiben alle bis hierhin existierenden Tests unverändert
+// grün (Review-Befund) — erst dieser Test trifft den Übergang selbst.
+// Per Gegenprobe bestätigt (">" gegen ">=" im Quellcode getauscht,
+// dieser Test färbt dann rot, siehe Task-2-Report für den Lauf).
+func TestGrenzfallGenauBeiTtlIstNochGueltig(t *testing.T) {
+	u := &testUhr{jetzt: time.Unix(1000000, 0)}
+	ttl := 30 * time.Minute
+	s := New(ttl, 1000)
+	s.SetClock(u.Now)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	s.Record(ctx, "doc-1")
+
+	u.Vor(ttl) // Alter == ttl, exakt auf die Nanosekunde
+	if err := s.Check(ctx, "doc-1"); err != nil {
+		t.Fatalf("Check bei Alter == ttl: %v, want nil (noch gültig)", err)
+	}
+
+	u.Vor(time.Nanosecond) // Alter == ttl + 1ns
+	if err := s.Check(ctx, "doc-1"); !errors.Is(err, ErrNotIssued) {
+		t.Fatalf("Check bei Alter == ttl + 1ns: %v, want ErrNotIssued (verfallen)", err)
 	}
 }
