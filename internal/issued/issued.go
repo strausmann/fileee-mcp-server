@@ -1,33 +1,37 @@
-// Package issued records, per verified caller identity, which document,
-// contact and reminder IDs this server has actually handed out through a
-// read tool — and lets a destructive tool ask, before it acts, whether the
-// ID it was given is one of them.
+// Package issued merkt sich, je verifizierter Aufrufer-Identität, welche
+// Dokument-, Kontakt- und Reminder-IDs dieser Server tatsächlich über ein
+// Lese-Werkzeug ausgeliefert hat — und lässt ein destruktives Werkzeug,
+// bevor es handelt, fragen, ob die ihm übergebene ID eine davon ist.
 //
-// The reason this exists at all is ADR-0013 point 3: document content is
-// fremdbestimmte data (a document's sender writes its text, not the
-// person using this server), so an ID that merely appears inside a
-// document's text — say, in a prompt-injection attempt embedded in an
-// invoice — must never be an acceptable target for a mutating operation.
-// Binding destructive tools to IDs this server itself delivered through a
-// prior, genuine read step closes exactly that gap: an ID the model only
-// ever saw as text inside someone else's document was never Record'd, so
-// Check rejects it the same way it rejects any other unknown ID.
+// Der Grund, warum es das überhaupt braucht, ist ADR-0013 Punkt 3:
+// Dokumentinhalte sind fremdbestimmte Daten (den Text schreibt, wer das
+// Dokument verschickt hat, nicht wer diesen Server benutzt) — eine ID, die
+// nur im Text eines Dokuments auftaucht, etwa in einem in eine Rechnung
+// eingebetteten Prompt-Injection-Versuch, darf deshalb nie ein zulässiges
+// Ziel für eine mutierende Operation sein. Destruktive Werkzeuge an IDs zu
+// binden, die dieser Server selbst über einen vorangegangenen, echten
+// Lese-Schritt ausgeliefert hat, schließt genau diese Lücke: eine ID, die
+// das Modell nur als Text in einem fremden Dokument gesehen hat, wurde nie
+// per Record aufgenommen — Check lehnt sie deshalb genauso ab wie jede
+// andere unbekannte ID.
 //
-// Identity binding follows the same rule clientFor (internal/tools/read.go)
-// already established for account resolution (ADR-0012): the caller comes
-// exclusively from serve.IdentityFrom(ctx), Gangway's per-request,
-// stateless read of the verified token, never cached and never substituted
-// with a fixed identity. Under ADR-0015's forced statelessness a Gangway
-// session opens and closes per request, so a whitelist keyed by session
-// could never remember anything past the single call that populated it —
-// this package keys by the verified identity's Subject instead, exactly as
-// ADR-0013 point 3 specifies.
+// Die Identitätsbindung folgt derselben Regel, die clientFor
+// (internal/tools/read.go) bereits für die Konto-Auflösung etabliert hat
+// (ADR-0012): der Aufrufer kommt ausschließlich aus
+// serve.IdentityFrom(ctx), Gangways zustandslosem Pro-Anfrage-Blick auf
+// das verifizierte Token — nie gecacht, nie durch eine feste Identität
+// ersetzt. Unter ADR-0015s erzwungener Zustandslosigkeit öffnet und
+// schließt eine Gangway-Sitzung pro Anfrage neu, eine sitzungsgebundene
+// Merkliste könnte sich also nie über den einzelnen Aufruf hinaus etwas
+// merken — dieses Paket schlüsselt stattdessen über das Subject der
+// verifizierten Identität, genau wie ADR-0013 Punkt 3 es verlangt.
 //
-// This file carries recording and checking without any notion of expiry or
-// of a per-identity cap on how many IDs it remembers — New already accepts
-// both (ttl and maxPerIdentity), so a later change that starts enforcing
-// them needs no signature change here, but for now both fields sit unused,
-// each documented at its declaration.
+// Diese Datei trägt Aufnahme und Prüfung ohne jeden Begriff von Verfall
+// oder einer Obergrenze je Identität — New nimmt beides (ttl und
+// maxPerIdentity) bereits entgegen, damit eine spätere Änderung, die
+// beides tatsächlich auswertet, hier keine Signaturänderung mehr braucht;
+// beide Felder liegen vorerst ungenutzt, jeweils an ihrer eigenen
+// Deklaration dokumentiert.
 package issued
 
 import (
@@ -40,44 +44,48 @@ import (
 	"github.com/strausmann/gangway/serve"
 )
 
-// ErrNotIssued reports that an id does not currently count as issued to
-// the calling identity — either because this server never handed it out
-// to anyone, or because it was handed out to a different identity.
-// Callers check for it with errors.Is; Check's own error, which wraps
-// this, deliberately makes no distinction beyond "not issued" (see
-// Check's doc comment).
+// ErrNotIssued meldet, dass eine ID aktuell nicht als der aufrufenden
+// Identität ausgeliefert gilt — entweder weil dieser Server sie nie an
+// irgendjemanden ausgeliefert hat, oder weil sie an eine andere Identität
+// ausgeliefert wurde. Aufrufer prüfen mit errors.Is darauf; Checks eigener
+// Fehler, der diesen hier einwickelt, macht bewusst keinen Unterschied
+// über "nicht ausgeliefert" hinaus (siehe Checks eigenen Doc-Kommentar).
 var ErrNotIssued = errors.New("fileee-mcp: issued: id was not handed out to this identity")
 
-// Store remembers, per verified caller identity, which IDs this server has
-// handed out through a read tool.
+// Store merkt sich, je verifizierter Aufrufer-Identität, welche IDs dieser
+// Server über ein Lese-Werkzeug ausgeliefert hat.
 //
-// The zero value is not usable; build one with New.
+// Der Nullwert ist nicht benutzbar; einen Store baut man mit New.
 type Store struct {
-	// ttl bounds how long a recorded id stays valid. Not yet evaluated —
-	// Record never sets an expiry and Check never consults one; a
-	// recorded id is valid indefinitely (within process lifetime) as of
-	// this file. Enforcing ttl is a later change (see this package's own
-	// doc comment).
+	// ttl begrenzt, wie lange eine aufgenommene ID gültig bleibt. Noch
+	// nicht ausgewertet — Record setzt nie einen Verfall und Check fragt
+	// nie einen ab; eine aufgenommene ID gilt Stand dieser Datei
+	// unbegrenzt (innerhalb der Prozesslaufzeit). Ttl tatsächlich
+	// durchzusetzen ist eine spätere Änderung (siehe den Doc-Kommentar
+	// dieses Pakets).
 	ttl time.Duration
 
-	// maxPerIdentity bounds how many ids a single identity's bucket may
-	// hold at once. Not yet evaluated — Record never enforces a cap; a
-	// caller's bucket grows without bound as of this file. Enforcing this
-	// cap is a later change (see this package's own doc comment).
+	// maxPerIdentity begrenzt, wie viele IDs der Eimer einer einzelnen
+	// Identität gleichzeitig halten darf. Noch nicht ausgewertet — Record
+	// erzwingt keine Obergrenze; der Eimer eines Aufrufers wächst Stand
+	// dieser Datei unbegrenzt. Diese Obergrenze durchzusetzen ist eine
+	// spätere Änderung (siehe den Doc-Kommentar dieses Pakets).
 	maxPerIdentity int
 
 	mu sync.Mutex
-	// byIdent maps a verified identity's Subject to the set of ids
-	// recorded for it, each with the time.Time it was recorded at. The
-	// recorded time is not read by anything in this file (see ttl above)
-	// but is captured now so a later expiry check needs no change to
-	// Record's own logic, only to Check's.
+	// byIdent bildet das Subject einer verifizierten Identität auf die
+	// Menge der für sie aufgenommenen IDs ab, jede mit der time.Time
+	// ihrer Aufnahme. Die aufgenommene Zeit wird von nichts in dieser
+	// Datei gelesen (siehe ttl oben), wird aber schon jetzt festgehalten,
+	// damit eine spätere Verfallsprüfung keine Änderung an Records eigener
+	// Logik braucht, nur an der von Check.
 	byIdent map[string]map[string]time.Time
 }
 
-// New builds a Store. ttl and maxPerIdentity are accepted and stored but,
-// as of this file, not yet evaluated by Record or Check — see their own
-// doc comments and this package's doc comment.
+// New baut einen Store. ttl und maxPerIdentity werden entgegengenommen und
+// gespeichert, aber Stand dieser Datei von Record oder Check noch nicht
+// ausgewertet — siehe deren eigene Doc-Kommentare und den Doc-Kommentar
+// dieses Pakets.
 func New(ttl time.Duration, maxPerIdentity int) *Store {
 	return &Store{
 		ttl:            ttl,
@@ -86,14 +94,14 @@ func New(ttl time.Duration, maxPerIdentity int) *Store {
 	}
 }
 
-// subjectOf resolves the verified caller's Subject from ctx, the same way
-// clientFor (internal/tools/read.go) resolves the caller for account
-// lookup: exclusively via serve.IdentityFrom(ctx), never cached, never
-// substituted. Its false return is this package's single fail-closed
-// gate — reached whenever ctx carries no identity at all, a nil identity,
-// or an identity with an empty Subject — and both Record and Check treat
-// it identically: no identity means neither "remember this" nor "let this
-// through" is ever true.
+// subjectOf löst das Subject des verifizierten Aufrufers aus ctx auf,
+// genau wie clientFor (internal/tools/read.go) den Aufrufer für die
+// Konto-Auflösung auflöst: ausschließlich über serve.IdentityFrom(ctx),
+// nie gecacht, nie ersetzt. Der false-Rückgabewert ist dieses Pakets
+// einziges Fail-Closed-Tor — erreicht, sobald ctx gar keine Identität
+// trägt, eine nil-Identität, oder eine Identität mit leerem Subject — und
+// Record wie Check behandeln ihn identisch: keine Identität heißt, dass
+// weder "das merken" noch "das durchlassen" je zutrifft.
 func subjectOf(ctx context.Context) (string, bool) {
 	id, ok := serve.IdentityFrom(ctx)
 	if !ok || id == nil || id.Subject == "" {
@@ -102,15 +110,17 @@ func subjectOf(ctx context.Context) (string, bool) {
 	return id.Subject, true
 }
 
-// Record marks ids as handed out to ctx's verified caller, so a later
-// Check for the same identity and one of these ids succeeds.
+// Record markiert ids als an ctx' verifizierten Aufrufer ausgeliefert, so
+// dass ein späteres Check für dieselbe Identität und eine dieser ids
+// gelingt.
 //
-// Without a verified identity in ctx, Record does nothing at all — not
-// even into a shared, identity-less bucket (that would defeat the whole
-// point: an unauthenticated recording could never be told apart from one
-// made on a real caller's behalf). Empty ids are skipped; a duplicate id
-// (already recorded for this identity) simply has its recorded time
-// refreshed, which is never an error.
+// Ohne verifizierte Identität in ctx tut Record überhaupt nichts — nicht
+// einmal in einen gemeinsamen, identitätslosen Eimer (das würde den
+// ganzen Zweck unterlaufen: eine unauthentifizierte Aufnahme ließe sich
+// nie von einer im Auftrag eines echten Aufrufers unterscheiden). Leere
+// ids werden übersprungen; eine doppelte id (für diese Identität schon
+// aufgenommen) bekommt einfach ihre Aufnahmezeit aufgefrischt, was nie ein
+// Fehler ist.
 func (s *Store) Record(ctx context.Context, ids ...string) {
 	subject, ok := subjectOf(ctx)
 	if !ok {
@@ -134,19 +144,32 @@ func (s *Store) Record(ctx context.Context, ids ...string) {
 	}
 }
 
-// Check reports whether id counts as issued to ctx's verified caller —
-// nil if a prior Record call recorded id for exactly this identity, else
-// an error wrapping ErrNotIssued.
+// Check meldet, ob id als an ctx' verifizierten Aufrufer ausgeliefert
+// gilt — nil, wenn ein vorheriger Record-Aufruf id für genau diese
+// Identität aufgenommen hat, sonst ein Fehler, der ErrNotIssued
+// einwickelt.
 //
-// The error is deliberately uninformative beyond "not issued": it never
-// echoes id back, and it never distinguishes "this id was never recorded
-// for anyone" from "it was recorded, but for a different identity" or (once
-// a later change enforces ttl) "it was recorded but has since expired".
-// Any of those distinctions would let a caller probe for the existence of
-// ids that belong to someone else — the exact thing this whitelist exists
-// to prevent (ADR-0013 point 3; see this package's doc comment). Without a
-// verified identity in ctx, or for an empty id, Check fails the same way:
-// fail-closed, same error, same lack of detail.
+// Der Fehler ist über "nicht ausgeliefert" hinaus bewusst nichtssagend: er
+// gibt id nie zurück, und er unterscheidet nie "diese id wurde für
+// niemanden je aufgenommen" von "sie wurde aufgenommen, aber für eine
+// andere Identität" oder (sobald eine spätere Änderung ttl durchsetzt)
+// "sie wurde aufgenommen, ist inzwischen aber verfallen". Jede dieser
+// Unterscheidungen würde einem Aufrufer erlauben, nach der Existenz von
+// IDs zu forschen, die jemand anderem gehören — genau das, wovor diese
+// Whitelist schützen soll (ADR-0013 Punkt 3; siehe den Doc-Kommentar
+// dieses Pakets). Ohne verifizierte Identität in ctx, oder für eine leere
+// id, scheitert Check auf demselben Weg: fail-closed, derselbe Fehler,
+// dieselbe fehlende Detailtiefe.
+//
+// Der id == ""-Frühausstieg unten ist Tiefenverteidigung, keine alleinige
+// Absicherung: Record nimmt leere ids ohnehin nie auf (siehe Records
+// eigenen Doc-Kommentar), eine leere id landet also über die öffentliche
+// API sowieso nie im Bucket, und der Nachschlag weiter unten würde sie
+// auch ohne diesen Frühausstieg als "nicht aufgenommen" behandeln. Der
+// Frühausstieg greift trotzdem eigenständig, falls je ein anderer Weg
+// (heute keiner) eine leere id in byIdent ablegen würde — siehe
+// issued_test.go, TestCheckLehntLeereIDAbAuchWennSieImBucketStuende, wo
+// genau das isoliert geprüft wird.
 func (s *Store) Check(ctx context.Context, id string) error {
 	subject, ok := subjectOf(ctx)
 	if !ok || id == "" {
@@ -162,11 +185,11 @@ func (s *Store) Check(ctx context.Context, id string) error {
 	return errNotIssuedFor()
 }
 
-// errNotIssuedFor builds Check's outward-facing error: English, because it
-// reaches the calling model as a tool error (this package's doc comment;
-// CONTRIBUTING.md on user-facing text), wrapping ErrNotIssued so callers
-// can errors.Is against it, and naming the way forward instead of just the
-// refusal.
+// errNotIssuedFor baut Checks nach außen sichtbaren Fehler: englisch, weil
+// er als Werkzeug-Fehler beim aufrufenden Modell ankommt (Doc-Kommentar
+// dieses Pakets; CONTRIBUTING.md zu nutzersichtbarem Text), wickelt
+// ErrNotIssued ein, damit Aufrufer mit errors.Is dagegen prüfen können,
+// und nennt den Weg nach vorn statt nur die Ablehnung.
 func errNotIssuedFor() error {
 	return fmt.Errorf(
 		"this id was not handed out by a read tool in this session; fetch it first "+

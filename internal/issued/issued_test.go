@@ -15,45 +15,50 @@ import (
 	"github.com/strausmann/gangway/serve"
 )
 
-// --- identity-bearing contexts: the real mechanism, not a fabricated one -
+// --- identitaetstragende Kontexte: der echte Mechanismus, keine Attrappe -
 //
-// The task this file was built from named the helper below
-// serve.ContextWithIdentity. No such exported function exists in
-// github.com/strausmann/gangway v0.5.0 (verified against the module
-// source: serve/serve.go's full exported symbol list carries only
-// IdentityFrom and TokenFrom, never a setter; the context key type
-// (identityKey{}) is unexported). gangway's own test suite documents why
-// deliberately, on TestAuthenticateAllowsValidTokenAndPublishesIdentity's
-// doc comment (serve/serve_test.go): "there is no longer a way to attach a
-// bare http.HandlerFunc that reads the context directly" — the identity is
-// placed into ctx exclusively by the authentication middleware AttachMCP
-// installs in front of a real *mcp.Server, and is only ever observable
-// from a tool handler that middleware actually invoked.
+// Der Auftrag, aus dem diese Datei entstand, nannte den Helfer unten
+// serve.ContextWithIdentity. Eine solche exportierte Funktion existiert in
+// github.com/strausmann/gangway v0.5.0 nicht (geprueft gegen den
+// Modulquellcode: serve/serve.go's vollstaendige Liste exportierter Symbole
+// traegt nur IdentityFrom und TokenFrom, nie einen Setter; der
+// Kontext-Schluesseltyp (identityKey{}) ist unexportiert). Gangways eigene
+// Testsuite dokumentiert bewusst genau das, im Doc-Kommentar von
+// TestAuthenticateAllowsValidTokenAndPublishesIdentity
+// (serve/serve_test.go): "there is no longer a way to attach a bare
+// http.HandlerFunc that reads the context directly" — die Identitaet wird
+// ausschliesslich von der Authentifizierungs-Middleware gesetzt, die
+// AttachMCP vor einen echten *mcp.Server haengt, und ist nur aus einem von
+// dieser Middleware tatsaechlich aufgerufenen Tool-Handler heraus
+// beobachtbar.
 //
-// This repository's own internal/tools/read_generic_test.go documents the
-// same constraint from the consuming side and works around it by testing
-// below the ctx boundary (calling internal helpers with an
-// already-resolved value instead of a context). This package's public API
-// is ctx-first by design — Record and Check both take context.Context, so
-// Check can be wired straight into a tool handler's own ctx (Task 3
-// onward) — so that workaround is not available for testing the public
-// surface: something has to actually go through Gangway's real request
-// pipeline at least once to produce a ctx serve.IdentityFrom will
-// recognise.
+// Dieses Repository dokumentiert dieselbe Einschraenkung von der
+// konsumierenden Seite her bereits selbst, in
+// internal/tools/read_generic_test.go, und weicht dort aus, indem es
+// UNTERHALB der ctx-Grenze testet (interne Helfer bekommen einen bereits
+// aufgeloesten Wert statt eines Kontexts uebergeben). Die oeffentliche API
+// dieses Pakets ist bewusst ctx-first — Record und Check nehmen beide
+// context.Context entgegen, damit Check spaeter direkt in das eigene ctx
+// eines Tool-Handlers verdrahtet werden kann (ab Task 3) —, dieses
+// Ausweichen ist fuer einen Test der oeffentlichen Oberflaeche also nicht
+// verfuegbar: irgendetwas muss mindestens einmal tatsaechlich durch
+// Gangways echte Anfrage-Pipeline laufen, um ein ctx zu erzeugen, das
+// serve.IdentityFrom erkennt.
 //
-// ctxMitIdentitaet is that real, minimal round trip: a throw-away Gangway
-// server backed by a testidp-issued token, one *mcp.Server tool
-// ("capture") whose only job is to hand the ctx it was called with back to
-// this helper through a channel, and a real MCP client that calls it
-// exactly once. What comes back is a genuine ctx that went through
-// Gangway's own authentication and tool-authorization middleware — not a
-// hand-rolled stand-in.
+// ctxMitIdentitaet ist genau dieser echte, minimale Rundlauf: ein
+// Wegwerf-Gangway-Server mit einem von testidp ausgestellten Token, ein
+// einziges *mcp.Server-Werkzeug ("capture"), dessen einzige Aufgabe es
+// ist, das ctx, mit dem es aufgerufen wurde, ueber einen Channel an diesen
+// Helfer zurueckzureichen, und ein echter MCP-Client, der es genau einmal
+// aufruft. Was zurueckkommt, ist ein echtes ctx, das tatsaechlich durch
+// Gangways eigene Authentifizierungs- und Tool-Autorisierungs-Middleware
+// gelaufen ist — keine selbstgebaute Attrappe.
 //
-// Reading Values from the returned context after the request that
-// produced it has completed is safe: context cancellation only affects
-// Done()/Err(), never values attached before cancellation, and the
-// buffered channel below guarantees the send happens before CallTool
-// returns to this function.
+// Werte aus dem zurueckgegebenen Kontext zu lesen, nachdem die Anfrage, die
+// ihn erzeugt hat, abgeschlossen ist, ist sicher: ein Kontext-Abbruch
+// betrifft nur Done()/Err(), nie bereits vor dem Abbruch angehaengte
+// Values — und der gepufferte Channel unten garantiert, dass das Senden
+// abgeschlossen ist, bevor CallTool an diese Funktion zurueckkehrt.
 func ctxMitIdentitaet(t *testing.T, subject string) context.Context {
 	t.Helper()
 
@@ -111,23 +116,26 @@ func ctxMitIdentitaet(t *testing.T, subject string) context.Context {
 	return <-captured
 }
 
-// issuedTestAudience is the OIDC audience used throughout this file, both
-// when building the Gangway server (serve.Config.Audience) and when
-// minting a token (idp.Token's "aud" claim) — they must agree, or
-// ctxMitIdentitaet would fail authentication for a reason that has
-// nothing to do with what any individual test actually checks (mirrors
+// issuedTestAudience ist die in dieser Datei durchgehend verwendete
+// OIDC-Audience, sowohl beim Bau des Gangway-Servers (serve.Config.Audience)
+// als auch beim Ausstellen eines Tokens (idp.Token's "aud"-Claim) — beide
+// muessen uebereinstimmen, sonst wuerde ctxMitIdentitaet aus einem Grund an
+// der Authentifizierung scheitern, der mit dem, was ein einzelner Test
+// tatsaechlich prueft, nichts zu tun hat (spiegelt
 // internal/tools/read_test.go's testAudience).
 const issuedTestAudience = "fileee-mcp-issued-test"
 
-// captureArgs is the "capture" tool's (empty) argument type — it takes no
-// input, it only exists to observe the ctx Gangway's middleware attached
-// to the call that reached it.
+// captureArgs ist der (leere) Argumenttyp des "capture"-Werkzeugs — es
+// nimmt keine Eingabe entgegen, es existiert einzig, um das ctx zu
+// beobachten, das Gangways Middleware dem Aufruf mitgegeben hat, der es
+// erreicht hat.
 type captureArgs struct{}
 
-// bearerRoundTripper injects a fixed bearer token into every outgoing
-// request — the same pattern internal/tools/read_test.go and
-// gangway/serve/serve_test.go both use to drive a real MCP client through
-// the streamable HTTP transport as an authenticated caller.
+// bearerRoundTripper injiziert ein festes Bearer-Token in jede ausgehende
+// Anfrage — dasselbe Muster, das internal/tools/read_test.go und
+// gangway/serve/serve_test.go beide nutzen, um einen echten MCP-Client
+// als authentifizierten Aufrufer durch den Streamable-HTTP-Transport zu
+// treiben.
 type bearerRoundTripper struct{ token string }
 
 func (rt bearerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -136,9 +144,10 @@ func (rt bearerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) 
 	return http.DefaultTransport.RoundTrip(r)
 }
 
-// mustPrefixes parses a fixed CIDR list for cases where a parse failure
-// would be a bug in this test file itself, not in the code under test
-// (mirrors internal/tools/read_test.go's own mustPrefixes).
+// mustPrefixes parst eine feste CIDR-Liste, fuer Faelle, in denen ein
+// Parse-Fehler ein Bug in dieser Testdatei selbst waere, nicht im
+// geprueften Code (spiegelt internal/tools/read_test.go's eigenes
+// mustPrefixes).
 func mustPrefixes(t *testing.T, cidrs ...string) []netip.Prefix {
 	t.Helper()
 	out := make([]netip.Prefix, 0, len(cidrs))
@@ -152,7 +161,7 @@ func mustPrefixes(t *testing.T, cidrs ...string) []netip.Prefix {
 	return out
 }
 
-// --- the actual Store tests ------------------------------------------------
+// --- die eigentlichen Store-Tests ------------------------------------------
 
 func TestRecordUndCheckLassenEineAusgelieferteIDDurch(t *testing.T) {
 	s := New(30*time.Minute, 1000)
@@ -215,5 +224,40 @@ func TestLeereUndIdentischeIDsWerdenSauberBehandelt(t *testing.T) {
 	}
 	if err := s.Check(ctx, "doc-1"); err != nil {
 		t.Fatalf("Check nach doppeltem Record: %v, want nil", err)
+	}
+}
+
+// TestCheckLehntLeereIDAbAuchWennSieImBucketStuende isoliert Checks eigenen
+// id == ""-Fruehausstieg von Records Nebenwirkung. Das allein wuerde den
+// Fruehausstieg nie beweisen: TestLeereUndIdentischeIDsWerdenSauberBehandelt
+// oben prueft nur, dass Check("") einen Fehler liefert — aber Record
+// ueberspringt leere ids schon beim Aufnehmen (siehe Records eigenen
+// Doc-Kommentar), "" landet ueber die oeffentliche API also nie im Bucket,
+// und der Nachschlag in Check haette "" auch ganz ohne den Fruehausstieg
+// als "nicht aufgenommen" behandelt. Entfernt man den Fruehausstieg, bleibt
+// TestLeereUndIdentischeIDsWerdenSauberBehandelt deshalb gruen — er testet
+// eine Nebenwirkung von Record, nicht den Guard in Check (per Gegenprobe
+// im Review bestaetigt).
+//
+// Dieser Test belegt den Fruehausstieg direkt, unabhaengig von Records
+// Verhalten: der Bucket wird — als Weisser-Kasten-Test im selben Paket,
+// ueber die sonst unexportierten Felder s.byIdent/s.mu — kuenstlich mit
+// einem ""-Schluessel vorbelegt. Ohne den Fruehausstieg wuerde Check das
+// als Treffer werten und faelschlich nil zurueckgeben; mit ihm bleibt es
+// bei ErrNotIssued, unabhaengig davon, was im Bucket steht.
+func TestCheckLehntLeereIDAbAuchWennSieImBucketStuende(t *testing.T) {
+	s := New(30*time.Minute, 1000)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	subject, ok := subjectOf(ctx)
+	if !ok {
+		t.Fatal("subjectOf(ctx): ok = false, ctxMitIdentitaet sollte eine echte Identitaet liefern")
+	}
+	s.mu.Lock()
+	s.byIdent[subject] = map[string]time.Time{"": time.Now()}
+	s.mu.Unlock()
+
+	if err := s.Check(ctx, ""); !errors.Is(err, ErrNotIssued) {
+		t.Fatalf("Check(\"\") trotz kuenstlich vorbelegtem Bucket: %v, want ErrNotIssued", err)
 	}
 }
