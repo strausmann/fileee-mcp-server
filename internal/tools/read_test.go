@@ -23,8 +23,26 @@ import (
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 	"github.com/strausmann/fileee-mcp-server/internal/diag"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 	"github.com/strausmann/fileee-mcp-server/internal/tools"
 )
+
+// testRec builds a fresh *issued.Store for tests in this file and in
+// read_diag_test.go that pass one into tools.RegisterAll but do not
+// themselves assert on what it records (Aufgabe 5): every real round
+// trip through a mounted server now runs list_documents'/
+// search_documents' own rec.Record call unconditionally once a handler
+// actually executes (unlike registeredReadTools()'s ListTools-only
+// probe in names.go, which never runs a handler at all) — a nil
+// *issued.Store would panic the instant one of these tests' real,
+// gangway-verified callers reaches that call. ttl/cap are generous
+// (never expire or evict within a single test) since none of these
+// tests are about internal/issued's own limits — issued_test.go/
+// issued_coverage_test.go own that.
+func testRec(t *testing.T) *issued.Store {
+	t.Helper()
+	return issued.New(time.Hour, 1000)
+}
 
 // testLogger builds a diagnostic logger for the tests in this file that
 // pass one into tools.RegisterAll but do not themselves assert on what
@@ -353,7 +371,7 @@ func TestListDocumentsIsolatesCallersByAccount(t *testing.T) {
 		"bob-subject":   {Username: "bob@example.invalid", Password: "pw-b"},
 	}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -392,7 +410,7 @@ func TestSearchDocumentsIsolatesCallersByAccount(t *testing.T) {
 		"bob-subject":   {Username: "bob@example.invalid", Password: "pw-b"},
 	}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -442,7 +460,7 @@ func TestListDocumentsFramesForeignTitlesWithAnUnforgeableBoundary(t *testing.T)
 	srv := newIsolationServer(t, fixtureAccount{username: "alice@example.invalid", password: "pw", queryBody: docBody})
 	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -502,7 +520,7 @@ func TestListDocumentsUsesAFreshBoundaryEachCall(t *testing.T) {
 	srv := newIsolationServer(t, fixtureAccount{username: "alice@example.invalid", password: "pw", queryBody: docBody})
 	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -524,7 +542,7 @@ func TestListDocumentsUsesAFreshBoundaryEachCall(t *testing.T) {
 func TestReadToolsAreAnnotatedAsReadOnly(t *testing.T) {
 	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -573,7 +591,7 @@ func TestUnknownCallerGetsAToolErrorNotAServerError(t *testing.T) {
 		"alice-subject": {Username: "alice@example.invalid", Password: "pw"},
 	}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -599,7 +617,7 @@ func TestSearchDocumentsRejectsAnEmptyTerm(t *testing.T) {
 	// handler ever resolves an account or calls out to Fileee.
 	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "a", Password: "b"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -629,7 +647,7 @@ func TestListDocumentsSurfacesABackendErrorAsAToolError(t *testing.T) {
 	srv := newErrorServer(t, http.StatusInternalServerError, `{"errorCode":"INTERNAL"}`)
 	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -648,7 +666,7 @@ func TestSearchDocumentsSurfacesABackendErrorAsAToolError(t *testing.T) {
 	srv := newErrorServer(t, http.StatusInternalServerError, `{"errorCode":"INTERNAL"}`)
 	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -682,7 +700,7 @@ func TestListDocumentsSurfacesANetworkErrorAsAToolError(t *testing.T) {
 	// refused immediately instead of waiting out a timeout.
 	pool := testPool(t, "http://127.0.0.1:1", accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
@@ -718,7 +736,7 @@ func TestListDocumentsSurfacesALoginRejectionAsAToolError(t *testing.T) {
 	srv := newRejectedLoginServer(t)
 	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "wrong-password"}))
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
 
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)

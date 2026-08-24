@@ -37,7 +37,7 @@ func TestBoxDetailFeldlisteIstAbgeschlossen(t *testing.T) {
 func TestRegisterBoxToolsMeldetBeideAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerBoxTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerBoxTools(s, (*clientpool.Pool)(nil), discardLogger(), nil)
 
 	names := toolNamesOf(t, s)
 	for _, name := range []string{ToolListBoxes, ToolGetBox} {
@@ -78,7 +78,7 @@ func TestBoxesFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeBoxService{listErr: backendErr}
 
-	_, _, err := boxesFromService(context.Background(), service)
+	_, _, err := boxesFromService(context.Background(), service, nil)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -96,7 +96,7 @@ func TestBoxesFromServiceLiefertAlleBoxenOhneSeitenaufteilung(t *testing.T) {
 		{ID: "b2", BoxNr: 2, BoxName: "Versicherungen"},
 	}}
 
-	_, out, err := boxesFromService(context.Background(), service)
+	_, out, err := boxesFromService(context.Background(), service, nil)
 	if err != nil {
 		t.Fatalf("boxesFromService: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestBoxesFromServiceLiefertAlleBoxenOhneSeitenaufteilung(t *testing.T) {
 }
 
 func TestGetBoxHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testing.T) {
-	handler := getBoxHandler(nil, discardLogger())
+	handler := getBoxHandler(nil, discardLogger(), nil)
 
 	_, _, err := handler(context.Background(), nil, getBoxInput{ID: "  "})
 	if err == nil {
@@ -127,7 +127,7 @@ func TestBoxFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *te
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeBoxService{getErr: backendErr}
 
-	_, _, err := boxFromService(context.Background(), service, "b1")
+	_, _, err := boxFromService(context.Background(), service, "b1", nil)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -145,7 +145,7 @@ func TestBoxFromServiceListetDieEnthaltenenDokumentkennungenAuf(t *testing.T) {
 		Documents: []fileee.BoxDocument{{DocumentID: "d1"}, {DocumentID: "d2"}},
 	}}
 
-	_, out, err := boxFromService(context.Background(), service, "b1")
+	_, out, err := boxFromService(context.Background(), service, "b1", nil)
 	if err != nil {
 		t.Fatalf("boxFromService: %v", err)
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // boxReadService is what list_boxes/get_box need from *fileee.Client's
@@ -121,7 +122,7 @@ type listBoxesOutput struct {
 }
 
 // listBoxesHandler resolves list_boxes.
-func listBoxesHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[listBoxesInput, listBoxesOutput] {
+func listBoxesHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[listBoxesInput, listBoxesOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ listBoxesInput) (*mcp.CallToolResult, listBoxesOutput, error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolListBoxes)
@@ -131,7 +132,7 @@ func listBoxesHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFo
 			logToolEnd(ctx, logger, ToolListBoxes, start, "", 0, err)
 			return nil, listBoxesOutput{}, err
 		}
-		result, out, err := boxesFromService(ctx, client.Boxes)
+		result, out, err := boxesFromService(ctx, client.Boxes, rec)
 		logToolEnd(ctx, logger, ToolListBoxes, start, listBoxesEndpoint, len(out.Boxes), err)
 		return result, out, err
 	}
@@ -140,15 +141,24 @@ func listBoxesHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFo
 // boxesFromService is listBoxesHandler's logic below client resolution —
 // split out so a test can drive it against a boxReadService fake
 // (fakeBoxService, read_boxes_test.go) instead of a live *fileee.Client.
-func boxesFromService(ctx context.Context, service boxReadService) (*mcp.CallToolResult, listBoxesOutput, error) {
+//
+// rec (Aufgabe 5) records every returned box's id, once the full result
+// is built — this call cannot fail after service.List succeeds (there is
+// no further fallible step, unlike get_document/list_document_conversations
+// in read.go), so recording right before the return is already the
+// success-only point that rule requires.
+func boxesFromService(ctx context.Context, service boxReadService, rec *issued.Store) (*mcp.CallToolResult, listBoxesOutput, error) {
 	boxes, err := service.List(ctx)
 	if err != nil {
 		return nil, listBoxesOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolListBoxes, err)
 	}
 	out := listBoxesOutput{Boxes: make([]boxSummary, 0, len(boxes))}
+	ids := make([]string, 0, len(boxes))
 	for i := range boxes {
 		out.Boxes = append(out.Boxes, boxSummaryOf(&boxes[i]))
+		ids = append(ids, boxes[i].ID)
 	}
+	rec.Record(ctx, ids...)
 	return &mcp.CallToolResult{}, out, nil
 }
 
@@ -162,7 +172,7 @@ type getBoxInput struct {
 // getBoxHandler resolves get_box. The empty-ID check runs before
 // clientFor, the same order every other detail handler in this package
 // uses for its own required parameter.
-func getBoxHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[getBoxInput, boxDetail] {
+func getBoxHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[getBoxInput, boxDetail] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in getBoxInput) (*mcp.CallToolResult, boxDetail, error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolGetBox, slog.String("id", in.ID))
@@ -178,7 +188,7 @@ func getBoxHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[g
 			logToolEnd(ctx, logger, ToolGetBox, start, "", 0, err)
 			return nil, boxDetail{}, err
 		}
-		result, out, err := boxFromService(ctx, client.Boxes, in.ID)
+		result, out, err := boxFromService(ctx, client.Boxes, in.ID, rec)
 		logToolEnd(ctx, logger, ToolGetBox, start, getBoxEndpoint, 1, err)
 		return result, out, err
 	}
@@ -186,17 +196,28 @@ func getBoxHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[g
 
 // boxFromService is getBoxHandler's logic below client resolution — split
 // out for the same testability reason boxesFromService is.
-func boxFromService(ctx context.Context, service boxReadService, id string) (*mcp.CallToolResult, boxDetail, error) {
+//
+// rec (Aufgabe 5) records BOTH ids this call hands out — the box's own id
+// and boxDetail.DocumentIDs, the ids of the documents currently filed in
+// it (boxDetail's own doc comment: "a caller wanting a document's own
+// detail calls get_document with the returned ID" — box_add_document/
+// box_remove_document, write_boxes.go, are the ids these documents are
+// later removed/added by). service.Get cannot fail after this point, so
+// recording right before the return is already the success-only point.
+func boxFromService(ctx context.Context, service boxReadService, id string, rec *issued.Store) (*mcp.CallToolResult, boxDetail, error) {
 	box, err := service.Get(ctx, id)
 	if err != nil {
 		return nil, boxDetail{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetBox, err)
 	}
-	return &mcp.CallToolResult{}, boxDetailOf(box), nil
+	detail := boxDetailOf(box)
+	rec.Record(ctx, append([]string{detail.ID}, detail.DocumentIDs...)...)
+	return &mcp.CallToolResult{}, detail, nil
 }
 
 // registerBoxTools mounts list_boxes/get_box onto s — called once from
-// RegisterAll (read.go).
-func registerBoxTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+// RegisterAll (read.go). rec (Aufgabe 5) is threaded through to both
+// handlers — see boxesFromService's/boxFromService's own doc comments.
+func registerBoxTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListBoxes,
 		Description: "List the boxes in the calling user's Fileee account — physical fileeeBox " +
@@ -207,7 +228,7 @@ func registerBoxTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"detail with get_box. It does not return the contained documents' own titles or " +
 			"metadata — use list_documents/get_document for that.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "List boxes"},
-	}, listBoxesHandler(p, logger))
+	}, listBoxesHandler(p, logger, rec))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetBox,
@@ -217,5 +238,5 @@ func registerBoxTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
 			"own titles or metadata — use get_document with each returned ID for that — and it " +
 			"does not search by box name.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get box"},
-	}, getBoxHandler(p, logger))
+	}, getBoxHandler(p, logger, rec))
 }

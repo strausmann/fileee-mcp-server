@@ -20,6 +20,22 @@
 // and never appears in StructuredContent; only token count and
 // bounding-box coordinates do (ocrTokenPosition, deliberately excluding
 // Text).
+//
+// Aufgabe 5 (internal/issued, ADR-0013 Punkt 3) decided all three tools
+// in this file need NO *issued.Store — none of them hands out a
+// Fileee-owned id a later tool could act on:
+//
+//   - getDocumentPDFOutput/getPageImageOutput carry only SizeBytes — no
+//     id field of any kind.
+//   - ocrTokenPosition.WebappID (json "webappId") is the one field in
+//     this file that LOOKS like an id — it is Fileee's own generated id
+//     for that OCR token (see ocrTokenPosition's own doc comment) — but
+//     no tool in this server accepts an OCR-token id as a parameter at
+//     all, so recording it could never be checked against by anything.
+//     Recording it anyway would only consume a slot in the caller's
+//     internal/issued per-identity cap for no protective effect — the
+//     deliberate "nein" among this task's decisions, see
+//     issued_coverage_test.go's own doc comment for the full set.
 package tools
 
 import (

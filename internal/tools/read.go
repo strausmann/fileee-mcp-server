@@ -75,12 +75,21 @@ const (
 // It is threaded through to registerSyncTools/registerReferenceTools/
 // registerPeopleTools, whose own generic handlers call rec.Record after
 // successfully delivering a row (ADR-0013 Punkt 3) — the ids a later
-// destructive tool's rec.Check call then verifies against. The
-// hand-written tools above (list_documents, search_documents) and
-// registerBoxTools/registerBinaryTools/registerAccountTools/
-// registerOpsTools/registerWriteTools do NOT take rec here — closing that
-// gap for the remaining hand-written handlers is Aufgabe 5's own work
-// (see readServiceDescriptor.IDOf's doc comment, read_generic.go).
+// destructive tool's rec.Check call then verifies against. Aufgabe 5
+// closed the remaining gap: the five hand-written document tools above
+// (list_documents, search_documents, get_document, sync_documents,
+// list_document_conversations) and registerBoxTools now take rec too and
+// record the same way — see documentFromService's/boxFromService's own
+// doc comments. registerBinaryTools deliberately does NOT take rec: none
+// of its three tools (get_document_pdf, get_page_image, get_page_ocr)
+// hands out a Fileee-owned id a later tool could act on — see
+// read_binary.go's own doc comment for that decision, including why
+// get_page_ocr's per-token WebappID is the one field that looks like an
+// id but is not recorded. registerAccountTools/registerOpsTools/
+// registerWriteTools do not take rec either: none of their tools hand
+// out an entity id at all (get_account_status' AccountTypeID is a
+// subscription-plan code, not a reference to something another tool
+// could act on).
 func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger, rec *issued.Store) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocuments,
@@ -90,7 +99,7 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 			"was written by whoever sent or scanned the document, not by the person you are " +
 			"assisting.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "List documents"},
-	}, listDocumentsHandler(p, logger))
+	}, listDocumentsHandler(p, logger, rec))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolSearchDocuments,
@@ -98,7 +107,7 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 			"number of matches and the matching document IDs, most relevant first; pass an ID to " +
 			"another tool (e.g. list_documents) for its details.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Search documents"},
-	}, searchDocumentsHandler(p, logger))
+	}, searchDocumentsHandler(p, logger, rec))
 
 	registerSyncTools(s, p, logger, rec)
 	registerReferenceTools(s, p, logger, rec)
@@ -111,7 +120,7 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 			"after list_documents or search_documents handed you an ID. It does not return the " +
 			"document's file — use get_document_pdf — and it does not search by title.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get document"},
-	}, getDocumentHandler(p, logger))
+	}, getDocumentHandler(p, logger, rec))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolSyncDocuments,
@@ -125,7 +134,7 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 			"documents — omit the cursor to fetch the full current list instead; it does not " +
 			"accept a cursor from a different sync tool and does not search by title.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Sync documents"},
-	}, syncDocumentsHandler(p, logger))
+	}, syncDocumentsHandler(p, logger, rec))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocumentConversations,
@@ -138,9 +147,9 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 			"handed you a document ID. It does not return participant names or message content, " +
 			"and it does not search by document title.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "List document conversations"},
-	}, listDocumentConversationsHandler(p, logger))
+	}, listDocumentConversationsHandler(p, logger, rec))
 
-	registerBoxTools(s, p, logger)
+	registerBoxTools(s, p, logger, rec)
 	registerBinaryTools(s, p, logger)
 	registerAccountTools(s, p, logger)
 	registerOpsTools(s, p, info, logger)
@@ -390,7 +399,13 @@ type listDocumentsOutput struct {
 // there would reach the model unwrapped and unmarked, defeating the
 // framing applied below. It appears only inside the returned text
 // content, inside the boundary wrapUntrusted builds.
-func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[listDocumentsInput, listDocumentsOutput] {
+//
+// rec (Aufgabe 5) records every returned document's ID (internal/issued)
+// once the result is fully built and about to succeed — never on an
+// error path, the same rule genericListHandler's own doc comment
+// establishes (read_generic.go): a document ID that never actually
+// reached the caller can never mark itself as issued.
+func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[listDocumentsInput, listDocumentsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in listDocumentsInput) (*mcp.CallToolResult, listDocumentsOutput, error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolListDocuments, slog.Int("start", in.Start), slog.Int("limit", in.Limit))
@@ -413,6 +428,7 @@ func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 
 		out := listDocumentsOutput{TotalRows: res.TotalRows, Documents: make([]documentSummary, 0, len(res.Rows))}
 		lines := make([]string, 0, len(res.Rows))
+		ids := make([]string, 0, len(res.Rows))
 		for _, doc := range res.Rows {
 			out.Documents = append(out.Documents, documentSummary{
 				ID:       doc.ID,
@@ -422,6 +438,7 @@ func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 				Modified: formatTime(doc.Modified),
 			})
 			lines = append(lines, documentLine(doc.ID, doc.Attributes.Title))
+			ids = append(ids, doc.ID)
 		}
 
 		text, err := renderDocumentList(len(out.Documents), out.TotalRows, lines)
@@ -430,6 +447,7 @@ func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 			logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, 0, wrapped)
 			return nil, listDocumentsOutput{}, wrapped
 		}
+		rec.Record(ctx, ids...)
 		logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, len(out.Documents), nil)
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
 	}
@@ -463,7 +481,12 @@ type searchDocumentsOutput struct {
 // have written. There is therefore, deliberately, no untrusted-content
 // framing to apply here; a caller wanting a match's title calls
 // list_documents (or a future document-detail tool) with the returned ID.
-func searchDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[searchDocumentsInput, searchDocumentsOutput] {
+//
+// rec (Aufgabe 5) records every returned document ID — the same rule
+// listDocumentsHandler's own doc comment states, applied after out is
+// built: neither fmt.Sprintf nor strings.Join below can fail, so this is
+// already the point past which the call can only succeed.
+func searchDocumentsHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[searchDocumentsInput, searchDocumentsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in searchDocumentsInput) (*mcp.CallToolResult, searchDocumentsOutput, error) {
 		start := time.Now()
 		// The search term itself is debug-only (see internal/diag's own
@@ -498,6 +521,7 @@ func searchDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHan
 		if len(out.IDs) > 0 {
 			text += " IDs: " + strings.Join(out.IDs, ", ")
 		}
+		rec.Record(ctx, out.IDs...)
 		logToolEnd(ctx, logger, ToolSearchDocuments, start, searchDocumentsEndpoint, len(out.IDs), nil)
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
 	}
@@ -747,7 +771,7 @@ func documentDetail(doc *fileee.Document) getDocumentOutput {
 // its own required parameter (read_generic.go) — rejected without
 // spending a login round trip, and testable without a *clientpool.Pool
 // at all (TestGetDocumentHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb).
-func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[getDocumentInput, getDocumentOutput] {
+func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[getDocumentInput, getDocumentOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in getDocumentInput) (*mcp.CallToolResult, getDocumentOutput, error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolGetDocument, slog.String("id", in.ID))
@@ -763,7 +787,7 @@ func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandler
 			logToolEnd(ctx, logger, ToolGetDocument, start, "", 0, err)
 			return nil, getDocumentOutput{}, err
 		}
-		result, out, err := documentFromService(ctx, client.Documents, in.ID)
+		result, out, err := documentFromService(ctx, client.Documents, in.ID, rec)
 		logToolEnd(ctx, logger, ToolGetDocument, start, getDocumentEndpoint, 1, err)
 		return result, out, err
 	}
@@ -773,7 +797,17 @@ func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandler
 // resolution — split out so a test can drive it against a
 // documentReadService fake instead of a live *fileee.Client (see
 // fakeDocumentService, read_document_test.go).
-func documentFromService(ctx context.Context, service documentReadService, id string) (*mcp.CallToolResult, getDocumentOutput, error) {
+//
+// rec (Aufgabe 5) records BOTH ids this call hands out — the document's
+// own ID and its TagIDs (getDocumentOutput's own doc comment: structural
+// foreign-key ids into list_tags/get_tag, not free text) — once
+// wrapUntrustedLines has already succeeded, the same "only after the
+// response is fully built, never on an error path" rule
+// genericGetHandler's own doc comment states (read_generic.go). TagIDs a
+// caller only ever saw through THIS tool would otherwise never be
+// recorded, since get_document does not also call into the generic
+// list_tags/get_tag path.
+func documentFromService(ctx context.Context, service documentReadService, id string, rec *issued.Store) (*mcp.CallToolResult, getDocumentOutput, error) {
 	doc, err := service.Get(ctx, id)
 	if err != nil {
 		return nil, getDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetDocument, err)
@@ -784,6 +818,7 @@ func documentFromService(ctx context.Context, service documentReadService, id st
 	if err != nil {
 		return nil, getDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetDocument, err)
 	}
+	rec.Record(ctx, append([]string{out.ID}, out.TagIDs...)...)
 	return result, out, nil
 }
 
@@ -795,7 +830,7 @@ func documentFromService(ctx context.Context, service documentReadService, id st
 // any network access rather than silently running Diff with the wrong
 // "known" IDs (see checkCursorEntityType's own doc comment for what goes
 // wrong without this check).
-func syncDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[documentSummary]] {
+func syncDocumentsHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[documentSummary]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericSyncInput) (*mcp.CallToolResult, genericSyncOutput[documentSummary], error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolSyncDocuments, slog.String("cursor", in.Cursor))
@@ -812,7 +847,7 @@ func syncDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 			logToolEnd(ctx, logger, ToolSyncDocuments, start, "", 0, err)
 			return nil, genericSyncOutput[documentSummary]{}, err
 		}
-		result, out, err := documentsSyncFromService(ctx, client.Documents, cursor)
+		result, out, err := documentsSyncFromService(ctx, client.Documents, cursor, rec)
 		logToolEnd(ctx, logger, ToolSyncDocuments, start, syncDocumentsEndpoint, len(out.Entries), err)
 		return result, out, err
 	}
@@ -825,7 +860,15 @@ func syncDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 // (read_sync.go) by hand rather than calling it, since Document's
 // service comes through documentReadService, not a plain
 // fileee.ReadService[T] the generic helper's own syncFromService expects.
-func documentsSyncFromService(ctx context.Context, service documentReadService, cursor fileee.Cursor) (*mcp.CallToolResult, genericSyncOutput[documentSummary], error) {
+//
+// rec (Aufgabe 5) records out.Entries' ids ONLY — the documents changed
+// or added since the cursor — never out.DeletedIDs: a deleted document is
+// no longer a valid target for any later tool, recording it would only
+// let a caller "prove" an id was once real after this server itself just
+// said it is gone. Recorded once, after wrapUntrustedLines has already
+// succeeded, the same "only on the success path" rule every other
+// recording call site in this file follows.
+func documentsSyncFromService(ctx context.Context, service documentReadService, cursor fileee.Cursor, rec *issued.Store) (*mcp.CallToolResult, genericSyncOutput[documentSummary], error) {
 	res, err := service.Diff(ctx, cursor)
 	if err != nil {
 		return nil, genericSyncOutput[documentSummary]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolSyncDocuments, err)
@@ -861,6 +904,11 @@ func documentsSyncFromService(ctx context.Context, service documentReadService, 
 	if err != nil {
 		return nil, genericSyncOutput[documentSummary]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolSyncDocuments, err)
 	}
+	ids := make([]string, 0, len(out.Entries))
+	for _, entry := range out.Entries {
+		ids = append(ids, entry.ID)
+	}
+	rec.Record(ctx, ids...)
 	return result, out, nil
 }
 
@@ -885,7 +933,7 @@ type listDocumentConversationsOutput struct {
 // listDocumentConversationsHandler resolves list_document_conversations.
 // The empty-document-ID check runs before clientFor, the same order
 // every other handler in this file uses for its own required parameter.
-func listDocumentConversationsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[listDocumentConversationsInput, listDocumentConversationsOutput] {
+func listDocumentConversationsHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[listDocumentConversationsInput, listDocumentConversationsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in listDocumentConversationsInput) (*mcp.CallToolResult, listDocumentConversationsOutput, error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolListDocumentConversations, slog.String("documentId", in.DocumentID))
@@ -901,7 +949,7 @@ func listDocumentConversationsHandler(p *clientpool.Pool, logger *slog.Logger) m
 			logToolEnd(ctx, logger, ToolListDocumentConversations, start, "", 0, err)
 			return nil, listDocumentConversationsOutput{}, err
 		}
-		result, out, err := documentConversationsFromService(ctx, client.Documents, in.DocumentID)
+		result, out, err := documentConversationsFromService(ctx, client.Documents, in.DocumentID, rec)
 		logToolEnd(ctx, logger, ToolListDocumentConversations, start, listDocumentConversationsEndpoint, len(out.Conversations), err)
 		return result, out, err
 	}
@@ -911,7 +959,14 @@ func listDocumentConversationsHandler(p *clientpool.Pool, logger *slog.Logger) m
 // listDocumentConversationsHandler's logic below client resolution —
 // split out for the same testability reason documentFromService/
 // documentsSyncFromService are.
-func documentConversationsFromService(ctx context.Context, service documentReadService, documentID string) (*mcp.CallToolResult, listDocumentConversationsOutput, error) {
+//
+// rec (Aufgabe 5) records every returned conversation's id — the same
+// conversation ids list_conversations/get_conversation's own generic
+// path already records (read_people.go, Aufgabe 4), but a caller who
+// only ever reaches a conversation through THIS tool never goes through
+// that path, so it must record independently — after wrapUntrustedLines
+// has already succeeded, never on an error path.
+func documentConversationsFromService(ctx context.Context, service documentReadService, documentID string, rec *issued.Store) (*mcp.CallToolResult, listDocumentConversationsOutput, error) {
 	convs, err := service.Conversations(ctx, documentID)
 	if err != nil {
 		return nil, listDocumentConversationsOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolListDocumentConversations, err)
@@ -936,5 +991,10 @@ func documentConversationsFromService(ctx context.Context, service documentReadS
 	if err != nil {
 		return nil, listDocumentConversationsOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolListDocumentConversations, err)
 	}
+	ids := make([]string, 0, len(out.Conversations))
+	for _, c := range out.Conversations {
+		ids = append(ids, c.ID)
+	}
+	rec.Record(ctx, ids...)
 	return result, out, nil
 }
