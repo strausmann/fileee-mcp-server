@@ -215,7 +215,7 @@ jobs:
           # abgelehnt, inklusive Gegenprobe mit gueltigem base64). Datei liegt bei 87,0% —
           # komfortabel ueber der 80%-Business-Logik-Stufe, keine Ausnahme noetig.
           #
-          # internal/issued/issued.go (ID-Whitelist-Plan, Task 1, homelab-management repo):
+          # internal/issued/issued.go (ID-Whitelist-Plan, Task 1+2, homelab-management repo):
           # der Kern der Whitelist aus ADR-0013 Punkt 3 — Store.Record/Check binden
           # destruktive Operationen an eine ID aus einer vorangegangenen, echten Leseantwort,
           # je verifizierter Identitaet (serve.IdentityFrom(ctx), fail-closed wie clientFor).
@@ -227,8 +227,16 @@ jobs:
           # (issued_test.go) abgedeckt, inklusive der Identitaetstrennung als dedizierter
           # Sicherheitszusage-Test (TestIdentitaetenSindGetrennt, mit Gegenprobe: Subject
           # ignoriert -> derselbe Test faerbt rot, weil eine fremde Identitaet durchgelassen
-          # wird) und des fail-closed-Pfads ohne Identitaet. Datei liegt bei 100% — Task 2
-          # (Verfall/Deckel) fuegt neue Zweige hinzu, die diese Schwelle unveraendert lassen.
+          # wird) und des fail-closed-Pfads ohne Identitaet. Task 2 (Verfall/Deckel) fuegt
+          # Ttl-Verfall und den Deckel je Identitaet hinzu (Store.now austauschbar ueber
+          # SetClock, reiner Test-Seam) — inklusive der beiden fail-closed-Grenzfaelle
+          # ttl<=0 und maxPerIdentity<=0 (dieselbe FILEEE_MAX_INFLIGHT-Konvention: eine
+          # Grenze <=0 wird durchgesetzt, nie als "unbegrenzt" gelesen), je mit eigenem
+          # Test. Drei Gegenproben bestaetigt: Verfallsvergleich entfernt -> 31-Minuten-Test
+          # faerbt rot; Verdraengung nimmt den neuesten statt den aeltesten -> Deckel-Test
+          # faerbt rot und nennt die aelteste ID; Deckel global statt je Identitaet ->
+          # TestDerDeckelGiltJeIdentitaetNichtGlobal faerbt rot. Datei liegt weiterhin bei
+          # 100%.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \

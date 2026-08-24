@@ -3,6 +3,7 @@ package issued
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -259,5 +260,116 @@ func TestCheckLehntLeereIDAbAuchWennSieImBucketStuende(t *testing.T) {
 
 	if err := s.Check(ctx, ""); !errors.Is(err, ErrNotIssued) {
 		t.Fatalf("Check(\"\") trotz künstlich vorbelegtem Bucket: %v, want ErrNotIssued", err)
+	}
+}
+
+// --- Verfall und Deckel -----------------------------------------------
+
+// testUhr liefert eine steuerbare Zeit — ohne sie bräuchte jeder
+// Verfallstest echtes Warten und wäre zeitabhängig-flaky (dasselbe
+// Muster wie der bestehende clientpool-Flake).
+type testUhr struct{ jetzt time.Time }
+
+func (u *testUhr) Now() time.Time      { return u.jetzt }
+func (u *testUhr) Vor(d time.Duration) { u.jetzt = u.jetzt.Add(d) }
+
+func TestEineIDVerfaelltNachAblaufDerGueltigkeit(t *testing.T) {
+	u := &testUhr{jetzt: time.Unix(1000000, 0)}
+	s := New(30*time.Minute, 1000)
+	s.SetClock(u.Now)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	s.Record(ctx, "doc-1")
+	u.Vor(29 * time.Minute)
+	if err := s.Check(ctx, "doc-1"); err != nil {
+		t.Fatalf("Check nach 29 Minuten: %v, want nil", err)
+	}
+
+	u.Vor(2 * time.Minute) // insgesamt 31 Minuten
+	if err := s.Check(ctx, "doc-1"); !errors.Is(err, ErrNotIssued) {
+		t.Fatalf("Check nach 31 Minuten: %v, want ErrNotIssued", err)
+	}
+}
+
+func TestDerDeckelVerdraengtDieAeltestenEintraege(t *testing.T) {
+	u := &testUhr{jetzt: time.Unix(1000000, 0)}
+	s := New(30*time.Minute, 3)
+	s.SetClock(u.Now)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	for _, id := range []string{"a", "b", "c"} {
+		s.Record(ctx, id)
+		u.Vor(time.Second) // klare Reihenfolge der Aufnahmezeiten
+	}
+	s.Record(ctx, "d") // sprengt den Deckel von 3
+
+	if err := s.Check(ctx, "a"); !errors.Is(err, ErrNotIssued) {
+		t.Fatalf("älteste ID nach Überlauf: %v, want ErrNotIssued", err)
+	}
+	for _, id := range []string{"b", "c", "d"} {
+		if err := s.Check(ctx, id); err != nil {
+			t.Fatalf("ID %q nach Überlauf: %v, want nil", id, err)
+		}
+	}
+}
+
+func TestDerDeckelGiltJeIdentitaetNichtGlobal(t *testing.T) {
+	s := New(30*time.Minute, 2)
+	a, b := ctxMitIdentitaet(t, "alice"), ctxMitIdentitaet(t, "bob")
+
+	s.Record(a, "a1", "a2")
+	s.Record(b, "b1", "b2") // darf alices Einträge nicht verdrängen
+
+	for _, id := range []string{"a1", "a2"} {
+		if err := s.Check(a, id); err != nil {
+			t.Fatalf("alices %q nach bobs Aufnahmen: %v, want nil", id, err)
+		}
+	}
+}
+
+// TestMaxPerIdentityKleinerGleichNullMerktSichNichts belegt effectiveMax's
+// Klammerung (Store.maxPerIdentitys eigener Doc-Kommentar): ein
+// maxPerIdentity <= 0 wird als reale Grenze durchgesetzt, nicht als
+// "unbegrenzt" gelesen. Die beiden von TestDerDeckelVerdraengtDieAeltestenEintraege
+// & Co. geprüften Werte (3, 2, 1000) erreichen effectiveMax's
+// negativen Zweig nie — dieser Test deckt ihn gezielt ab, für 0 und
+// einen negativen Wert.
+func TestMaxPerIdentityKleinerGleichNullMerktSichNichts(t *testing.T) {
+	for _, max := range []int{0, -1} {
+		t.Run(fmt.Sprintf("max=%d", max), func(t *testing.T) {
+			s := New(30*time.Minute, max)
+			ctx := ctxMitIdentitaet(t, "alice")
+
+			s.Record(ctx, "doc-1")
+
+			if err := s.Check(ctx, "doc-1"); !errors.Is(err, ErrNotIssued) {
+				t.Fatalf("Check nach Record mit maxPerIdentity=%d: %v, want ErrNotIssued", max, err)
+			}
+		})
+	}
+}
+
+// TestTtlKleinerGleichNullIstSofortVerfallen belegt isExpired's
+// Vorab-Guard (Store.ttls eigener Doc-Kommentar): ein ttl <= 0 gilt als
+// sofort verfallen, auch wenn Record und Check im selben Moment laufen
+// (s.now().Sub(recorded) waere dann 0, "0 > 0" allein waere false — genau
+// die Luecke, die der Guard schliesst). Die von
+// TestEineIDVerfaelltNachAblaufDerGueltigkeit geprüfte Ttl (30 Minuten)
+// erreicht isExpired's Vorab-Guard nie — dieser Test deckt ihn gezielt ab,
+// für 0 und einen negativen Wert, ohne die Uhr überhaupt vorzurücken.
+func TestTtlKleinerGleichNullIstSofortVerfallen(t *testing.T) {
+	for _, ttl := range []time.Duration{0, -time.Minute} {
+		t.Run(fmt.Sprintf("ttl=%s", ttl), func(t *testing.T) {
+			u := &testUhr{jetzt: time.Unix(1000000, 0)}
+			s := New(ttl, 1000)
+			s.SetClock(u.Now)
+			ctx := ctxMitIdentitaet(t, "alice")
+
+			s.Record(ctx, "doc-1") // gleicher Zeitpunkt, Uhr wird nicht vorgerueckt
+
+			if err := s.Check(ctx, "doc-1"); !errors.Is(err, ErrNotIssued) {
+				t.Fatalf("Check im selben Moment mit ttl=%s: %v, want ErrNotIssued", ttl, err)
+			}
+		})
 	}
 }
