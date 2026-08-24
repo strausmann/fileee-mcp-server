@@ -97,7 +97,7 @@ func TestCheckCursorEntityTypeAkzeptiertPassendenCursor(t *testing.T) {
 func TestRegisterSyncMeldetDasWerkzeugAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerSync(s, (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor())
+	registerSync(s, (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor(), nil)
 
 	names := toolNamesOf(t, s)
 	if !names["sync_tags"] {
@@ -114,7 +114,7 @@ func TestSyncFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *t
 	d := tagSyncDescriptor()
 	service := &fakeReadService[fileee.Tag]{diffErr: backendErr}
 
-	_, _, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"))
+	_, _, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"), nil)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -136,7 +136,7 @@ func TestGenericSyncHandlerLehntVertauschtenCursorOhneNetzwerkzugriffAb(t *testi
 	// Nil-Pointer-Dereferenzierung ab statt still zu bestehen -- das ist der Beleg, dass der
 	// vertauschte Cursor VOR jedem Netzwerkzugriff abgefangen wird (derselbe Aufbau wie
 	// TestGenericGetHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb in read_generic_test.go).
-	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d)
+	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d, nil)
 
 	_, _, err = handler(context.Background(), nil, genericSyncInput{Cursor: falscher})
 	if err == nil {
@@ -149,7 +149,7 @@ func TestGenericSyncHandlerLehntVertauschtenCursorOhneNetzwerkzugriffAb(t *testi
 
 func TestGenericSyncHandlerLehntUngueltigenCursorOhneNetzwerkzugriffAb(t *testing.T) {
 	d := tagSyncDescriptor()
-	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d)
+	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d, nil)
 
 	_, _, err := handler(context.Background(), nil, genericSyncInput{Cursor: "kein-gueltiger-cursor"})
 	if err == nil {
@@ -173,7 +173,7 @@ func TestSyncFromServiceKodiertDenFolgeCursor(t *testing.T) {
 		},
 	}
 
-	_, out, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"))
+	_, out, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"), nil)
 	if err != nil {
 		t.Fatalf("syncFromService: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestRegisterSyncPanictWennSummarizeFremdtextReproduziert(t *testing.T) {
 			t.Error("erwartete Panic (Summarize reproduziert UntrustedLine's Fremdtext) blieb aus")
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 func TestRegisterSyncPanictWennPoisonProbeFehlt(t *testing.T) {
@@ -245,7 +245,7 @@ func TestRegisterSyncPanictWennPoisonProbeFehlt(t *testing.T) {
 			t.Error("erwartete Panic (PoisonProbe fehlt) blieb aus")
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 func TestRegisterSyncPanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *testing.T) {
@@ -257,7 +257,7 @@ func TestRegisterSyncPanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *testing
 			t.Error("erwartete Panic (PoisonProbe gesetzt, UntrustedLine nil) blieb aus")
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 // TestMustNotLeakUntrustedTextMeldetSyncDeskriptorTyp ist
@@ -282,14 +282,14 @@ func TestMustNotLeakUntrustedTextMeldetSyncDeskriptorTyp(t *testing.T) {
 			t.Errorf("Panic-Meldung %q nennt nicht den Deskriptor-Typ syncDescriptor", msg)
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 func TestRegisterSyncOhneFremdtextfelderBleibtSauber(t *testing.T) {
 	// tagSyncDescriptor() laesst UntrustedLine/PoisonProbe bewusst nil -- Tag traegt keinen
 	// Fremdtext (dieselbe Einstufung wie Aufgabe 3's tag-Deskriptor, read_generic.go). Das
 	// darf NICHT paniken.
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor())
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor(), nil)
 }
 
 // tagSyncDescriptorMitFremdtext ist tagSyncDescriptor() plus einem funktionierenden
@@ -384,7 +384,7 @@ func TestSyncConversationSummaryEnthaeltKeinenBetreff(t *testing.T) {
 func TestRegisterSyncToolsMeldetAlleSiebenAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerSyncTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerSyncTools(s, (*clientpool.Pool)(nil), discardLogger(), nil)
 
 	names := toolNamesOf(t, s)
 	want := []string{
@@ -395,5 +395,34 @@ func TestRegisterSyncToolsMeldetAlleSiebenAn(t *testing.T) {
 		if !names[name] {
 			t.Errorf("Werkzeug %q wurde nicht angemeldet", name)
 		}
+	}
+}
+
+// --- Aufgabe 4: IDOf liefert die Fileee-eigene ID -----------------------
+
+// TestSyncDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf belegt Aufgabe 4's
+// Pflichtfeld für alle sieben Deskriptoren dieser Datei — dasselbe Muster
+// wie read_reference_test.go's/read_people_test.go's eigene Gegenstücke.
+func TestSyncDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf(t *testing.T) {
+	if got := tagSyncDescriptor().IDOf(&fileee.Tag{ID: "tag-1"}); got != "tag-1" {
+		t.Errorf("tagSyncDescriptor().IDOf = %q, want %q", got, "tag-1")
+	}
+	if got := companySyncDescriptor().IDOf(&fileee.Company{ID: "company-1"}); got != "company-1" {
+		t.Errorf("companySyncDescriptor().IDOf = %q, want %q", got, "company-1")
+	}
+	if got := documentTypeSyncDescriptor().IDOf(&fileee.DocumentType{ID: "doctype-1"}); got != "doctype-1" {
+		t.Errorf("documentTypeSyncDescriptor().IDOf = %q, want %q", got, "doctype-1")
+	}
+	if got := documentTypeSchemeSyncDescriptor().IDOf(&fileee.DocumentTypeScheme{ID: "scheme-1"}); got != "scheme-1" {
+		t.Errorf("documentTypeSchemeSyncDescriptor().IDOf = %q, want %q", got, "scheme-1")
+	}
+	if got := contactSyncDescriptor().IDOf(&fileee.Contact{ID: "contact-1"}); got != "contact-1" {
+		t.Errorf("contactSyncDescriptor().IDOf = %q, want %q", got, "contact-1")
+	}
+	if got := reminderSyncDescriptor().IDOf(&fileee.Reminder{ID: "reminder-1"}); got != "reminder-1" {
+		t.Errorf("reminderSyncDescriptor().IDOf = %q, want %q", got, "reminder-1")
+	}
+	if got := conversationSyncDescriptor().IDOf(&fileee.Conversation{ID: "conversation-1"}); got != "conversation-1" {
+		t.Errorf("conversationSyncDescriptor().IDOf = %q, want %q", got, "conversation-1")
 	}
 }

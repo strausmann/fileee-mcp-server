@@ -17,6 +17,7 @@ import (
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // readServiceDescriptor describes how one ReadService[T] appears as a
@@ -141,6 +142,25 @@ type readServiceDescriptor[T any, S any] struct {
 	//		return &fileee.Contact{LastName: marker}
 	//	}
 	PoisonProbe func(marker string) *T
+	// IDOf liefert die Fileee-eigene ID einer Entität. Beide generischen
+	// Handler (genericListHandler/genericGetHandler) melden damit über
+	// listFromService/getFromService an rec (issued.Store), was sie
+	// tatsächlich ausgeliefert haben (ADR-0013 Punkt 3) — erst diese
+	// Meldung erlaubt einem späteren destruktiven Werkzeug, per
+	// issued.Store.Check zu prüfen, ob eine ID wirklich über einen echten
+	// Lese-Schritt herausging, statt z. B. nur im Text eines fremden
+	// Dokuments aufgetaucht zu sein.
+	//
+	// Pflichtfeld — anders als UntrustedLine/PoisonProbe gibt es keinen
+	// Fall, in dem ein T legitim keine ID hätte. Ein nil IDOf fällt beim
+	// tatsächlichen Aufruf sofort als Nil-Pointer-Panik auf
+	// (listFromService/getFromService rufen es ungeprüft auf); der
+	// billige Teil des Schutzes davor ist der Guardrail-Test in
+	// read_generic_test.go (Aufgabe 4, geht über jeden von RegisterAll
+	// tatsächlich angemeldeten Deskriptor), der teurere — auch die
+	// handgeschriebenen Werkzeuge — folgt in issued_coverage_test.go
+	// (Aufgabe 5).
+	IDOf func(*T) string
 }
 
 // genericListInput are every generic list tool's parameters — the same
@@ -198,20 +218,27 @@ type genericGetOutput[S any] struct {
 // if d fails mustNotLeakUntrustedLine's check. That check runs once, here,
 // not per request: see that function's own doc comment for why a
 // per-request version would be worse than the bug it replaces.
-func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) {
+//
+// rec (Aufgabe 4) is threaded straight through to genericListHandler/
+// genericGetHandler, never built here — the same pattern logger already
+// establishes: RegisterAll (read.go) owns the one *issued.Store this
+// process uses and passes it down through registerSyncTools/
+// registerReferenceTools/registerPeopleTools, exactly as it does for
+// logger.
+func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) {
 	mustNotLeakUntrustedLine(d)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.ListName,
 		Description: d.ListDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.ListTitle},
-	}, genericListHandler(p, logger, d))
+	}, genericListHandler(p, logger, d, rec))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.GetName,
 		Description: d.GetDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.GetTitle},
-	}, genericGetHandler(p, logger, d))
+	}, genericGetHandler(p, logger, d, rec))
 }
 
 // mustNotLeakUntrustedLine proves, once, that d.Summarize never reproduces
@@ -372,7 +399,7 @@ func summaryFieldValues(summary any) []string {
 // carries no such field, and go-fileee's fileee.ReadService[T] does not
 // expose it either — so logToolEnd's endpoint argument is passed as "",
 // deliberately, rather than a guessed or hardcoded value.
-func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericListInput, genericListOutput[S]] {
+func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) mcp.ToolHandlerFor[genericListInput, genericListOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericListInput) (*mcp.CallToolResult, genericListOutput[S], error) {
 		start := time.Now()
 		logToolStart(ctx, logger, d.ListName, slog.Int("start", in.Start), slog.Int("limit", in.Limit))
@@ -382,7 +409,7 @@ func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 			logToolEnd(ctx, logger, d.ListName, start, "", 0, err)
 			return nil, genericListOutput[S]{}, err
 		}
-		result, out, err := listFromService(ctx, d, d.Service(client), in)
+		result, out, err := listFromService(ctx, d, d.Service(client), in, rec)
 		logToolEnd(ctx, logger, d.ListName, start, "", len(out.Entries), err)
 		return result, out, err
 	}
@@ -393,7 +420,13 @@ func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 // UntrustedLine hands back, and frame them (wrapUntrustedLines) — kept
 // separate from genericListHandler so a test can drive it directly against
 // a fake service instead of a live *fileee.Client.
-func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], in genericListInput) (*mcp.CallToolResult, genericListOutput[S], error) {
+//
+// rec.Record (Aufgabe 4) runs ONCE, with every returned row's d.IDOf(&entry)
+// collected first, and only AFTER the response is fully, successfully built
+// (past wrapUntrustedLines' own possible error) — never on an error path,
+// so a row this call never actually delivered can never end up recorded as
+// issued.
+func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], in genericListInput, rec *issued.Store) (*mcp.CallToolResult, genericListOutput[S], error) {
 	res, err := service.Query(ctx, fileee.QueryOptions{
 		Start: nonNegative(in.Start),
 		Limit: clampLimit(in.Limit),
@@ -404,9 +437,11 @@ func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[
 
 	out := genericListOutput[S]{TotalRows: res.TotalRows, Entries: make([]S, 0, len(res.Rows))}
 	lines := make([]string, 0, len(res.Rows))
+	ids := make([]string, 0, len(res.Rows))
 	for i := range res.Rows {
 		entry := res.Rows[i]
 		out.Entries = append(out.Entries, d.Summarize(&entry))
+		ids = append(ids, d.IDOf(&entry))
 		if line := untrustedLineOf(d, &entry); line != "" {
 			lines = append(lines, line)
 		}
@@ -416,6 +451,7 @@ func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[
 	if err != nil {
 		return nil, genericListOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.ListName, err)
 	}
+	rec.Record(ctx, ids...)
 	return result, out, nil
 }
 
@@ -431,7 +467,7 @@ func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[
 // requested ID is logged at debug only (logToolStart), the same
 // "arguments are content, not bare operating metadata" reasoning
 // searchDocumentsHandler already applies to its own search term (read.go).
-func genericGetHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericGetInput, genericGetOutput[S]] {
+func genericGetHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) mcp.ToolHandlerFor[genericGetInput, genericGetOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericGetInput) (*mcp.CallToolResult, genericGetOutput[S], error) {
 		start := time.Now()
 		logToolStart(ctx, logger, d.GetName, slog.String("id", in.ID))
@@ -447,7 +483,7 @@ func genericGetHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d 
 			logToolEnd(ctx, logger, d.GetName, start, "", 0, err)
 			return nil, genericGetOutput[S]{}, err
 		}
-		result, out, err := getFromService(ctx, d, d.Service(client), in.ID)
+		result, out, err := getFromService(ctx, d, d.Service(client), in.ID, rec)
 		logToolEnd(ctx, logger, d.GetName, start, "", 1, err)
 		return result, out, err
 	}
@@ -455,7 +491,12 @@ func genericGetHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d 
 
 // getFromService is genericGetHandler's logic below client resolution —
 // split out for the same testability reason as listFromService.
-func getFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], id string) (*mcp.CallToolResult, genericGetOutput[S], error) {
+//
+// rec.Record (Aufgabe 4) runs with d.IDOf(entry) only AFTER the response is
+// fully, successfully built — the same "never on an error path" rule
+// listFromService's own doc comment states, so a Get call whose response
+// never actually reached the caller can never mark its id as issued.
+func getFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], id string, rec *issued.Store) (*mcp.CallToolResult, genericGetOutput[S], error) {
 	entry, err := service.Get(ctx, id)
 	if err != nil {
 		return nil, genericGetOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.GetName, err)
@@ -466,6 +507,7 @@ func getFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T
 	if err != nil {
 		return nil, genericGetOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.GetName, err)
 	}
+	rec.Record(ctx, d.IDOf(entry))
 	return result, out, nil
 }
 

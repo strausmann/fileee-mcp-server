@@ -221,7 +221,7 @@ func TestRegisterOpsToolsMeldetGetRuntimeStatsAn(t *testing.T) {
 // denselben blinden Fleck teilen, den er aufdecken soll.
 func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger(), nil)
 
 	want := toolNamesOf(t, s)
 	if !want[ToolGetToolManifest] {
@@ -265,7 +265,7 @@ func TestGetToolManifestMeldetGenauSoVieleWerkzeugeWieTatsaechlichAngemeldetSind
 
 func TestGetToolManifestWaechstMitNeuAngemeldetenWerkzeugenMit(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger(), nil)
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, before, err := handler(context.Background(), nil, getToolManifestInput{})
@@ -321,7 +321,7 @@ func TestToolManifestEntryFeldlisteIstAbgeschlossen(t *testing.T) {
 // Werte) bereits gruen war.
 func TestGetToolManifestEntryTraegtDenTitelDesWerkzeugs(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger(), nil)
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
@@ -365,7 +365,7 @@ func TestGetToolManifestInputNimmtKeineParameterEntgegen(t *testing.T) {
 // diese Information nicht verlieren.
 func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger(), nil)
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, out, err := handler(context.Background(), nil, getToolManifestInput{})
@@ -393,7 +393,7 @@ func TestGetToolManifestNenntDieBerechtigungsgruppeJeWerkzeug(t *testing.T) {
 // beschaedigen, waehrend sie die neue einfuehrt.
 func TestGetToolManifestMeldetSchreibwerkzeugeNichtAlsLesend(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger())
+	RegisterAll(s, (*clientpool.Pool)(nil), ServerInfo{}, discardLogger(), nil)
 	handler := getToolManifestHandler(s, discardLogger())
 
 	_, out, err := handler(context.Background(), nil, getToolManifestInput{})

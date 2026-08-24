@@ -193,12 +193,15 @@ const (
 // during registration or during a tools/list round-trip — only AddTool's
 // schema derivation and the ListTools call below do, neither of which
 // touches p. logger is a discarding *slog.Logger for the same reason:
-// nothing here calls a handler, so nothing here logs.
+// nothing here calls a handler, so nothing here logs. rec (Aufgabe 4) is
+// (*issued.Store)(nil) for the identical reason — registerReadService/
+// registerSync only reach d.IDOf/rec.Record from inside a handler, and no
+// handler runs here.
 func registeredReadTools() []*mcp.Tool {
 	ctx := context.Background()
 
 	probe := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	RegisterAll(probe, (*clientpool.Pool)(nil), ServerInfo{}, slog.New(slog.DiscardHandler))
+	RegisterAll(probe, (*clientpool.Pool)(nil), ServerInfo{}, slog.New(slog.DiscardHandler), nil)
 
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := probe.Connect(ctx, serverTransport, nil)

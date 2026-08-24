@@ -29,6 +29,7 @@ import (
 
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // defaultLimit and maxLimit bound how many documents a single call to
@@ -67,7 +68,20 @@ const (
 // threaded logger through before it (#45/#46 both shipped without it);
 // both now take it and pass it on to their own handlers the same way
 // listDocumentsHandler/searchDocumentsHandler already did.
-func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger) {
+//
+// rec (Aufgabe 4) is the one *internal/issued.Store this process uses —
+// built once in server.go's New() from cfg.IssuedIDTTLSeconds/
+// IssuedIDMaxPerIdentity (Aufgabe 3) and handed down here, never rebuilt.
+// It is threaded through to registerSyncTools/registerReferenceTools/
+// registerPeopleTools, whose own generic handlers call rec.Record after
+// successfully delivering a row (ADR-0013 Punkt 3) — the ids a later
+// destructive tool's rec.Check call then verifies against. The
+// hand-written tools above (list_documents, search_documents) and
+// registerBoxTools/registerBinaryTools/registerAccountTools/
+// registerOpsTools/registerWriteTools do NOT take rec here — closing that
+// gap for the remaining hand-written handlers is Aufgabe 5's own work
+// (see readServiceDescriptor.IDOf's doc comment, read_generic.go).
+func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger, rec *issued.Store) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocuments,
 		Description: "List documents in the calling user's Fileee account, most recently modified " +
@@ -86,9 +100,9 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Search documents"},
 	}, searchDocumentsHandler(p, logger))
 
-	registerSyncTools(s, p, logger)
-	registerReferenceTools(s, p, logger)
-	registerPeopleTools(s, p, logger)
+	registerSyncTools(s, p, logger, rec)
+	registerReferenceTools(s, p, logger, rec)
+	registerPeopleTools(s, p, logger, rec)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetDocument,

@@ -36,6 +36,7 @@ import (
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // contactSummary is list_contacts/get_contact's structured summary. It
@@ -130,6 +131,7 @@ func contactDescriptor() readServiceDescriptor[fileee.Contact, contactSummary] {
 			return strings.TrimSpace(c.FirstName + " " + c.LastName)
 		},
 		PoisonProbe: func(marker string) *fileee.Contact { return &fileee.Contact{LastName: marker} },
+		IDOf:        func(c *fileee.Contact) string { return c.ID },
 	}
 }
 
@@ -157,6 +159,7 @@ func reminderDescriptor() readServiceDescriptor[fileee.Reminder, reminderSummary
 		},
 		UntrustedLine: func(r *fileee.Reminder) string { return r.Description },
 		PoisonProbe:   func(marker string) *fileee.Reminder { return &fileee.Reminder{Description: marker} },
+		IDOf:          func(r *fileee.Reminder) string { return r.ID },
 	}
 }
 
@@ -190,15 +193,17 @@ func conversationDescriptor() readServiceDescriptor[fileee.Conversation, convers
 		},
 		UntrustedLine: func(c *fileee.Conversation) string { return c.Title },
 		PoisonProbe:   func(marker string) *fileee.Conversation { return &fileee.Conversation{Title: marker} },
+		IDOf:          func(c *fileee.Conversation) string { return c.ID },
 	}
 }
 
 // registerPeopleTools mounts this file's three descriptors onto s — called
-// once from RegisterAll (read.go). logger is threaded straight through to
-// registerReadService, the same pattern registerReferenceTools already
-// follows (read_reference.go) for its own four descriptors.
-func registerPeopleTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
-	registerReadService(s, p, logger, contactDescriptor())
-	registerReadService(s, p, logger, reminderDescriptor())
-	registerReadService(s, p, logger, conversationDescriptor())
+// once from RegisterAll (read.go). logger and rec (Aufgabe 4) are threaded
+// straight through to registerReadService, the same pattern
+// registerReferenceTools already follows (read_reference.go) for its own
+// four descriptors.
+func registerPeopleTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) {
+	registerReadService(s, p, logger, contactDescriptor(), rec)
+	registerReadService(s, p, logger, reminderDescriptor(), rec)
+	registerReadService(s, p, logger, conversationDescriptor(), rec)
 }

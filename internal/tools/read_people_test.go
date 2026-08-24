@@ -99,7 +99,7 @@ func TestKonversationSummaryZaehltNurTeilnehmer(t *testing.T) {
 func TestRegisterPeopleToolsMeldetAlleSechsAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerPeopleTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerPeopleTools(s, (*clientpool.Pool)(nil), discardLogger(), nil)
 
 	names := toolNamesOf(t, s)
 	want := []string{
@@ -111,5 +111,21 @@ func TestRegisterPeopleToolsMeldetAlleSechsAn(t *testing.T) {
 		if !names[name] {
 			t.Errorf("Werkzeug %q wurde nicht angemeldet", name)
 		}
+	}
+}
+
+// TestPersonenDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf ist
+// TestReferenceDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf's
+// Gegenstück (read_reference_test.go) für die drei Deskriptoren dieser
+// Datei.
+func TestPersonenDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf(t *testing.T) {
+	if got := contactDescriptor().IDOf(&fileee.Contact{ID: "contact-1"}); got != "contact-1" {
+		t.Errorf("contactDescriptor().IDOf = %q, want %q", got, "contact-1")
+	}
+	if got := reminderDescriptor().IDOf(&fileee.Reminder{ID: "reminder-1"}); got != "reminder-1" {
+		t.Errorf("reminderDescriptor().IDOf = %q, want %q", got, "reminder-1")
+	}
+	if got := conversationDescriptor().IDOf(&fileee.Conversation{ID: "conversation-1"}); got != "conversation-1" {
+		t.Errorf("conversationDescriptor().IDOf = %q, want %q", got, "conversation-1")
 	}
 }

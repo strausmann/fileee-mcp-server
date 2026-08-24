@@ -43,11 +43,12 @@ type Server struct {
 
 	// issuedStore ist der aus cfg.IssuedIDTTLSeconds/IssuedIDMaxPerIdentity
 	// gebaute internal/issued.Store (siehe deren eigene Doc-Kommentare) —
-	// gehalten, aber noch NICHT an tools.RegisterAll durchgereicht: dessen
-	// Signatur erweitert erst eine Folgeaufgabe um einen *issued.Store-
-	// Parameter, den die Lese-/Schreib-Werkzeuge dann tatsächlich
-	// befragen (Record beim Ausliefern, Check vor einer destruktiven
-	// Operation). Bis dahin ist issuedStore ausschließlich über
+	// seit Aufgabe 4 an tools.RegisterAll durchgereicht (siehe unten): die
+	// generischen Lese-Werkzeuge (registerSyncTools/registerReferenceTools/
+	// registerPeopleTools) melden ausgelieferte IDs jetzt tatsächlich per
+	// Record; ein späteres, destruktives Werkzeug prüft sie per Check —
+	// diese Verdrahtung folgt erst in einer eigenen Aufgabe. Zusätzlich zu
+	// dieser Verdrahtung bleibt issuedStore weiterhin über
 	// TestNewWiresConfiguredIssuedIDLimitsIntoTheStore (white-box,
 	// gleiches Paket) beobachtbar — dieser Test ist bewusst KEIN
 	// Überbleibsel, sondern der Beleg, dass die beiden Konfigurationswerte
@@ -305,7 +306,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// TestUnauthenticatedRequestReachesTheChallengeNotA404.
 	limiter := newToolCallLimiter(cfg)
 	instance := mcp.NewServer(&mcp.Implementation{Name: "fileee-mcp-server", Version: config.Version()}, nil)
-	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode), MaxUploadBytes: cfg.MaxUploadBytes}, logger)
+	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode), MaxUploadBytes: cfg.MaxUploadBytes}, logger, issuedStore)
 	instance.AddReceivingMiddleware(limiter.middleware())
 	gw.AttachMCPSelector(func(ctx context.Context, id *identity.Identity) *mcp.Server {
 		// scopesSatisfied ist die einzige Stelle, die MCP_OIDC_REQUIRED_SCOPES

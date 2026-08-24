@@ -17,7 +17,7 @@ import (
 func TestRegisterReferenceToolsMeldetAlleAchtAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerReferenceTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerReferenceTools(s, (*clientpool.Pool)(nil), discardLogger(), nil)
 
 	names := toolNamesOf(t, s)
 	want := []string{
@@ -71,11 +71,11 @@ func TestReferenceTagDocumentTypeSchemeBleibenOhneFremdtextfelder(t *testing.T) 
 			s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 			switch name {
 			case "tag":
-				registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), referenceTagDescriptor())
+				registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), referenceTagDescriptor(), nil)
 			case "documentType":
-				registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), referenceDocumentTypeDescriptor())
+				registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), referenceDocumentTypeDescriptor(), nil)
 			case "documentTypeScheme":
-				registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), referenceDocumentTypeSchemeDescriptor())
+				registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), referenceDocumentTypeSchemeDescriptor(), nil)
 			}
 			// Kein Panic bis hierher ist der eigentliche Test — siehe
 			// mustNotLeakUntrustedText's eigener Kommentar dazu, dass ein
@@ -139,5 +139,24 @@ func TestDocumentTypeSummarizeVerwendetI18NName(t *testing.T) {
 	}
 	if summary.DocumentCounter != 3 {
 		t.Errorf("DocumentCounter = %d, want %d", summary.DocumentCounter, 3)
+	}
+}
+
+// TestReferenceDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf belegt
+// Aufgabe 4's Pflichtfeld direkt: jedes der vier Deskriptoren dieser Datei
+// liefert über IDOf exakt die ID, die auch Summarize im ID-Feld
+// zurückgibt — kein Deskriptor lässt hier ein anderes Feld einfließen.
+func TestReferenceDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf(t *testing.T) {
+	if got := referenceTagDescriptor().IDOf(&fileee.Tag{ID: "tag-1"}); got != "tag-1" {
+		t.Errorf("referenceTagDescriptor().IDOf = %q, want %q", got, "tag-1")
+	}
+	if got := referenceCompanyDescriptor().IDOf(&fileee.Company{ID: "company-1"}); got != "company-1" {
+		t.Errorf("referenceCompanyDescriptor().IDOf = %q, want %q", got, "company-1")
+	}
+	if got := referenceDocumentTypeDescriptor().IDOf(&fileee.DocumentType{ID: "doctype-1"}); got != "doctype-1" {
+		t.Errorf("referenceDocumentTypeDescriptor().IDOf = %q, want %q", got, "doctype-1")
+	}
+	if got := referenceDocumentTypeSchemeDescriptor().IDOf(&fileee.DocumentTypeScheme{ID: "scheme-1"}); got != "scheme-1" {
+		t.Errorf("referenceDocumentTypeSchemeDescriptor().IDOf = %q, want %q", got, "scheme-1")
 	}
 }

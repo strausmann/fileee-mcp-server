@@ -58,7 +58,7 @@ func TestGenericListHandlerLogsToolCallWithName(t *testing.T) {
 	logger := diag.New(diag.LevelDebug, &buf)
 	d := tagDescriptor()
 
-	handler := genericListHandler[fileee.Tag, tagSummary](nil, logger, d)
+	handler := genericListHandler[fileee.Tag, tagSummary](nil, logger, d, nil)
 	_, _, err := handler(context.Background(), nil, genericListInput{})
 	if err == nil {
 		t.Fatal("erwarteter Fehler (keine verifizierte Identitaet im Kontext) blieb aus")
@@ -83,7 +83,7 @@ func TestGenericGetHandlerLogsToolCallWithName(t *testing.T) {
 	logger := diag.New(diag.LevelDebug, &buf)
 	d := tagDescriptor()
 
-	handler := genericGetHandler[fileee.Tag, tagSummary](nil, logger, d)
+	handler := genericGetHandler[fileee.Tag, tagSummary](nil, logger, d, nil)
 	_, _, err := handler(context.Background(), nil, genericGetInput{ID: "   "})
 	if err == nil {
 		t.Fatal("erwarteter Fehler (leere Kennung) blieb aus")
@@ -107,7 +107,7 @@ func TestGenericSyncHandlerLogsToolCallWithName(t *testing.T) {
 	logger := diag.New(diag.LevelDebug, &buf)
 	d := tagSyncDescriptor()
 
-	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, logger, d)
+	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, logger, d, nil)
 	_, _, err := handler(context.Background(), nil, genericSyncInput{})
 	if err == nil {
 		t.Fatal("erwarteter Fehler (keine verifizierte Identitaet im Kontext) blieb aus")

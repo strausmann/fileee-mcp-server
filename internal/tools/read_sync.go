@@ -28,6 +28,7 @@ import (
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // encodeCursor renders a fileee.Cursor as an opaque string a caller can
@@ -165,6 +166,12 @@ type syncDescriptor[T any, S any] struct {
 	// contract is identical here.
 	UntrustedLine func(*T) string
 	PoisonProbe   func(marker string) *T
+	// IDOf: see readServiceDescriptor.IDOf's own doc comment
+	// (read_generic.go) — the identical contract, here for syncFromService,
+	// which records d.IDOf(&entry) for every changed/added row (never for
+	// res.DeletedIDs — a deleted entity is no longer a valid target for a
+	// later destructive tool). Pflichtfeld, same reasoning as there.
+	IDOf func(*T) string
 }
 
 // genericSyncInput are every generic sync tool's parameters.
@@ -212,14 +219,18 @@ type genericSyncOutput[S any] struct {
 // list/get descriptor — if d fails mustNotLeakUntrustedText's check. That
 // check runs once, here, not per request: see mustNotLeakUntrustedText's
 // own doc comment (read_generic.go) for why.
-func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S]) {
+//
+// rec (Aufgabe 4) is threaded straight through to genericSyncHandler — the
+// same pattern registerReadService follows for its own two tools
+// (read_generic.go).
+func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S], rec *issued.Store) {
 	mustNotLeakUntrustedText("syncDescriptor", d.SyncName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.SyncName,
 		Description: d.SyncDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.SyncTitle},
-	}, genericSyncHandler(p, logger, d))
+	}, genericSyncHandler(p, logger, d, rec))
 }
 
 // genericSyncHandler resolves d.SyncName. It checks the caller's cursor
@@ -235,7 +246,7 @@ func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.
 // endpoint-argument caveat that applies here too): the caller's cursor is
 // logged at debug only via logToolStart, on every path including a
 // rejected cursor or a clientFor failure.
-func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S]) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[S]] {
+func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S], rec *issued.Store) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericSyncInput) (*mcp.CallToolResult, genericSyncOutput[S], error) {
 		start := time.Now()
 		logToolStart(ctx, logger, d.SyncName, slog.String("cursor", in.Cursor))
@@ -252,7 +263,7 @@ func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 			logToolEnd(ctx, logger, d.SyncName, start, "", 0, err)
 			return nil, genericSyncOutput[S]{}, err
 		}
-		result, out, err := syncFromService(ctx, d, d.Service(client), cursor)
+		result, out, err := syncFromService(ctx, d, d.Service(client), cursor, rec)
 		logToolEnd(ctx, logger, d.SyncName, start, "", len(out.Entries), err)
 		return result, out, err
 	}
@@ -265,7 +276,14 @@ func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 // NextCursor — kept separate from genericSyncHandler so a test can drive
 // it directly against a fake service and an already-validated cursor
 // instead of a live *fileee.Client and a caller-supplied string.
-func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], service fileee.ReadService[T], cursor fileee.Cursor) (*mcp.CallToolResult, genericSyncOutput[S], error) {
+//
+// rec.Record (Aufgabe 4) runs, after the response is fully and
+// successfully built, with d.IDOf(&entry) for every row in res.Rows —
+// entities changed or added since the caller's cursor, i.e. entities this
+// call actually delivered. res.DeletedIDs are deliberately NOT recorded:
+// an id that no longer exists is never a valid target for a later
+// destructive tool (see syncDescriptor.IDOf's own doc comment).
+func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], service fileee.ReadService[T], cursor fileee.Cursor, rec *issued.Store) (*mcp.CallToolResult, genericSyncOutput[S], error) {
 	res, err := service.Diff(ctx, cursor)
 	if err != nil {
 		return nil, genericSyncOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.SyncName, err)
@@ -277,9 +295,11 @@ func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], 
 		Entries:    make([]S, 0, len(res.Rows)),
 	}
 	lines := make([]string, 0, len(res.Rows))
+	ids := make([]string, 0, len(res.Rows))
 	for i := range res.Rows {
 		entry := res.Rows[i]
 		out.Entries = append(out.Entries, d.Summarize(&entry))
+		ids = append(ids, d.IDOf(&entry))
 		if line := untrustedLineOfSync(d, &entry); line != "" {
 			lines = append(lines, line)
 		}
@@ -295,6 +315,7 @@ func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], 
 	if err != nil {
 		return nil, genericSyncOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.SyncName, err)
 	}
+	rec.Record(ctx, ids...)
 	return result, out, nil
 }
 
@@ -416,6 +437,7 @@ func tagSyncDescriptor() syncDescriptor[fileee.Tag, syncTagSummary] {
 		EntityType: "Tag",
 		Service:    func(c *fileee.Client) fileee.ReadService[fileee.Tag] { return c.Tags },
 		Summarize:  func(t *fileee.Tag) syncTagSummary { return syncTagSummary{ID: t.ID, Name: t.Name} },
+		IDOf:       func(t *fileee.Tag) string { return t.ID },
 	}
 }
 
@@ -446,6 +468,7 @@ func companySyncDescriptor() syncDescriptor[fileee.Company, syncCompanySummary] 
 		},
 		UntrustedLine: func(c *fileee.Company) string { return c.CompanyName },
 		PoisonProbe:   func(marker string) *fileee.Company { return &fileee.Company{CompanyName: marker} },
+		IDOf:          func(c *fileee.Company) string { return c.ID },
 	}
 }
 
@@ -467,6 +490,7 @@ func documentTypeSyncDescriptor() syncDescriptor[fileee.DocumentType, syncDocume
 		Summarize: func(t *fileee.DocumentType) syncDocumentTypeSummary {
 			return syncDocumentTypeSummary{ID: t.ID, Name: t.I18NName}
 		},
+		IDOf: func(t *fileee.DocumentType) string { return t.ID },
 	}
 }
 
@@ -489,6 +513,7 @@ func documentTypeSchemeSyncDescriptor() syncDescriptor[fileee.DocumentTypeScheme
 		Summarize: func(t *fileee.DocumentTypeScheme) syncDocumentTypeSchemeSummary {
 			return syncDocumentTypeSchemeSummary{ID: t.ID}
 		},
+		IDOf: func(t *fileee.DocumentTypeScheme) string { return t.ID },
 	}
 }
 
@@ -519,6 +544,7 @@ func contactSyncDescriptor() syncDescriptor[fileee.Contact, syncContactSummary] 
 			return strings.TrimSpace(c.FirstName + " " + c.LastName)
 		},
 		PoisonProbe: func(marker string) *fileee.Contact { return &fileee.Contact{LastName: marker} },
+		IDOf:        func(c *fileee.Contact) string { return c.ID },
 	}
 }
 
@@ -542,6 +568,7 @@ func reminderSyncDescriptor() syncDescriptor[fileee.Reminder, syncReminderSummar
 		},
 		UntrustedLine: func(r *fileee.Reminder) string { return r.Description },
 		PoisonProbe:   func(marker string) *fileee.Reminder { return &fileee.Reminder{Description: marker} },
+		IDOf:          func(r *fileee.Reminder) string { return r.ID },
 	}
 }
 
@@ -570,6 +597,7 @@ func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConver
 		},
 		UntrustedLine: func(c *fileee.Conversation) string { return c.Title },
 		PoisonProbe:   func(marker string) *fileee.Conversation { return &fileee.Conversation{Title: marker} },
+		IDOf:          func(c *fileee.Conversation) string { return c.ID },
 	}
 }
 
@@ -580,15 +608,15 @@ func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConver
 // going through RegisterAll, to keep those tests independent of the
 // unrelated tools RegisterAll mounts.
 //
-// logger is threaded straight through to every registerSync call — the
-// same logger RegisterAll itself received, never a fresh one built here
-// (see RegisterAll's own doc comment, read.go).
-func registerSyncTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
-	registerSync(s, p, logger, tagSyncDescriptor())
-	registerSync(s, p, logger, companySyncDescriptor())
-	registerSync(s, p, logger, documentTypeSyncDescriptor())
-	registerSync(s, p, logger, documentTypeSchemeSyncDescriptor())
-	registerSync(s, p, logger, contactSyncDescriptor())
-	registerSync(s, p, logger, reminderSyncDescriptor())
-	registerSync(s, p, logger, conversationSyncDescriptor())
+// logger and rec (Aufgabe 4) are threaded straight through to every
+// registerSync call — the same logger/store RegisterAll itself received,
+// neither ever rebuilt here (see RegisterAll's own doc comment, read.go).
+func registerSyncTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) {
+	registerSync(s, p, logger, tagSyncDescriptor(), rec)
+	registerSync(s, p, logger, companySyncDescriptor(), rec)
+	registerSync(s, p, logger, documentTypeSyncDescriptor(), rec)
+	registerSync(s, p, logger, documentTypeSchemeSyncDescriptor(), rec)
+	registerSync(s, p, logger, contactSyncDescriptor(), rec)
+	registerSync(s, p, logger, reminderSyncDescriptor(), rec)
+	registerSync(s, p, logger, conversationSyncDescriptor(), rec)
 }
