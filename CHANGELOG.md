@@ -1,3 +1,30 @@
+## [0.7.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.6.0...v0.7.0) (2026-08-24)
+
+### Features
+
+* **tools:** add box_add_document and box_remove_document write tools ([5aa92c1](https://github.com/strausmann/fileee-mcp-server/commit/5aa92c1514d67910ecba6110a2e3e5f0dd7143f3))
+* **tools:** add create_contact write tool ([094e967](https://github.com/strausmann/fileee-mcp-server/commit/094e967f1336b4c7e8dd63a72316fe1d112d83fd))
+* **tools:** add create_reminder and update_reminder write tools ([4d2d052](https://github.com/strausmann/fileee-mcp-server/commit/4d2d052ffae6853f06490461531c5e7e3aa32788))
+* **tools:** add update_contact write tool (patch/merge) and write.go registration ([65b5ac3](https://github.com/strausmann/fileee-mcp-server/commit/65b5ac310de2b515dca3137de31c8d6b406baa97))
+* **tools:** add update_document write tool (title patch/merge) ([11bf3a4](https://github.com/strausmann/fileee-mcp-server/commit/11bf3a4f09e59fe21d86c0ba095b3488b7866356))
+* **tools:** add upload_document write tool ([c74ba4b](https://github.com/strausmann/fileee-mcp-server/commit/c74ba4be0830784195549a5dc295ea6c086d7ef8))
+* **tools:** add whoami meta-tool ([#63](https://github.com/strausmann/fileee-mcp-server/issues/63)) ([f09fba5](https://github.com/strausmann/fileee-mcp-server/commit/f09fba5906e148535a27a6c521d54770c01bb8eb))
+* **tools:** rename RegisterRead->RegisterAll and add a title annotation to every tool ([f124bba](https://github.com/strausmann/fileee-mcp-server/commit/f124bbaf8c603ae12c846c862caae144291c7e06))
+
+### Bug Fixes
+
+* **config:** saturate max request body size instead of overflowing ([e225f59](https://github.com/strausmann/fileee-mcp-server/commit/e225f595cc48e08ac94bcb71dabc641dc07f0a95))
+* **config:** saturate only when the derived body size cannot fit ([8625ac5](https://github.com/strausmann/fileee-mcp-server/commit/8625ac5b62f60b65c5a4778d9bdc8ab14b93fc4d))
+* **tools:** create untrusted boundary before persisting mutations ([5d6918e](https://github.com/strausmann/fileee-mcp-server/commit/5d6918e352cb2dd893ec72b9b68925a286d6ea48))
+* **tools:** drop deleted capabilities.go from CI gate, fix stale gating claim ([55a1916](https://github.com/strausmann/fileee-mcp-server/commit/55a1916c203ba532dd334769deffd2cda863c68d))
+* **tools:** drop firstName/lastName required from create_contact schema ([b26a13b](https://github.com/strausmann/fileee-mcp-server/commit/b26a13b7fe21f5e1902b98fa1f11b0a8d0b63ec3))
+* **tools:** enforce configured upload size limit in upload_document ([fe54289](https://github.com/strausmann/fileee-mcp-server/commit/fe54289e188f8fb6a4ab9daeda176bba0e7b9f77))
+* **tools:** guard upload_document against nil upload result ([ff3b8c4](https://github.com/strausmann/fileee-mcp-server/commit/ff3b8c440f0f9e6271616c70b312c5e78d246114))
+* **tools:** manifest title, tool counts, scope wording, tools.md ADR-0018 ([e05b5b3](https://github.com/strausmann/fileee-mcp-server/commit/e05b5b3343d13c68db9062695a0289abd5ba80bb))
+* **tools:** report write tools as kind=write in get_tool_manifest ([3b6edb1](https://github.com/strausmann/fileee-mcp-server/commit/3b6edb170261dc4ae33c94403b00d335beeacb5e))
+* **tools:** saturate encoded upload ceiling instead of overflowing ([49230fc](https://github.com/strausmann/fileee-mcp-server/commit/49230fc28e8d50c13a1a6059453cdc588917c69c))
+* **tools:** stop promising unverified backend behaviour in box_remove_document ([b141d3e](https://github.com/strausmann/fileee-mcp-server/commit/b141d3e6ec547160476b0e8142dd36aa2d57d380))
+
 ## [0.6.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.5.1...v0.6.0) (2026-08-13)
 
 ### Features
