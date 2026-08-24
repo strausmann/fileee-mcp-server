@@ -270,6 +270,10 @@ jobs:
         run: |
           chmod +x scripts/adr-registry-check.sh
           ./scripts/adr-registry-check.sh
+      - name: Umlaut-Check (Ersatzschreibungen in .go-Dateien, Issue #71)
+        run: |
+          chmod +x scripts/umlaut-check.sh
+          ./scripts/umlaut-check.sh
       - name: Entrypoint-Entscheidung (Start mit und ohne Infisical)
         run: |
           chmod +x deploy/entrypoint.sh deploy/entrypoint_test.sh
