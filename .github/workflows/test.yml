@@ -214,6 +214,21 @@ jobs:
           # eigenen Vor-clientFor-Pruefung (ungueltiges base64 wird ohne Netzwerkzugriff
           # abgelehnt, inklusive Gegenprobe mit gueltigem base64). Datei liegt bei 87,0% —
           # komfortabel ueber der 80%-Business-Logik-Stufe, keine Ausnahme noetig.
+          #
+          # internal/issued/issued.go (ID-Whitelist-Plan, Task 1, homelab-management repo):
+          # der Kern der Whitelist aus ADR-0013 Punkt 3 — Store.Record/Check binden
+          # destruktive Operationen an eine ID aus einer vorangegangenen, echten Leseantwort,
+          # je verifizierter Identitaet (serve.IdentityFrom(ctx), fail-closed wie clientFor).
+          # Sicherheitstragender Code, Auth-/Permission-Stufe (90) wie internal/accounts/
+          # accounts.go & internal/server/scopes.go oben, nicht die niedrigere
+          # Mutations-Stufe (85) von internal/clientpool/pool.go — ein Fehler hier waere kein
+          # Datenverlust, sondern ein umgangener Zugriffs-Schutz. Kernlogik (New, subjectOf,
+          # Record, Check, errNotIssuedFor) vollstaendig ueber ein weisses-Kasten-Testfile
+          # (issued_test.go) abgedeckt, inklusive der Identitaetstrennung als dedizierter
+          # Sicherheitszusage-Test (TestIdentitaetenSindGetrennt, mit Gegenprobe: Subject
+          # ignoriert -> derselbe Test faerbt rot, weil eine fremde Identitaet durchgelassen
+          # wird) und des fail-closed-Pfads ohne Identitaet. Datei liegt bei 100% — Task 2
+          # (Verfall/Deckel) fuegt neue Zweige hinzu, die diese Schwelle unveraendert lassen.
           ./scripts/coverage-gate-strict.sh cover.out \
             internal/accounts/accounts.go:90 \
             internal/config/config.go:90 \
@@ -221,6 +236,7 @@ jobs:
             internal/server/scopes.go:90 \
             internal/server/ratelimit.go:90 \
             internal/diag/diag.go:90 \
+            internal/issued/issued.go:90 \
             internal/server/server.go:80 \
             internal/clientpool/pool.go:85 \
             internal/tools/read.go:80 \

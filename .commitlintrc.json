@@ -11,6 +11,7 @@
         "auth",
         "accounts",
         "clientpool",
+        "issued",
         "tools",
         "capabilities",
         "diag",
