@@ -15,50 +15,50 @@ import (
 	"github.com/strausmann/gangway/serve"
 )
 
-// --- identitaetstragende Kontexte: der echte Mechanismus, keine Attrappe -
+// --- identitätstragende Kontexte: der echte Mechanismus, keine Attrappe -
 //
 // Der Auftrag, aus dem diese Datei entstand, nannte den Helfer unten
 // serve.ContextWithIdentity. Eine solche exportierte Funktion existiert in
-// github.com/strausmann/gangway v0.5.0 nicht (geprueft gegen den
-// Modulquellcode: serve/serve.go's vollstaendige Liste exportierter Symbole
-// traegt nur IdentityFrom und TokenFrom, nie einen Setter; der
-// Kontext-Schluesseltyp (identityKey{}) ist unexportiert). Gangways eigene
+// github.com/strausmann/gangway v0.5.0 nicht (geprüft gegen den
+// Modulquellcode: serve/serve.go's vollständige Liste exportierter Symbole
+// trägt nur IdentityFrom und TokenFrom, nie einen Setter; der
+// Kontext-Schlüsseltyp (identityKey{}) ist unexportiert). Gangways eigene
 // Testsuite dokumentiert bewusst genau das, im Doc-Kommentar von
 // TestAuthenticateAllowsValidTokenAndPublishesIdentity
 // (serve/serve_test.go): "there is no longer a way to attach a bare
-// http.HandlerFunc that reads the context directly" — die Identitaet wird
-// ausschliesslich von der Authentifizierungs-Middleware gesetzt, die
-// AttachMCP vor einen echten *mcp.Server haengt, und ist nur aus einem von
-// dieser Middleware tatsaechlich aufgerufenen Tool-Handler heraus
+// http.HandlerFunc that reads the context directly" — die Identität wird
+// ausschließlich von der Authentifizierungs-Middleware gesetzt, die
+// AttachMCP vor einen echten *mcp.Server hängt, und ist nur aus einem von
+// dieser Middleware tatsächlich aufgerufenen Tool-Handler heraus
 // beobachtbar.
 //
-// Dieses Repository dokumentiert dieselbe Einschraenkung von der
+// Dieses Repository dokumentiert dieselbe Einschränkung von der
 // konsumierenden Seite her bereits selbst, in
 // internal/tools/read_generic_test.go, und weicht dort aus, indem es
 // UNTERHALB der ctx-Grenze testet (interne Helfer bekommen einen bereits
-// aufgeloesten Wert statt eines Kontexts uebergeben). Die oeffentliche API
+// aufgelösten Wert statt eines Kontexts übergeben). Die öffentliche API
 // dieses Pakets ist bewusst ctx-first — Record und Check nehmen beide
-// context.Context entgegen, damit Check spaeter direkt in das eigene ctx
+// context.Context entgegen, damit Check später direkt in das eigene ctx
 // eines Tool-Handlers verdrahtet werden kann (ab Task 3) —, dieses
-// Ausweichen ist fuer einen Test der oeffentlichen Oberflaeche also nicht
-// verfuegbar: irgendetwas muss mindestens einmal tatsaechlich durch
+// Ausweichen ist für einen Test der öffentlichen Oberfläche also nicht
+// verfügbar: irgendetwas muss mindestens einmal tatsächlich durch
 // Gangways echte Anfrage-Pipeline laufen, um ein ctx zu erzeugen, das
 // serve.IdentityFrom erkennt.
 //
 // ctxMitIdentitaet ist genau dieser echte, minimale Rundlauf: ein
 // Wegwerf-Gangway-Server mit einem von testidp ausgestellten Token, ein
 // einziges *mcp.Server-Werkzeug ("capture"), dessen einzige Aufgabe es
-// ist, das ctx, mit dem es aufgerufen wurde, ueber einen Channel an diesen
-// Helfer zurueckzureichen, und ein echter MCP-Client, der es genau einmal
-// aufruft. Was zurueckkommt, ist ein echtes ctx, das tatsaechlich durch
+// ist, das ctx, mit dem es aufgerufen wurde, über einen Channel an diesen
+// Helfer zurückzureichen, und ein echter MCP-Client, der es genau einmal
+// aufruft. Was zurückkommt, ist ein echtes ctx, das tatsächlich durch
 // Gangways eigene Authentifizierungs- und Tool-Autorisierungs-Middleware
 // gelaufen ist — keine selbstgebaute Attrappe.
 //
-// Werte aus dem zurueckgegebenen Kontext zu lesen, nachdem die Anfrage, die
+// Werte aus dem zurückgegebenen Kontext zu lesen, nachdem die Anfrage, die
 // ihn erzeugt hat, abgeschlossen ist, ist sicher: ein Kontext-Abbruch
-// betrifft nur Done()/Err(), nie bereits vor dem Abbruch angehaengte
+// betrifft nur Done()/Err(), nie bereits vor dem Abbruch angehängte
 // Values — und der gepufferte Channel unten garantiert, dass das Senden
-// abgeschlossen ist, bevor CallTool an diese Funktion zurueckkehrt.
+// abgeschlossen ist, bevor CallTool an diese Funktion zurückkehrt.
 func ctxMitIdentitaet(t *testing.T, subject string) context.Context {
 	t.Helper()
 
@@ -119,9 +119,9 @@ func ctxMitIdentitaet(t *testing.T, subject string) context.Context {
 // issuedTestAudience ist die in dieser Datei durchgehend verwendete
 // OIDC-Audience, sowohl beim Bau des Gangway-Servers (serve.Config.Audience)
 // als auch beim Ausstellen eines Tokens (idp.Token's "aud"-Claim) — beide
-// muessen uebereinstimmen, sonst wuerde ctxMitIdentitaet aus einem Grund an
+// müssen übereinstimmen, sonst würde ctxMitIdentitaet aus einem Grund an
 // der Authentifizierung scheitern, der mit dem, was ein einzelner Test
-// tatsaechlich prueft, nichts zu tun hat (spiegelt
+// tatsächlich prüft, nichts zu tun hat (spiegelt
 // internal/tools/read_test.go's testAudience).
 const issuedTestAudience = "fileee-mcp-issued-test"
 
@@ -144,9 +144,9 @@ func (rt bearerRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) 
 	return http.DefaultTransport.RoundTrip(r)
 }
 
-// mustPrefixes parst eine feste CIDR-Liste, fuer Faelle, in denen ein
-// Parse-Fehler ein Bug in dieser Testdatei selbst waere, nicht im
-// geprueften Code (spiegelt internal/tools/read_test.go's eigenes
+// mustPrefixes parst eine feste CIDR-Liste, für Fälle, in denen ein
+// Parse-Fehler ein Bug in dieser Testdatei selbst wäre, nicht im
+// geprüften Code (spiegelt internal/tools/read_test.go's eigenes
 // mustPrefixes).
 func mustPrefixes(t *testing.T, cidrs ...string) []netip.Prefix {
 	t.Helper()
@@ -185,8 +185,8 @@ func TestCheckLehntEineNieAusgelieferteIDAb(t *testing.T) {
 	}
 }
 
-// Das ist die eigentliche Sicherheitszusage des Pakets: was eine Identitaet
-// gelesen hat, ist fuer eine andere kein gueltiges Ziel.
+// Das ist die eigentliche Sicherheitszusage des Pakets: was eine Identität
+// gelesen hat, ist für eine andere kein gültiges Ziel.
 func TestIdentitaetenSindGetrennt(t *testing.T) {
 	s := New(30*time.Minute, 1000)
 	s.Record(ctxMitIdentitaet(t, "alice"), "doc-1")
@@ -194,7 +194,7 @@ func TestIdentitaetenSindGetrennt(t *testing.T) {
 	err := s.Check(ctxMitIdentitaet(t, "bob"), "doc-1")
 
 	if !errors.Is(err, ErrNotIssued) {
-		t.Fatalf("Check fuer fremde Identitaet: %v, want ErrNotIssued", err)
+		t.Fatalf("Check für fremde Identität: %v, want ErrNotIssued", err)
 	}
 }
 
@@ -205,11 +205,11 @@ func TestOhneGeprueteIdentitaetWirdWederAufgenommenNochFreigegeben(t *testing.T)
 	s.Record(ohne, "doc-1") // darf nichts merken
 
 	if err := s.Check(ohne, "doc-1"); err == nil {
-		t.Fatal("Check ohne Identitaet: nil, want Fehler (fail-closed)")
+		t.Fatal("Check ohne Identität: nil, want Fehler (fail-closed)")
 	}
-	// und die ID darf auch fuer eine echte Identitaet nicht gueltig geworden sein
+	// und die ID darf auch für eine echte Identität nicht gültig geworden sein
 	if err := s.Check(ctxMitIdentitaet(t, "alice"), "doc-1"); !errors.Is(err, ErrNotIssued) {
-		t.Fatalf("Check nach identitaetslosem Record: %v, want ErrNotIssued", err)
+		t.Fatalf("Check nach identitätslosem Record: %v, want ErrNotIssued", err)
 	}
 }
 
@@ -228,36 +228,36 @@ func TestLeereUndIdentischeIDsWerdenSauberBehandelt(t *testing.T) {
 }
 
 // TestCheckLehntLeereIDAbAuchWennSieImBucketStuende isoliert Checks eigenen
-// id == ""-Fruehausstieg von Records Nebenwirkung. Das allein wuerde den
-// Fruehausstieg nie beweisen: TestLeereUndIdentischeIDsWerdenSauberBehandelt
-// oben prueft nur, dass Check("") einen Fehler liefert — aber Record
-// ueberspringt leere ids schon beim Aufnehmen (siehe Records eigenen
-// Doc-Kommentar), "" landet ueber die oeffentliche API also nie im Bucket,
-// und der Nachschlag in Check haette "" auch ganz ohne den Fruehausstieg
-// als "nicht aufgenommen" behandelt. Entfernt man den Fruehausstieg, bleibt
-// TestLeereUndIdentischeIDsWerdenSauberBehandelt deshalb gruen — er testet
+// id == ""-Frühausstieg von Records Nebenwirkung. Das allein würde den
+// Frühausstieg nie beweisen: TestLeereUndIdentischeIDsWerdenSauberBehandelt
+// oben prüft nur, dass Check("") einen Fehler liefert — aber Record
+// überspringt leere ids schon beim Aufnehmen (siehe Records eigenen
+// Doc-Kommentar), "" landet über die öffentliche API also nie im Bucket,
+// und der Nachschlag in Check hätte "" auch ganz ohne den Frühausstieg
+// als "nicht aufgenommen" behandelt. Entfernt man den Frühausstieg, bleibt
+// TestLeereUndIdentischeIDsWerdenSauberBehandelt deshalb grün — er testet
 // eine Nebenwirkung von Record, nicht den Guard in Check (per Gegenprobe
-// im Review bestaetigt).
+// im Review bestätigt).
 //
-// Dieser Test belegt den Fruehausstieg direkt, unabhaengig von Records
-// Verhalten: der Bucket wird — als Weisser-Kasten-Test im selben Paket,
-// ueber die sonst unexportierten Felder s.byIdent/s.mu — kuenstlich mit
-// einem ""-Schluessel vorbelegt. Ohne den Fruehausstieg wuerde Check das
-// als Treffer werten und faelschlich nil zurueckgeben; mit ihm bleibt es
-// bei ErrNotIssued, unabhaengig davon, was im Bucket steht.
+// Dieser Test belegt den Frühausstieg direkt, unabhängig von Records
+// Verhalten: der Bucket wird — als Weißer-Kasten-Test im selben Paket,
+// über die sonst unexportierten Felder s.byIdent/s.mu — künstlich mit
+// einem ""-Schlüssel vorbelegt. Ohne den Frühausstieg würde Check das
+// als Treffer werten und fälschlich nil zurückgeben; mit ihm bleibt es
+// bei ErrNotIssued, unabhängig davon, was im Bucket steht.
 func TestCheckLehntLeereIDAbAuchWennSieImBucketStuende(t *testing.T) {
 	s := New(30*time.Minute, 1000)
 	ctx := ctxMitIdentitaet(t, "alice")
 
 	subject, ok := subjectOf(ctx)
 	if !ok {
-		t.Fatal("subjectOf(ctx): ok = false, ctxMitIdentitaet sollte eine echte Identitaet liefern")
+		t.Fatal("subjectOf(ctx): ok = false, ctxMitIdentitaet sollte eine echte Identität liefern")
 	}
 	s.mu.Lock()
 	s.byIdent[subject] = map[string]time.Time{"": time.Now()}
 	s.mu.Unlock()
 
 	if err := s.Check(ctx, ""); !errors.Is(err, ErrNotIssued) {
-		t.Fatalf("Check(\"\") trotz kuenstlich vorbelegtem Bucket: %v, want ErrNotIssued", err)
+		t.Fatalf("Check(\"\") trotz künstlich vorbelegtem Bucket: %v, want ErrNotIssued", err)
 	}
 }
