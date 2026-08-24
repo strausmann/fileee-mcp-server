@@ -6,16 +6,19 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 	"github.com/strausmann/fileee-mcp-server/internal/config"
 	"github.com/strausmann/fileee-mcp-server/internal/diag"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 	"github.com/strausmann/fileee-mcp-server/internal/tools"
 	"github.com/strausmann/gangway/access"
 	"github.com/strausmann/gangway/identity"
@@ -37,6 +40,20 @@ type Server struct {
 	cfg  *config.Config
 	gw   *serve.Server
 	pool *clientpool.Pool
+
+	// issuedStore ist der aus cfg.IssuedIDTTLSeconds/IssuedIDMaxPerIdentity
+	// gebaute internal/issued.Store (siehe deren eigene Doc-Kommentare) —
+	// gehalten, aber noch NICHT an tools.RegisterAll durchgereicht: dessen
+	// Signatur erweitert erst eine Folgeaufgabe um einen *issued.Store-
+	// Parameter, den die Lese-/Schreib-Werkzeuge dann tatsaechlich
+	// befragen (Record beim Ausliefern, Check vor einer destruktiven
+	// Operation). Bis dahin ist issuedStore ausschliesslich ueber
+	// TestNewWiresConfiguredIssuedIDLimitsIntoTheStore (white-box,
+	// gleiches Paket) beobachtbar — dieser Test ist bewusst KEIN
+	// Ueberbleibsel, sondern der Beleg, dass die beiden Konfigurationswerte
+	// tatsaechlich (nicht nur geladen) im gebauten Store ankommen; siehe
+	// dessen eigenen Doc-Kommentar fuer den Bezug zum PR-#68-Fehlerbild.
+	issuedStore *issued.Store
 }
 
 // buildOptions buendelt, was Option anpasst.
@@ -194,6 +211,65 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	}
 	logger := diag.New(cfg.LogLevel, logOutput)
 
+	// slog.SetDefault(logger) makes the package-level default logger (what
+	// slog.InfoContext/DebugContext etc. — called with NO explicit logger —
+	// resolve to) the SAME level-gated, masked logger every other part of
+	// this process already uses. Without this, log/slog's own zero-value
+	// default (an unmasked slog.TextHandler writing to os.Stderr at
+	// LevelInfo, ignoring cfg.LogLevel entirely) is a silent second logging
+	// path that never passes through diag's redactingHandler.
+	//
+	// This exists for exactly one caller today: internal/issued.Store.Record
+	// logs its per-identity-cap eviction count via slog.DebugContext — the
+	// package-level default, not a logger New() takes as a parameter (see
+	// that package's own doc comment on WHY: Store.New's signature is
+	// Task 1/2's already-reviewed, 100%-covered contract, and changing it
+	// here — to thread a *slog.Logger through Record and grow every caller,
+	// test, and mock accordingly — is a bigger and riskier edit than the one
+	// line below, for a single debug-level line that never carries the ID
+	// itself (see Record's doc comment). Two rejected alternatives, for the
+	// record: (a) grow issued.New's signature to take a logger — rejected
+	// per the above; (c) leave the eviction line on the untouched default —
+	// rejected because that default is stderr/unmasked/always-Info, so
+	// FILEEE_LOG_LEVEL=debug would never actually surface this line, and
+	// FILEEE_LOG_LEVEL=info would still leak it to stderr unmasked — exactly
+	// the "loaded but not enforced" defect this task exists to close, just
+	// for a logger setting instead of a config value.
+	//
+	// Side effects, checked (grep for slog.Info/Debug/Warn/Error/Default
+	// across the module before this change): internal/issued.Record is the
+	// ONLY call site anywhere in this codebase that touches the package-level
+	// default logger — nothing else in this process reads or writes it, so
+	// there is no other package whose behavior this call could silently
+	// change. cmd/fileee-mcp-server/main.go's own startup/shutdown lines use
+	// plain fmt.Fprintf, not log/slog, and stay untouched either way.
+	//
+	// Known limitation for tests, not production: SetDefault mutates
+	// process-global state. New() is called once in the real binary, so this
+	// is inert there. Several tests in this package call New() repeatedly
+	// (and some run t.Parallel()) without redirecting logOutput — each call
+	// re-points the global default at ITS OWN logger. slog.SetDefault itself
+	// is safe under the race detector (an atomic pointer swap), but a test
+	// that both (a) triggers an eviction AND (b) asserts on the resulting
+	// log line's content would be flaky if another parallel test's New()
+	// call raced the default out from under it in between. No existing test
+	// does both — server_diag_test.go asserts on its own `logger` variable
+	// directly (not the package default), and issued.Store's own eviction
+	// tests build a *Store directly with issued.New/SetClock and never go
+	// through server.New at all. If a future test needs to assert on this
+	// specific line's output, it must NOT run t.Parallel() with any other
+	// test that also calls New() without WithLogOutput.
+	slog.SetDefault(logger)
+
+	// issuedStore ist der aus den beiden Task-3-Einstellungen gebaute
+	// internal/issued.Store — siehe Server.issuedStore's eigenen
+	// Doc-Kommentar dafuer, warum er hier zwar gebaut, aber noch nicht an
+	// tools.RegisterAll durchgereicht wird.
+	issuedStore := issued.New(
+		time.Duration(cfg.IssuedIDTTLSeconds)*time.Second,
+		int(cfg.IssuedIDMaxPerIdentity),
+	)
+
 	poolOptions := append([]clientpool.Option{
 		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
 			return fileee.NewFileSessionStore(sessionFilePath(cfg.SessionDir, accountKey))
@@ -240,7 +316,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		return instance
 	})
 
-	return &Server{cfg: cfg, gw: gw, pool: pool}, nil
+	return &Server{cfg: cfg, gw: gw, pool: pool, issuedStore: issuedStore}, nil
 }
 
 // buildResolver uebersetzt cfg.Accounts (siehe config.LoadConfig, ladeKonten)

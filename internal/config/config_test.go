@@ -481,6 +481,24 @@ func TestLoadConfigFailFast(t *testing.T) {
 			erwartet: "FILEEE_RATE_RPS",
 		},
 		{
+			name: "negative issued-id-ttl",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_ISSUED_ID_TTL_SECONDS"] = "-1"
+				return e
+			},
+			erwartet: "FILEEE_ISSUED_ID_TTL_SECONDS",
+		},
+		{
+			name: "negativer issued-id-deckel",
+			env: func() map[string]string {
+				e := minimalToken()
+				e["FILEEE_ISSUED_ID_MAX_PER_IDENTITY"] = "-1"
+				return e
+			},
+			erwartet: "FILEEE_ISSUED_ID_MAX_PER_IDENTITY",
+		},
+		{
 			name: "nulldauer beim keepalive",
 			env: func() map[string]string {
 				e := minimalToken()
@@ -659,6 +677,44 @@ func TestLoadConfigLogLevelDebug(t *testing.T) {
 	}
 	if cfg.LogLevel != diag.LevelDebug {
 		t.Errorf("LogLevel = %q, erwartet %q", cfg.LogLevel, diag.LevelDebug)
+	}
+}
+
+// TestLoadConfigIssuedIDDefaults belegt die Vorgabewerte von
+// FILEEE_ISSUED_ID_TTL_SECONDS/FILEEE_ISSUED_ID_MAX_PER_IDENTITY — 30
+// Minuten bzw. 1000 IDs je Identitaet (Config.IssuedIDTTLSeconds/
+// IssuedIDMaxPerIdentity eigene Doc-Kommentare).
+func TestLoadConfigIssuedIDDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadConfig(envOf(minimalToken()))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	if cfg.IssuedIDTTLSeconds != 1800 {
+		t.Errorf("IssuedIDTTLSeconds = %d, erwartet Default 1800", cfg.IssuedIDTTLSeconds)
+	}
+	if cfg.IssuedIDMaxPerIdentity != 1000 {
+		t.Errorf("IssuedIDMaxPerIdentity = %d, erwartet Default 1000", cfg.IssuedIDMaxPerIdentity)
+	}
+}
+
+// TestLoadConfigIssuedIDWerteAusDerUmgebung belegt, dass beide Werte aus der
+// Umgebung tatsaechlich ankommen — das Gegenstueck zum Default-Test oben.
+func TestLoadConfigIssuedIDWerteAusDerUmgebung(t *testing.T) {
+	t.Parallel()
+
+	env := minimalToken()
+	env["FILEEE_ISSUED_ID_TTL_SECONDS"] = "60"
+	env["FILEEE_ISSUED_ID_MAX_PER_IDENTITY"] = "5"
+
+	cfg, err := LoadConfig(envOf(env))
+	if err != nil {
+		t.Fatalf("LoadConfig = Fehler %v", err)
+	}
+	if cfg.IssuedIDTTLSeconds != 60 || cfg.IssuedIDMaxPerIdentity != 5 {
+		t.Errorf("IssuedIDTTLSeconds/IssuedIDMaxPerIdentity = %d/%d, erwartet 60/5",
+			cfg.IssuedIDTTLSeconds, cfg.IssuedIDMaxPerIdentity)
 	}
 }
 

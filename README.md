@@ -160,6 +160,19 @@ Jeder Aufruf eines Werkzeugs (`tools/call`) muss drei unabhängige Kontingente p
 
 Die von `FILEEE_MAX_UPLOAD_BYTES` abgeleitete `MaxRequestBodyBytes` bleibt aus einem unabhängigen Grund offen: Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
 
+### ID-Whitelist für destruktive Operationen
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `FILEEE_ISSUED_ID_TTL_SECONDS` | Wie lange eine von einem Lese-Werkzeug ausgelieferte ID gültig bleibt, bevor sie wie eine nie ausgelieferte behandelt wird | `1800` (30 Minuten) |
+| `FILEEE_ISSUED_ID_MAX_PER_IDENTITY` | Wie viele IDs sich dieser Server gleichzeitig **je verifizierter Identität** merkt — bei Überlauf wird die jeweils älteste verdrängt | `1000` |
+
+Beide Werte steuern `internal/issued.Store` (ADR-0013 Punkt 3): jede Identität darf ein destruktives Werkzeug nur auf eine ID anwenden, die ein vorheriges Lese-Werkzeug für **dieselbe** Identität tatsächlich ausgeliefert hat — eine ID, die nur im Text eines fremden Dokuments auftaucht (etwa in einem eingebetteten Prompt-Injection-Versuch), war nie Teil dieser Merkliste und wird deshalb abgelehnt. Beide Grenzen werden **tatsächlich durchgesetzt**, nicht nur geladen — derselbe Fehler, den `FILEEE_MAX_UPLOAD_BYTES` vor dem write-tools-Increment hatte (siehe oben): eine Einstellung ohne Aufrufstelle täuscht Sicherheit vor, die nicht besteht.
+
+Ein Wert von `0` bedeutet bei beiden **nicht** „unbegrenzt", sondern wird als reale Grenze durchgesetzt (`FILEEE_ISSUED_ID_TTL_SECONDS=0`: jede ID gilt sofort als verfallen; `FILEEE_ISSUED_ID_MAX_PER_IDENTITY=0`: es wird sich nichts gemerkt) — dieselbe fail-closed-Konvention wie bei `FILEEE_MAX_INFLIGHT`/`FILEEE_MAX_UPLOAD_BYTES` oben. Negative Werte lehnt der Start mit einer Fehlermeldung ab.
+
+`internal/server.New` baut aus beiden Werten unmittelbar den `internal/issued.Store`, der sie auswertet — kein Umweg über eine Einstellung ohne Konsumenten. Was zum Zeitpunkt dieses Increments noch aussteht: kein Lese- oder Schreib-Werkzeug befragt diesen Store bislang (`Record` beim Ausliefern, `Check` vor einer destruktiven Operation) — das verdrahtet der nächste Schritt desselben Plans. Bis dahin bestehen beide Variablen bereits jetzt korrekt geladen und durchgesetzt **innerhalb des Stores selbst**, wirken sich aber noch auf keinen tatsächlichen Werkzeugaufruf aus.
+
 ## Diagnose
 
 `FILEEE_LOG_LEVEL` steuert das diagnostische Protokoll dieses Servers ([`internal/diag`](internal/diag)) — ein JSON-Objekt pro Zeile auf der Standardausgabe, unabhängig von Gangways eigenem Zugriffsprotokoll (NGINX-Format, siehe dessen Doku) und von den Start-/Fehlermeldungen in `cmd/fileee-mcp-server/main.go`, die weiterhin unverändert auf stdout/stderr laufen.
