@@ -245,11 +245,26 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// Nebenwirkungen geprüft (grep nach slog.Info/Debug/Warn/Error/Default
 	// im gesamten Modul vor dieser Änderung): internal/issued.Record ist
 	// die EINZIGE Aufrufstelle in diesem gesamten Repo, die den paketweiten
-	// Default-Logger berührt — kein anderes Paket in diesem Prozess liest
-	// oder schreibt ihn, es gibt also kein anderes Paket, dessen Verhalten
-	// sich durch diesen Aufruf still ändern könnte. cmd/fileee-mcp-server/main.go's
+	// slog-Default-Logger berührt — kein anderes Paket in diesem Prozess
+	// liest oder schreibt ihn, es gibt also kein anderes Paket, dessen
+	// Verhalten sich durch diesen Aufruf still ändern könnte. cmd/fileee-mcp-server/main.go's
 	// eigene Start-/Shutdown-Zeilen nutzen durchgehend fmt.Fprintf, nicht
 	// log/slog, und bleiben so oder so unberührt.
+	//
+	// EIN grep-blinder Fleck bleibt: slog.SetDefault kapert intern zusätzlich
+	// das ältere stdlib-Paket log/log (log.SetOutput + log.SetFlags(0), Go's
+	// eigene Implementierung von slog.SetDefault) — eine Aufrufstelle, die
+	// kein "slog."-Grep findet, weil sie nicht als slog.* im Quelltext
+	// dieses Moduls steht, sondern in log/slog selbst. Betroffen ist
+	// net/http: Server.ErrorLog ist hier nirgends gesetzt, also fällt
+	// net/http intern auf log.Printf zurück (siehe dessen eigene Doku) —
+	// etwa für "http: TLS handshake error". Nach dieser Zeile läuft auch
+	// diese Meldung durch denselben stufengegatterten, maskierten Handler
+	// wie jede slog-Zeile, statt unmaskiert auf stderr zu landen. Das ist
+	// hier erwünscht, nicht bloß hingenommen: dieselbe Begründung wie oben
+	// für internal/issued.Record gilt auch für net/http's eigene Meldungen
+	// — ein zweiter, ungefilterter Protokollierungsweg am maskierenden
+	// Handler vorbei wäre genau die Lücke, die diese Zeile schließen soll.
 	//
 	// Bekannte Einschränkung für Tests, nicht für den Produktivbetrieb:
 	// SetDefault verändert prozessglobalen Zustand. New() wird in der
