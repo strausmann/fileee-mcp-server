@@ -23,6 +23,7 @@ import (
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // referenceTagSummary is list_tags/get_tag's structured summary. Named
@@ -99,6 +100,7 @@ func referenceTagDescriptor() readServiceDescriptor[fileee.Tag, referenceTagSumm
 			"the tag.",
 		Service:   func(c *fileee.Client) fileee.ReadService[fileee.Tag] { return c.Tags },
 		Summarize: func(t *fileee.Tag) referenceTagSummary { return referenceTagSummary{ID: t.ID, Name: t.Name} },
+		IDOf:      func(t *fileee.Tag) string { return t.ID },
 	}
 }
 
@@ -136,6 +138,7 @@ func referenceCompanyDescriptor() readServiceDescriptor[fileee.Company, companyS
 		},
 		UntrustedLine: func(c *fileee.Company) string { return c.CompanyName },
 		PoisonProbe:   func(marker string) *fileee.Company { return &fileee.Company{CompanyName: marker} },
+		IDOf:          func(c *fileee.Company) string { return c.ID },
 	}
 }
 
@@ -167,6 +170,7 @@ func referenceDocumentTypeDescriptor() readServiceDescriptor[fileee.DocumentType
 				DocumentCounter:    dt.DocumentCounter,
 			}
 		},
+		IDOf: func(dt *fileee.DocumentType) string { return dt.ID },
 	}
 }
 
@@ -200,16 +204,19 @@ func referenceDocumentTypeSchemeDescriptor() readServiceDescriptor[fileee.Docume
 			}
 			return documentTypeSchemeSummary{ID: sch.ID, FieldKeys: keys}
 		},
+		IDOf: func(sch *fileee.DocumentTypeScheme) string { return sch.ID },
 	}
 }
 
 // registerReferenceTools mounts this file's four descriptors onto s —
-// called once from RegisterAll (read.go). logger is threaded straight
-// through to registerReadService, the same pattern registerSyncTools
-// already follows (read_sync.go) for its own seven descriptors.
-func registerReferenceTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
-	registerReadService(s, p, logger, referenceTagDescriptor())
-	registerReadService(s, p, logger, referenceCompanyDescriptor())
-	registerReadService(s, p, logger, referenceDocumentTypeDescriptor())
-	registerReadService(s, p, logger, referenceDocumentTypeSchemeDescriptor())
+// called once from RegisterAll (read.go). logger and rec (Aufgabe 4) are
+// threaded straight through to registerReadService — get_* nimmt die vom
+// Aufrufer genannte ID auf. registerSyncTools (read_sync.go) bekommt seit
+// der Verschärfung auf gezielte Einzelabrufe (ADR-0019) kein rec mehr:
+// sync_* nimmt nichts mehr auf.
+func registerReferenceTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) {
+	registerReadService(s, p, logger, referenceTagDescriptor(), rec)
+	registerReadService(s, p, logger, referenceCompanyDescriptor(), rec)
+	registerReadService(s, p, logger, referenceDocumentTypeDescriptor(), rec)
+	registerReadService(s, p, logger, referenceDocumentTypeSchemeDescriptor(), rec)
 }

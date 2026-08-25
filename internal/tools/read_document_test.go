@@ -17,9 +17,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/go-fileee/fileee"
+
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // TestGetDocumentOutputFeldlisteIstAbgeschlossen ist Aufgabe 8-11's neue,
@@ -138,7 +141,7 @@ func TestGetDocumentHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testing
 	// Test mit einer Nil-Pointer-Dereferenzierung ab statt still zu
 	// bestehen — derselbe Beleg wie bei genericGetHandler's eigenem Test
 	// (read_generic_test.go).
-	handler := getDocumentHandler(nil, discardLogger())
+	handler := getDocumentHandler(nil, discardLogger(), nil)
 
 	_, _, err := handler(context.Background(), nil, getDocumentInput{ID: "   "})
 	if err == nil {
@@ -153,7 +156,7 @@ func TestDocumentFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeDocumentService{getErr: backendErr}
 
-	_, _, err := documentFromService(context.Background(), service, "d1")
+	_, _, err := documentFromService(context.Background(), service, "d1", nil)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -173,7 +176,7 @@ func TestDocumentFromServiceUnterscheidetNetzwerkfehler(t *testing.T) {
 	networkErr := errors.New("dial tcp: connection refused")
 	service := &fakeDocumentService{getErr: networkErr}
 
-	_, _, err := documentFromService(context.Background(), service, "d1")
+	_, _, err := documentFromService(context.Background(), service, "d1", nil)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -199,7 +202,7 @@ func TestDocumentFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfolg(t *
 		Attributes: fileee.DocumentAttributes{Title: marker, TagIDs: []string{"t1"}},
 	}}
 
-	result, out, err := documentFromService(context.Background(), service, "d1")
+	result, out, err := documentFromService(context.Background(), service, "d1", nil)
 	if err != nil {
 		t.Fatalf("documentFromService: %v", err)
 	}
@@ -219,6 +222,37 @@ func TestDocumentFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfolg(t *
 	}
 	if !strings.Contains(text.Text, marker) {
 		t.Errorf("Textinhalt enthaelt nicht den fremdbestimmten Titel (Erkennungswert fehlt): %q", text.Text)
+	}
+}
+
+// TestDocumentFromServiceMerktDieAngeforderteIDNichtDieAntwortID ist die
+// Gegenprobe zum Nachprüfungs-Befund (Codex-Review nach ADR-0019,
+// documentFromService's eigener WICHTIG-Kommentar): der Fake-Service
+// liefert für die angeforderte ID "d1" absichtlich eine ABWEICHENDE
+// Antwort-ID ("d1-kanonisch") zurück — genau das Szenario, das ein
+// fremder Fileee-Server bei einer serverseitigen Normalisierung/einem
+// Alias erzeugen könnte, ohne dass go-fileee das je bemerken würde
+// (siehe documentFromService's eigenen Kommentar für die Quellenbelege).
+// Vor dem Fix hätte diese Funktion rec.Record(ctx, out.ID) aufgerufen —
+// also "d1-kanonisch" — und die tatsächlich angeforderte "d1" NIE
+// gewhitelistet: exakt die Umkehrung, die diese Gegenprobe belegt.
+func TestDocumentFromServiceMerktDieAngeforderteIDNichtDieAntwortID(t *testing.T) {
+	service := &fakeDocumentService{getResult: &fileee.Document{
+		ID:     "d1-kanonisch",
+		Status: "DONE",
+	}}
+	rec := issued.New(time.Hour, 100)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	if _, _, err := documentFromService(ctx, service, "d1", rec); err != nil {
+		t.Fatalf("documentFromService: %v", err)
+	}
+
+	if err := rec.Check(ctx, "d1"); err != nil {
+		t.Errorf(`Check("d1") nach get_document("d1"): %v, want nil — "d1" ist die vom Aufrufer genannte und vom Server bestätigte ID, unabhängig davon, was die Antwort als ID-Feld trägt`, err)
+	}
+	if err := rec.Check(ctx, "d1-kanonisch"); err == nil {
+		t.Error(`Check("d1-kanonisch") nach get_document("d1"): nil, want einen Fehler — der Aufrufer hat diese ID nie genannt, sie darf nicht gewhitelistet sein`)
 	}
 }
 

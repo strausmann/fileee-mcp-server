@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
 	"github.com/strausmann/fileee-mcp-server/internal/config"
 	"github.com/strausmann/fileee-mcp-server/internal/diag"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 	"github.com/strausmann/fileee-mcp-server/internal/tools"
 	"github.com/strausmann/gangway/access"
 	"github.com/strausmann/gangway/identity"
@@ -37,6 +39,21 @@ type Server struct {
 	cfg  *config.Config
 	gw   *serve.Server
 	pool *clientpool.Pool
+
+	// issuedStore ist der aus cfg.IssuedIDTTLSeconds/IssuedIDMaxPerIdentity
+	// gebaute internal/issued.Store (siehe deren eigene Doc-Kommentare) —
+	// seit Aufgabe 4 an tools.RegisterAll durchgereicht (siehe unten): die
+	// generischen Lese-Werkzeuge (registerSyncTools/registerReferenceTools/
+	// registerPeopleTools) melden ausgelieferte IDs jetzt tatsächlich per
+	// Record; ein späteres, destruktives Werkzeug prüft sie per Check —
+	// diese Verdrahtung folgt erst in einer eigenen Aufgabe. Zusätzlich zu
+	// dieser Verdrahtung bleibt issuedStore weiterhin über
+	// TestNewWiresConfiguredIssuedIDLimitsIntoTheStore (white-box,
+	// gleiches Paket) beobachtbar — dieser Test ist bewusst KEIN
+	// Überbleibsel, sondern der Beleg, dass die beiden Konfigurationswerte
+	// tatsächlich (nicht nur geladen) im gebauten Store ankommen; siehe
+	// dessen eigenen Doc-Kommentar für den Bezug zum PR-#68-Fehlerbild.
+	issuedStore *issued.Store
 }
 
 // buildOptions buendelt, was Option anpasst.
@@ -194,6 +211,79 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	}
 	logger := diag.New(cfg.LogLevel, logOutput)
 
+	// Bis zu dieser Änderung stand hier slog.SetDefault(logger) — ein
+	// prozessglobaler Eingriff, der den paketweiten log/slog-Standard-Logger
+	// (das, worauf slog.InfoContext/DebugContext etc. — OHNE explizit
+	// übergebenen Logger aufgerufen — zurückgreifen) auf denselben
+	// stufengegatterten, maskierten Logger umbog, den jeder andere Teil
+	// dieses Prozesses bereits nutzt. Grund dafür war GENAU EIN Aufrufer:
+	// internal/issued.Store.Record protokollierte die Anzahl der wegen des
+	// Deckels je Identität verdrängten Einträge über den paketweiten
+	// Default, weil Store.New keinen eigenen Logger entgegennahm.
+	//
+	// Copilot-Review-Fund an PR #75: ein prozessglobaler Eingriff für einen
+	// Bedarf, der lokal an genau einer Store-Instanz hängt, überschreibt
+	// sich selbst, sobald mehr als eine *Server- bzw. *Store-Instanz im
+	// selben Prozess existiert — vor allem in Tests, die New() wiederholt
+	// ohne WithLogOutput aufrufen (die ausführliche frühere Fassung dieses
+	// Kommentars hatte das bereits als "bekannte Einschränkung" benannt,
+	// aber hingenommen statt behoben).
+	//
+	// Fix: issued.Store.SetLogger (siehe dessen eigenen Doc-Kommentar) reicht
+	// logger jetzt EXPLIZIT und GEZIELT an genau diese eine Store-Instanz
+	// durch, statt den Prozess-Default zu mutieren — der Logger hängt am
+	// Store, nicht mehr am Prozess. Aufgerufen direkt nach issued.New unten.
+	//
+	// Ein Nebeneffekt geht dabei bewusst verloren, nicht übersehen:
+	// slog.SetDefault kapert intern zusätzlich das ältere stdlib-Paket
+	// log/log (log.SetOutput + log.SetFlags(0), Go's eigene Implementierung
+	// von slog.SetDefault) — eine Aufrufstelle, die kein "slog."-Grep im
+	// eigenen Modul findet, weil sie nicht als slog.* im Quelltext dieses
+	// Moduls steht, sondern in log/slog selbst. Betroffen ist net/http:
+	// Server.ErrorLog wird für DIESEN Server nirgends gesetzt — nicht aus
+	// Nachlässigkeit, sondern weil es KEINEN Weg gibt, es zu setzen. Der
+	// http.Server, den dieser Prozess tatsächlich bedient, wird
+	// vollständig INNERHALB von gangway/serve gebaut (serve.go, Server.run)
+	// und dort ohne ErrorLog konstruiert; github.com/strausmann/gangway
+	// v0.5.0s serve.Config (serve/config.go) hat kein Logger- oder
+	// ErrorLog-Feld, über das dieses Modul einen Wert hineinreichen könnte
+	// (gegen den tatsächlichen Modulquellcode geprüft, nicht angenommen).
+	// net/http fällt für seine eigenen Fallback-Meldungen (z. B.
+	// "http: TLS handshake error") deshalb auf log.Printf zurück (siehe
+	// dessen eigene Doku) — vor dieser Änderung lief das, als
+	// Nebenwirkung von slog.SetDefault, durch denselben maskierenden
+	// Handler wie jede slog-Zeile; ab jetzt läuft es durch log/slog's
+	// eigenen, unveränderten Nullwert-Default (unmaskierter
+	// slog.TextHandler auf os.Stderr, fest auf LevelInfo).
+	//
+	// Das ist hinnehmbar, nicht nur mangels Alternative: net/http's eigene
+	// Fallback-Meldungen tragen keine Anwendungsdaten dieses Servers (keine
+	// Fileee-Zugangsdaten, keine Bearer-Token, keine Dokumentinhalte) — die
+	// Maskierungsgarantie, die internal/diag's redactingHandler für DIESEN
+	// Server bereitstellt, hatte hier ohnehin nichts zu maskieren; der
+	// einzige tatsächliche Nutzen war Konsistenz (ein einziger
+	// Protokollierungsweg für alles), nicht Sicherheit. Ein erneuter
+	// prozessglobaler Seiteneffekt einzig für diese Konsistenz wäre der
+	// falsche Tausch gegen den jetzt behobenen, echten Fund (mehrere
+	// Instanzen im selben Prozess überschreiben sich). Sollte net/http's
+	// eigene Fehlerausgabe künftig doch gezielt durch den maskierenden
+	// Handler laufen sollen, ist der richtige Ort dafür eine
+	// Upstream-Erweiterung von gangway/serve.Config um ein
+	// ErrorLog-/Logger-Feld — nicht ein erneuter slog.SetDefault hier.
+
+	// issuedStore ist der aus den beiden Aufgabe-3-Einstellungen gebaute
+	// internal/issued.Store, unten an tools.RegisterAll durchgereicht.
+	// SetLogger verdrahtet direkt danach denselben logger, den auch jeder
+	// andere Teil dieses Prozesses nutzt, EXPLIZIT an genau diese eine
+	// Store-Instanz — siehe den langen Kommentar oben (an der ehemaligen
+	// slog.SetDefault-Stelle) für das WARUM dieses Wechsels und
+	// issued.Store.SetLogger's eigenen Doc-Kommentar für die Mechanik.
+	issuedStore := issued.New(
+		time.Duration(cfg.IssuedIDTTLSeconds)*time.Second,
+		int(cfg.IssuedIDMaxPerIdentity),
+	)
+	issuedStore.SetLogger(logger)
+
 	poolOptions := append([]clientpool.Option{
 		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
 			return fileee.NewFileSessionStore(sessionFilePath(cfg.SessionDir, accountKey))
@@ -218,7 +308,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// TestUnauthenticatedRequestReachesTheChallengeNotA404.
 	limiter := newToolCallLimiter(cfg)
 	instance := mcp.NewServer(&mcp.Implementation{Name: "fileee-mcp-server", Version: config.Version()}, nil)
-	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode), MaxUploadBytes: cfg.MaxUploadBytes}, logger)
+	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode), MaxUploadBytes: cfg.MaxUploadBytes}, logger, issuedStore)
 	instance.AddReceivingMiddleware(limiter.middleware())
 	gw.AttachMCPSelector(func(ctx context.Context, id *identity.Identity) *mcp.Server {
 		// scopesSatisfied ist die einzige Stelle, die MCP_OIDC_REQUIRED_SCOPES
@@ -240,7 +330,7 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		return instance
 	})
 
-	return &Server{cfg: cfg, gw: gw, pool: pool}, nil
+	return &Server{cfg: cfg, gw: gw, pool: pool, issuedStore: issuedStore}, nil
 }
 
 // buildResolver uebersetzt cfg.Accounts (siehe config.LoadConfig, ladeKonten)

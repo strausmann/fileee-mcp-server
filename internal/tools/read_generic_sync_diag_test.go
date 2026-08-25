@@ -83,7 +83,7 @@ func TestGenericGetHandlerLogsToolCallWithName(t *testing.T) {
 	logger := diag.New(diag.LevelDebug, &buf)
 	d := tagDescriptor()
 
-	handler := genericGetHandler[fileee.Tag, tagSummary](nil, logger, d)
+	handler := genericGetHandler[fileee.Tag, tagSummary](nil, logger, d, nil)
 	_, _, err := handler(context.Background(), nil, genericGetInput{ID: "   "})
 	if err == nil {
 		t.Fatal("erwarteter Fehler (leere Kennung) blieb aus")

@@ -397,3 +397,32 @@ func TestRegisterSyncToolsMeldetAlleSiebenAn(t *testing.T) {
 		}
 	}
 }
+
+// --- Aufgabe 4: IDOf liefert die Fileee-eigene ID -----------------------
+
+// TestSyncDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf belegt Aufgabe 4's
+// Pflichtfeld für alle sieben Deskriptoren dieser Datei — dasselbe Muster
+// wie read_reference_test.go's/read_people_test.go's eigene Gegenstücke.
+func TestSyncDeskriptorenLiefernDieFileeeEigeneIDUeberIDOf(t *testing.T) {
+	if got := tagSyncDescriptor().IDOf(&fileee.Tag{ID: "tag-1"}); got != "tag-1" {
+		t.Errorf("tagSyncDescriptor().IDOf = %q, want %q", got, "tag-1")
+	}
+	if got := companySyncDescriptor().IDOf(&fileee.Company{ID: "company-1"}); got != "company-1" {
+		t.Errorf("companySyncDescriptor().IDOf = %q, want %q", got, "company-1")
+	}
+	if got := documentTypeSyncDescriptor().IDOf(&fileee.DocumentType{ID: "doctype-1"}); got != "doctype-1" {
+		t.Errorf("documentTypeSyncDescriptor().IDOf = %q, want %q", got, "doctype-1")
+	}
+	if got := documentTypeSchemeSyncDescriptor().IDOf(&fileee.DocumentTypeScheme{ID: "scheme-1"}); got != "scheme-1" {
+		t.Errorf("documentTypeSchemeSyncDescriptor().IDOf = %q, want %q", got, "scheme-1")
+	}
+	if got := contactSyncDescriptor().IDOf(&fileee.Contact{ID: "contact-1"}); got != "contact-1" {
+		t.Errorf("contactSyncDescriptor().IDOf = %q, want %q", got, "contact-1")
+	}
+	if got := reminderSyncDescriptor().IDOf(&fileee.Reminder{ID: "reminder-1"}); got != "reminder-1" {
+		t.Errorf("reminderSyncDescriptor().IDOf = %q, want %q", got, "reminder-1")
+	}
+	if got := conversationSyncDescriptor().IDOf(&fileee.Conversation{ID: "conversation-1"}); got != "conversation-1" {
+		t.Errorf("conversationSyncDescriptor().IDOf = %q, want %q", got, "conversation-1")
+	}
+}

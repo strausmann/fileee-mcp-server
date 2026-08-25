@@ -204,6 +204,34 @@ type Config struct {
 	// Einstellung.
 	LogLevel diag.Level
 
+	// IssuedIDTTLSeconds und IssuedIDMaxPerIdentity steuern
+	// internal/issued.Store — die Merkliste, die je verifizierter Identität
+	// festhält, welche Dokument-/Kontakt-/Reminder-IDs ein Lese-Werkzeug
+	// dieses Servers tatsächlich ausgeliefert hat (ADR-0013 Punkt 3, siehe
+	// dessen Paket-Doc-Kommentar). internal/server.New baut daraus den Store
+	// (issued.New(time.Duration(IssuedIDTTLSeconds)*time.Second,
+	// int(IssuedIDMaxPerIdentity))) — beide Werte werden dort tatsächlich
+	// ausgewertet (Store.ttl/Store.maxPerIdentity), nicht nur geladen und
+	// liegengelassen. Das war bei FILEEE_MAX_UPLOAD_BYTES vor dem
+	// write-tools-Increment (siehe dessen eigenen Doc-Kommentar oben) genau
+	// der Fehler: eine Einstellung, die LoadConfig zwar entgegennahm, die
+	// aber keine Aufrufstelle je las — ein Betreiber, der sie setzte, bekam
+	// unbemerkt das Verhalten des unveränderten Defaults.
+	//
+	// Beide Grenzfälle <= 0 werden bewusst NICHT als "unbegrenzt" gelesen,
+	// sondern als reale, durchgesetzte Grenze (Store.ttl/Store.maxPerIdentity
+	// eigene Doc-Kommentare) — dieselbe fail-closed-Konvention wie bei
+	// FILEEE_MAX_INFLIGHT. intWert weist nur NEGATIVE Werte ab; 0 ist ein
+	// gültiger, durchgesetzter Wert ("sofort verfallen" bzw. "nichts wird
+	// gemerkt"), keine Fehlkonfiguration.
+	//
+	// IssuedIDTTLSeconds begrenzt, wie lange eine aufgenommene ID gültig
+	// bleibt (Default 1800 Sekunden = 30 Minuten).
+	IssuedIDTTLSeconds int64
+	// IssuedIDMaxPerIdentity begrenzt, wie viele IDs der Eimer einer
+	// einzelnen Identität gleichzeitig halten darf (Default 1000).
+	IssuedIDMaxPerIdentity int64
+
 	// Warnings sind Hinweise, die den Start nicht verhindern, aber beim Boot
 	// protokolliert werden sollen.
 	Warnings []string
@@ -348,6 +376,16 @@ func ladeZahlenwerte(cfg *Config, env Env) error {
 		return err
 	}
 	if cfg.KeepaliveInterval, err = dauerWert(env, "FILEEE_KEEPALIVE_INTERVAL", 15*time.Minute); err != nil {
+		return err
+	}
+
+	// Siehe Config.IssuedIDTTLSeconds/IssuedIDMaxPerIdentity für die
+	// Bedeutung und internal/server.New für die Aufrufstelle, die diese
+	// Werte tatsächlich auswertet.
+	if cfg.IssuedIDTTLSeconds, err = intWert(env, "FILEEE_ISSUED_ID_TTL_SECONDS", 1800); err != nil {
+		return err
+	}
+	if cfg.IssuedIDMaxPerIdentity, err = intWert(env, "FILEEE_ISSUED_ID_MAX_PER_IDENTITY", 1000); err != nil {
 		return err
 	}
 

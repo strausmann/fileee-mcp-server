@@ -29,6 +29,7 @@ import (
 
 	"github.com/strausmann/fileee-mcp-server/internal/accounts"
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // defaultLimit and maxLimit bound how many documents a single call to
@@ -67,7 +68,54 @@ const (
 // threaded logger through before it (#45/#46 both shipped without it);
 // both now take it and pass it on to their own handlers the same way
 // listDocumentsHandler/searchDocumentsHandler already did.
-func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger) {
+//
+// rec is the one *internal/issued.Store this process uses — built once in
+// server.go's New() from cfg.IssuedIDTTLSeconds/IssuedIDMaxPerIdentity
+// and handed down here, never rebuilt.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 4/5-Fassung): rec is
+// threaded through to ONLY the tools that resolve a SINGLE entity by an
+// ID the caller itself supplied — registerReferenceTools/
+// registerPeopleTools (their own generic get_* handlers only; their
+// list_*/search_* halves take no store, see registerReadService's own
+// doc comment, read_generic.go), get_document (getDocumentHandler),
+// registerBoxTools (get_box only — its list_boxes half takes no store
+// either, see registerBoxTools' own doc comment, read_boxes.go), and
+// registerBinaryTools' get_document_pdf (getDocumentPDFHandler — a
+// Codex-Review-Fund at PR #75 corrected the ORIGINAL Aufgabe 5 decision
+// for this one tool, see read_binary.go's own WICHTIG block). Each
+// records an id as issued after successfully delivering it (ADR-0013
+// Punkt 3) — the ids a later destructive tool's rec.Check call then
+// verifies against.
+//
+// registerSyncTools and the four MULTI-entity hand-written document tools
+// above (list_documents, search_documents, sync_documents,
+// list_document_conversations) do NOT take rec any more — a single call
+// to any of them can return many rows the caller never individually
+// asked for, and recording all of them made the whitelist's "only what
+// was actually, deliberately fetched" guarantee nearly meaningless (the
+// Sicherheits-Audit finding that ADR-0019 documents). See
+// listFromService's/syncFromService's own doc comments (read_generic.go/
+// read_sync.go) for the full reasoning, and errNotIssuedFor's own doc
+// comment (internal/issued) for the path forward a caller now needs: a
+// single-entity get tool for each id it wants recorded.
+//
+// registerBinaryTools' OTHER two tools, get_page_image and get_page_ocr,
+// still do NOT take rec — for two independent, tool-specific reasons
+// (see read_binary.go's own WICHTIG block for the full reasoning): no
+// write tool in this server accepts a PAGE id as a parameter at all (so
+// recording one could never be checked against anything), and
+// get_page_image does not even hand its pageId back to the caller in any
+// form (unlike get_document_pdf, whose id travels in its Content's
+// Resource URI). get_page_ocr's own reason predates ADR-0019 entirely —
+// see read_binary.go's doc comment for why its per-token WebappID is the
+// one field that looks like an id but is not recorded.
+// registerAccountTools/registerOpsTools/registerWriteTools do not take
+// rec either: none of their tools hand out an entity id at all
+// (get_account_status' AccountTypeID is a subscription-plan code, not a
+// reference to something another tool could act on).
+func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slog.Logger, rec *issued.Store) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolListDocuments,
 		Description: "List documents in the calling user's Fileee account, most recently modified " +
@@ -87,8 +135,8 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 	}, searchDocumentsHandler(p, logger))
 
 	registerSyncTools(s, p, logger)
-	registerReferenceTools(s, p, logger)
-	registerPeopleTools(s, p, logger)
+	registerReferenceTools(s, p, logger, rec)
+	registerPeopleTools(s, p, logger, rec)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetDocument,
@@ -97,7 +145,7 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 			"after list_documents or search_documents handed you an ID. It does not return the " +
 			"document's file — use get_document_pdf — and it does not search by title.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get document"},
-	}, getDocumentHandler(p, logger))
+	}, getDocumentHandler(p, logger, rec))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolSyncDocuments,
@@ -126,8 +174,8 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "List document conversations"},
 	}, listDocumentConversationsHandler(p, logger))
 
-	registerBoxTools(s, p, logger)
-	registerBinaryTools(s, p, logger)
+	registerBoxTools(s, p, logger, rec)
+	registerBinaryTools(s, p, logger, rec)
 	registerAccountTools(s, p, logger)
 	registerOpsTools(s, p, info, logger)
 
@@ -376,6 +424,22 @@ type listDocumentsOutput struct {
 // there would reach the model unwrapped and unmarked, defeating the
 // framing applied below. It appears only inside the returned text
 // content, inside the boundary wrapUntrusted builds.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): this
+// handler no longer takes an *issued.Store and no longer records ANY of
+// the returned documents' IDs. It used to record every one of them
+// (internal/issued) once the result was fully built — but a single call
+// here returns up to maxLimit documents (default defaultLimit, paginated
+// via Start/Limit up to the whitelist's own per-identity cap), none of
+// which the caller named individually. For an account with even a few
+// hundred documents, that made a handful of list_documents calls enough
+// to whitelist nearly the entire account (Sicherheits-Audit finding, see
+// ADR-0019 for the full reasoning, identical to listFromService's own,
+// read_generic.go). A caller who needs a specific listed document ID to
+// count as issued now calls get_document with that ID — see
+// errNotIssuedFor's own doc comment (internal/issued) for the exact error
+// text a later destructive tool gives when it doesn't.
 func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[listDocumentsInput, listDocumentsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in listDocumentsInput) (*mcp.CallToolResult, listDocumentsOutput, error) {
 		start := time.Now()
@@ -449,6 +513,16 @@ type searchDocumentsOutput struct {
 // have written. There is therefore, deliberately, no untrusted-content
 // framing to apply here; a caller wanting a match's title calls
 // list_documents (or a future document-detail tool) with the returned ID.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): this
+// handler no longer takes an *issued.Store and no longer records ANY of
+// the returned document IDs — the same "multiple entities the caller
+// never individually named" reasoning listDocumentsHandler's own doc
+// comment gives, made worse here by search's own defaultLimit/maxLimit
+// paging behaving identically to list_documents'. A caller who needs a
+// specific matched document ID to count as issued now calls get_document
+// with that ID.
 func searchDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[searchDocumentsInput, searchDocumentsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in searchDocumentsInput) (*mcp.CallToolResult, searchDocumentsOutput, error) {
 		start := time.Now()
@@ -733,7 +807,7 @@ func documentDetail(doc *fileee.Document) getDocumentOutput {
 // its own required parameter (read_generic.go) — rejected without
 // spending a login round trip, and testable without a *clientpool.Pool
 // at all (TestGetDocumentHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb).
-func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[getDocumentInput, getDocumentOutput] {
+func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[getDocumentInput, getDocumentOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in getDocumentInput) (*mcp.CallToolResult, getDocumentOutput, error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolGetDocument, slog.String("id", in.ID))
@@ -749,7 +823,7 @@ func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandler
 			logToolEnd(ctx, logger, ToolGetDocument, start, "", 0, err)
 			return nil, getDocumentOutput{}, err
 		}
-		result, out, err := documentFromService(ctx, client.Documents, in.ID)
+		result, out, err := documentFromService(ctx, client.Documents, in.ID, rec)
 		logToolEnd(ctx, logger, ToolGetDocument, start, getDocumentEndpoint, 1, err)
 		return result, out, err
 	}
@@ -759,7 +833,55 @@ func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandler
 // resolution — split out so a test can drive it against a
 // documentReadService fake instead of a live *fileee.Client (see
 // fakeDocumentService, read_document_test.go).
-func documentFromService(ctx context.Context, service documentReadService, id string) (*mcp.CallToolResult, getDocumentOutput, error) {
+//
+// rec records ONLY id — the caller-requested document id, the string this
+// function's own caller (getDocumentHandler) received as in.ID — once
+// wrapUntrustedLines has already succeeded, the same "only after the
+// response is fully built, never on an error path" rule
+// genericGetHandler's own doc comment states (read_generic.go).
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): dieser
+// Aufruf nahm zuvor BEIDE hier gelieferten IDs auf — die des Dokuments
+// SELBST und, angehängt, out.TagIDs (siehe getDocumentOutput's eigenen
+// Doc-Kommentar: strukturelle Fremdschlüssel-IDs in list_tags/get_tag,
+// kein Fremdtext). Die neue Linie aus dem Audit lautet aber "erfasst wird
+// NUR die ID, die der Aufrufer im Parameter genannt hat" — out.TagIDs
+// erfüllt das nicht: der Aufrufer hat keinen dieser Tags einzeln genannt,
+// sie kommen als NEBENPRODUKT der Dokument-Antwort mit, exakt dasselbe
+// Muster wie get_box's DocumentIDs (read_boxes.go, boxFromService's
+// eigener Doc-Kommentar) und list_document_conversations'
+// Konversations-IDs (documentConversationsFromService's eigener
+// Doc-Kommentar) — beide ebenfalls seit ADR-0019 NICHT mehr aufgenommen.
+// Ein Aufrufer, der einen per get_document zurückgegebenen Tag als
+// gültiges Ziel für ein späteres destruktives Werkzeug braucht, muss ihn
+// gezielt per get_tag nachladen (registerReferenceTools' generischer
+// Get-Pfad, weiterhin erfassend).
+//
+// WICHTIG (Nachprüfungs-Befund, Codex-Review nach ADR-0019): rec.Record
+// lief hier zuvor mit out.ID (documentDetail's doc.ID-Feld — die ID aus
+// der ANTWORT), NICHT mit id (der vom Aufrufer im Parameter genannten).
+// Der frühere Kommentar oben behauptete, "out.ID ist genau das (die von
+// get_document(id) angeforderte Entität)" — das gilt nur, solange der
+// fremde Fileee-Server für jede erfolgreich aufgelöste id ein
+// identisches "id"-Feld im JSON-Body zurückliefert. go-fileee selbst
+// kanonisiert nichts (documentReadService.Get ruft restService[T].Get
+// auf, das den Response-Body direkt in T dekodiert, ohne id vorher
+// umzuschreiben oder das dekodierte ID-Feld gegen id zu vergleichen) —
+// eine Divergenz (Groß-/Kleinschreibungs-Normalisierung, Alias, Dublette
+// auf Fileee-Server-Seite) ist von hier aus also nicht ausschließbar.
+// Divergierten beide, hätte diese Funktion die tatsächlich angeforderte
+// id NIE gewhitelistet und stattdessen eine ID aufgenommen, die der
+// Aufrufer nie genannt hat — die exakte Umkehrung der oben zitierten
+// Linie. id selbst erfüllt beide Hälften unabhängig von out.ID: der
+// Aufrufer hat sie im Parameter genannt, und der erfolgreiche,
+// fehlerfrei dekodierte service.Get-Aufruf IST die Bestätigung, dass sie
+// bei diesem Server auf eine existierende, lesbare Entität auflöst.
+// Dieselbe Korrektur, aus demselben Fund, trifft getFromService
+// (read_generic.go) und boxFromService (read_boxes.go) gleichermaßen —
+// siehe deren eigene Doc-Kommentare für die volle Begründung, warum
+// weder "nur out.ID" noch "beide IDs aufnehmen" gewählt wurde.
+func documentFromService(ctx context.Context, service documentReadService, id string, rec *issued.Store) (*mcp.CallToolResult, getDocumentOutput, error) {
 	doc, err := service.Get(ctx, id)
 	if err != nil {
 		return nil, getDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetDocument, err)
@@ -770,6 +892,7 @@ func documentFromService(ctx context.Context, service documentReadService, id st
 	if err != nil {
 		return nil, getDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetDocument, err)
 	}
+	rec.Record(ctx, id)
 	return result, out, nil
 }
 
@@ -781,6 +904,11 @@ func documentFromService(ctx context.Context, service documentReadService, id st
 // any network access rather than silently running Diff with the wrong
 // "known" IDs (see checkCursorEntityType's own doc comment for what goes
 // wrong without this check).
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): this
+// handler no longer takes an *issued.Store — see documentsSyncFromService's
+// own doc comment for why.
 func syncDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[documentSummary]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericSyncInput) (*mcp.CallToolResult, genericSyncOutput[documentSummary], error) {
 		start := time.Now()
@@ -811,6 +939,21 @@ func syncDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 // (read_sync.go) by hand rather than calling it, since Document's
 // service comes through documentReadService, not a plain
 // fileee.ReadService[T] the generic helper's own syncFromService expects.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): this
+// function no longer records ANY of out.Entries' ids — it used to record
+// them ONLY (never out.DeletedIDs, unchanged reasoning: a deleted
+// document is no longer a valid target for any later tool, recording it
+// would only let a caller "prove" an id was once real after this server
+// itself just said it is gone). sync_documents behaves exactly like
+// list_documents/search_documents here (see listDocumentsHandler's own
+// doc comment): the FIRST sync call for an account (no cursor) returns
+// its entire current document set in one response, none of it
+// individually requested — the same audit finding that made ADR-0019
+// stop list_*/search_*/sync_* from recording applies unchanged. A caller
+// who needs a synced document ID to count as issued now calls
+// get_document with that ID.
 func documentsSyncFromService(ctx context.Context, service documentReadService, cursor fileee.Cursor) (*mcp.CallToolResult, genericSyncOutput[documentSummary], error) {
 	res, err := service.Diff(ctx, cursor)
 	if err != nil {
@@ -871,6 +1014,11 @@ type listDocumentConversationsOutput struct {
 // listDocumentConversationsHandler resolves list_document_conversations.
 // The empty-document-ID check runs before clientFor, the same order
 // every other handler in this file uses for its own required parameter.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): this
+// handler no longer takes an *issued.Store — see
+// documentConversationsFromService's own doc comment for why.
 func listDocumentConversationsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[listDocumentConversationsInput, listDocumentConversationsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in listDocumentConversationsInput) (*mcp.CallToolResult, listDocumentConversationsOutput, error) {
 		start := time.Now()
@@ -897,6 +1045,22 @@ func listDocumentConversationsHandler(p *clientpool.Pool, logger *slog.Logger) m
 // listDocumentConversationsHandler's logic below client resolution —
 // split out for the same testability reason documentFromService/
 // documentsSyncFromService are.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): this
+// function no longer records ANY of the returned conversation ids — it
+// used to record every one of them, on the reasoning that a caller who
+// only ever reaches a conversation through THIS tool never goes through
+// list_conversations/get_conversation's own generic path (read_people.go)
+// and would otherwise never get it recorded. That reasoning is now the
+// EXACT case ADR-0019 rules against: documentID is the one id the caller
+// named — this call returns MULTIPLE conversation ids the caller never
+// individually asked for, the same "list of several entities" shape as
+// list_documents/get_box's DocumentIDs (see documentFromService's own
+// doc comment for the parallel with get_document's TagIDs). A caller who
+// needs one of these conversation ids to count as issued now calls
+// get_conversation with that id (registerPeopleTools' generic get path,
+// still recording).
 func documentConversationsFromService(ctx context.Context, service documentReadService, documentID string) (*mcp.CallToolResult, listDocumentConversationsOutput, error) {
 	convs, err := service.Conversations(ctx, documentID)
 	if err != nil {

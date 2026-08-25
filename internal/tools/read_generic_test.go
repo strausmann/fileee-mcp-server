@@ -21,14 +21,22 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/strausmann/gangway/access"
+	"github.com/strausmann/gangway/identity/testidp"
+	"github.com/strausmann/gangway/serve"
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // discardLogger builds a *slog.Logger that discards everything it is
@@ -69,13 +77,18 @@ func tagDescriptor() readServiceDescriptor[fileee.Tag, tagSummary] {
 		Summarize:       func(tag *fileee.Tag) tagSummary { return tagSummary{ID: tag.ID} },
 		UntrustedLine:   func(tag *fileee.Tag) string { return tag.Name },
 		PoisonProbe:     func(marker string) *fileee.Tag { return &fileee.Tag{ID: "t1", Name: marker} },
+		// IDOf ist seit Aufgabe 4 Pflichtfeld (readServiceDescriptor.IDOf,
+		// read_generic.go) — getFromService/listFromService rufen es
+		// ungeprüft auf, ein nil-Wert würde jeden Erfolgsfall-Test dieser
+		// Datei mit einer Nil-Pointer-Panik abbrechen.
+		IDOf: func(tag *fileee.Tag) string { return tag.ID },
 	}
 }
 
 func TestRegisterReadServiceMeldetListeUndDetailAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), tagDescriptor())
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), tagDescriptor(), nil)
 
 	names := toolNamesOf(t, s)
 	if !names["list_tags"] {
@@ -199,7 +212,7 @@ func TestGenericGetHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testing.
 	// Test mit einer Nil-Pointer-Dereferenzierung ab statt still zu
 	// bestehen — das ist der Beleg, dass die leere Kennung VOR jedem
 	// Netzwerkzugriff abgefangen wird.
-	handler := genericGetHandler[fileee.Tag, tagSummary](nil, discardLogger(), d)
+	handler := genericGetHandler[fileee.Tag, tagSummary](nil, discardLogger(), d, nil)
 
 	_, _, err := handler(context.Background(), nil, genericGetInput{ID: "   "})
 	if err == nil {
@@ -231,7 +244,7 @@ func TestGetFromServiceLiefertZusammenfassungUndGerahmtenFremdtextBeiErfolg(t *t
 	d := tagDescriptor()
 	service := &fakeReadService[fileee.Tag]{getResult: &fileee.Tag{ID: "t1", Name: marker}}
 
-	result, out, err := getFromService(context.Background(), d, service, "t1")
+	result, out, err := getFromService(context.Background(), d, service, "t1", nil)
 	if err != nil {
 		t.Fatalf("getFromService: %v", err)
 	}
@@ -274,7 +287,7 @@ func TestGetFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *te
 	d := tagDescriptor()
 	service := &fakeReadService[fileee.Tag]{getErr: backendErr}
 
-	_, _, err := getFromService(context.Background(), d, service, "t1")
+	_, _, err := getFromService(context.Background(), d, service, "t1", nil)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -398,7 +411,7 @@ func TestRegisterReadServicePanictBeiEinemDeskriptorDerDenGerahmtenTextMitliefer
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 // TestRegisterReadServicePanictBeiZusammengesetztemFremdtextInEinemTeilfeld
@@ -430,7 +443,7 @@ func TestRegisterReadServicePanictBeiZusammengesetztemFremdtextInEinemTeilfeld(t
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 func TestRegisterReadServicePanictWennPoisonProbeFehlt(t *testing.T) {
@@ -443,7 +456,7 @@ func TestRegisterReadServicePanictWennPoisonProbeFehlt(t *testing.T) {
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 // TestRegisterReadServicePanictWennPoisonProbeDasFalscheFeldSetzt ist die
@@ -471,7 +484,7 @@ func TestRegisterReadServicePanictWennPoisonProbeDasFalscheFeldSetzt(t *testing.
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 // TestRegisterReadServicePanictNichtBeiUnabhaengigenLegitimenFeldern ist
@@ -492,10 +505,14 @@ func TestRegisterReadServicePanictNichtBeiUnabhaengigenLegitimenFeldern(t *testi
 		Summarize:       func(*fileee.Tag) tagSummary { return tagSummary{ID: "Rechnung-2026-001"} },
 		UntrustedLine:   func(tag *fileee.Tag) string { return tag.Name },
 		PoisonProbe:     func(marker string) *fileee.Tag { return &fileee.Tag{ID: "Rechnung-2026-001", Name: marker} },
+		// IDOf ist seit mustHaveIDOf (read_generic.go) Pflichtfeld -- dieser Test prueft
+		// eine andere Sache (mustNotLeakUntrustedLine's Fehlalarm-Freiheit) und darf deshalb
+		// nicht an der NEUEN Pruefung scheitern.
+		IDOf: func(tag *fileee.Tag) string { return tag.ID },
 	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d) // darf NICHT paniken
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil) // darf NICHT paniken
 }
 
 // --- 3. Korrekturrunde: UntrustedLine optional, fuer Typen ohne Fremdtext ---
@@ -525,10 +542,12 @@ func TestRegisterReadServiceStartetSauberOhneFremdbestimmtenText(t *testing.T) {
 		Summarize:       func(tag *fileee.Tag) tagSummary { return tagSummary{ID: tag.ID} },
 		// UntrustedLine bewusst nicht gesetzt — kein Fremdtext bei diesem Typ.
 		// PoisonProbe bewusst nicht gesetzt — es gibt nichts zu vergiften.
+		// IDOf ist seit mustHaveIDOf (read_generic.go) Pflichtfeld, unabhaengig davon.
+		IDOf: func(tag *fileee.Tag) string { return tag.ID },
 	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d) // darf NICHT paniken
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil) // darf NICHT paniken
 
 	names := toolNamesOf(t, s)
 	if !names["list_tags_notrusted"] || !names["get_tag_notrusted"] {
@@ -554,7 +573,7 @@ func TestRegisterReadServicePanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 // TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp ist die Meldungstext-
@@ -583,7 +602,7 @@ func TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp(t *testing.T) {
 		}
 	}()
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
-	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d)
+	registerReadService(s, (*clientpool.Pool)(nil), discardLogger(), d, nil)
 }
 
 // TestWrapUntrustedLinesWithBoundaryEmptyLinesProducesEmptyResult ist
@@ -647,4 +666,232 @@ func TestWrapUntrustedLinesWithBoundaryMatchesWrapUntrustedLinesFormat(t *testin
 	if rebuiltText.Text != originalText.Text {
 		t.Errorf("wrapUntrustedLinesWithBoundary liefert bei gleichem Boundary-String einen ANDEREN Text als wrapUntrustedLines:\n--- wrapUntrustedLines ---\n%s\n--- wrapUntrustedLinesWithBoundary ---\n%s", originalText.Text, rebuiltText.Text)
 	}
+}
+
+// --- rec.Record über die generischen Handler --------------------------------
+//
+// Jeder andere Test dieser Datei bleibt bewusst UNTERHALB der ctx-Grenze
+// (siehe Datei-Kopfkommentar) — er prüft entweder einen Fehlerpfad oder
+// eine reine Struktur-Zusicherung, keiner von beiden braucht je eine
+// echte, verifizierte Identität. TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts
+// ist die erste Ausnahme in dieser Datei: um zu belegen, dass getFromService
+// tatsächlich bei rec (issued.Store) meldet — UND dass listFromService das
+// SEIT ADR-0019 NICHT mehr tut —, muss Check ein ctx sehen, aus dem
+// serve.IdentityFrom(ctx) eine echte Identität liest — dieselbe
+// Einschränkung, die internal/issued/issued_test.go's eigener Kommentar
+// zu ctxMitIdentitaet ausführlich begründet (kein exportierter Setter in
+// gangway v0.5.0, die Identität wird ausschließlich von Gangways
+// Authentifizierungs-Middleware gesetzt, nie von einer selbstgebauten
+// Attrappe). Der Test bleibt trotzdem UNTERHALB von clientFor: er ruft
+// listFromService/getFromService direkt mit einem Fake-Service auf, genau
+// wie jeder andere Erfolgsfall-Test dieser Datei (z. B.
+// TestListFromServiceLiefertMehrereEintraegeUndSammeltGerahmtenFremdtext)
+// — nur eben mit einem echten, identitätstragenden ctx statt
+// context.Background().
+
+// TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts
+// ist die "beide Richtungen"-Umkehrung von ADR-0019: sie treibt
+// tagDescriptor() über listFromService mit zwei Zeilen UND über
+// getFromService mit einer weiteren, gegen einen echten *issued.Store —
+// und prüft, dass NACH dem List-Aufruf KEINE der beiden gelisteten IDs
+// per Check gültig ist (sie wurden vom Aufrufer nie einzeln genannt, siehe
+// listFromService's eigener Doc-Kommentar), während die per getFromService
+// geholte ID gültig ist (der eine gezielte Einzelabruf, den ADR-0019
+// weiterhin erfasst).
+//
+// Vor dieser Verschärfung hieß dieser Test
+// TestGenericHandlerMerktAusgelieferteIDs und prüfte das genaue Gegenteil
+// der List-Hälfte (beide gelisteten IDs müssen gültig sein) — siehe
+// Git-Historie für die alte Fassung, falls der frühere, breitere
+// Aufnahme-Mechanismus je nachvollzogen werden muss.
+func TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts(t *testing.T) {
+	d := tagDescriptor()
+	service := &fakeReadService[fileee.Tag]{
+		queryResult: &fileee.QueryResult[fileee.Tag]{
+			Rows:      []fileee.Tag{{ID: "t1", Name: "Rechnung"}, {ID: "t2", Name: "Mahnung"}},
+			TotalRows: 2,
+		},
+		getResult: &fileee.Tag{ID: "t3", Name: "Vertrag"},
+	}
+	rec := issued.New(time.Hour, 100)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	if _, _, err := listFromService(ctx, d, service, genericListInput{}); err != nil {
+		t.Fatalf("listFromService: %v", err)
+	}
+	for _, id := range []string{"t1", "t2"} {
+		if err := rec.Check(ctx, id); err == nil {
+			t.Errorf("Check(%q) nach dem List-Aufruf: nil, want einen Fehler — list_* darf seit ADR-0019 keine ID mehr aufnehmen, die der Aufrufer nicht einzeln genannt hat", id)
+		}
+	}
+
+	if _, _, err := getFromService(ctx, d, service, "t3", rec); err != nil {
+		t.Fatalf("getFromService: %v", err)
+	}
+	if err := rec.Check(ctx, "t3"); err != nil {
+		t.Errorf("Check(t3) nach dem Get-Aufruf: %v, want nil (id wurde soeben gezielt per ID abgerufen)", err)
+	}
+}
+
+// TestGetFromServiceMerktDieAngeforderteIDNichtDieAntwortID ist die
+// Gegenprobe zum Nachprüfungs-Befund (Codex-Review nach ADR-0019,
+// getFromService's eigener WICHTIG-Kommentar): der Fake-Service liefert
+// für die angeforderte ID "t3" absichtlich eine ABWEICHENDE Antwort-ID
+// ("t3-kanonisch") zurück — genau das Szenario, das ein fremder
+// Fileee-Server bei einer serverseitigen Normalisierung/einem Alias
+// erzeugen könnte, ohne dass go-fileee das je bemerken würde (siehe
+// getFromService's eigenen Kommentar für die Quellenbelege). Vor dem Fix
+// hätte diese Funktion rec.Record(ctx, d.IDOf(entry)) aufgerufen — also
+// "t3-kanonisch" — und die tatsächlich angeforderte "t3" NIE
+// gewhitelistet: exakt die Umkehrung, die diese Gegenprobe belegt.
+func TestGetFromServiceMerktDieAngeforderteIDNichtDieAntwortID(t *testing.T) {
+	d := tagDescriptor()
+	service := &fakeReadService[fileee.Tag]{
+		getResult: &fileee.Tag{ID: "t3-kanonisch", Name: "Vertrag"},
+	}
+	rec := issued.New(time.Hour, 100)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	if _, _, err := getFromService(ctx, d, service, "t3", rec); err != nil {
+		t.Fatalf("getFromService: %v", err)
+	}
+
+	if err := rec.Check(ctx, "t3"); err != nil {
+		t.Errorf(`Check("t3") nach get_tag("t3"): %v, want nil — "t3" ist die vom Aufrufer genannte und vom Server bestätigte ID, unabhängig davon, was die Antwort als ID-Feld trägt`, err)
+	}
+	if err := rec.Check(ctx, "t3-kanonisch"); err == nil {
+		t.Error(`Check("t3-kanonisch") nach get_tag("t3"): nil, want einen Fehler — der Aufrufer hat diese ID nie genannt, sie darf nicht gewhitelistet sein`)
+	}
+}
+
+// TestAlleGenerischenDeskriptorenHabenEinIDOf ist Aufgabe 4's Schritt 4 —
+// die günstige Hälfte des Guardrails: geht über jeden von RegisterAll
+// (über registerSyncTools/registerReferenceTools/registerPeopleTools)
+// tatsächlich angemeldeten readServiceDescriptor/syncDescriptor und
+// schlägt fehl, sobald IDOf fehlt. Boxen (read_boxes.go) sind
+// handgeschriebene Werkzeuge, keine registerReadService/registerSync-
+// Deskriptoren — sie gehören, wie list_documents/get_document/
+// sync_documents/list_document_conversations, zur teureren Hälfte des
+// Guardrails in issued_coverage_test.go (Aufgabe 5).
+func TestAlleGenerischenDeskriptorenHabenEinIDOf(t *testing.T) {
+	checks := map[string]bool{
+		"referenceTagDescriptor":                referenceTagDescriptor().IDOf != nil,
+		"referenceCompanyDescriptor":            referenceCompanyDescriptor().IDOf != nil,
+		"referenceDocumentTypeDescriptor":       referenceDocumentTypeDescriptor().IDOf != nil,
+		"referenceDocumentTypeSchemeDescriptor": referenceDocumentTypeSchemeDescriptor().IDOf != nil,
+		"contactDescriptor":                     contactDescriptor().IDOf != nil,
+		"reminderDescriptor":                    reminderDescriptor().IDOf != nil,
+		"conversationDescriptor":                conversationDescriptor().IDOf != nil,
+		"tagSyncDescriptor":                     tagSyncDescriptor().IDOf != nil,
+		"companySyncDescriptor":                 companySyncDescriptor().IDOf != nil,
+		"documentTypeSyncDescriptor":            documentTypeSyncDescriptor().IDOf != nil,
+		"documentTypeSchemeSyncDescriptor":      documentTypeSchemeSyncDescriptor().IDOf != nil,
+		"contactSyncDescriptor":                 contactSyncDescriptor().IDOf != nil,
+		"reminderSyncDescriptor":                reminderSyncDescriptor().IDOf != nil,
+		"conversationSyncDescriptor":            conversationSyncDescriptor().IDOf != nil,
+	}
+	for name, ok := range checks {
+		if !ok {
+			t.Errorf("%s().IDOf ist nil — Pflichtfeld, siehe readServiceDescriptor.IDOf/syncDescriptor.IDOf (read_generic.go/read_sync.go)", name)
+		}
+	}
+}
+
+// ctxMitIdentitaet liefert ein echtes, verifiziertes ctx für subject —
+// derselbe minimale Wegwerf-Gangway-Rundlauf wie
+// internal/issued/issued_test.go's gleichnamiger Helfer (siehe dessen
+// ausführlichen Kommentar für das vollständige WARUM: kein exportierter
+// Setter in gangway v0.5.0, die Identität wird ausschließlich von
+// Gangways Authentifizierungs-Middleware gesetzt) — hier lokal
+// nachgebaut statt importiert, aus demselben Grund, den
+// internal/server/issued_wiring_test.go's authenticatedCtx für sich
+// selbst nennt: ein Test-Helfer eines fremden Pakets ist außerhalb
+// dieses Pakets nicht sichtbar, ein eigenes Test-Hilfspaket für diese
+// eine Funktion wäre unverhältnismäßig.
+func ctxMitIdentitaet(t *testing.T, subject string) context.Context {
+	t.Helper()
+
+	idp := testidp.New(t)
+	captured := make(chan context.Context, 1)
+
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "read-generic-identity-test", Version: "0.0.0"}, nil)
+	mcp.AddTool(mcpServer, &mcp.Tool{Name: "capture"},
+		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			captured <- ctx
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
+		})
+
+	const audience = "fileee-mcp-read-generic-identity-test"
+	gwCfg := &serve.Config{
+		Addr:            "127.0.0.1:0",
+		PublicBaseURL:   "https://read-generic-identity-test.example.invalid",
+		IssuerURL:       idp.URL(),
+		Audience:        audience,
+		SubjectClaim:    "sub",
+		AllowedPrefixes: mustIdentityPrefixes(t, "127.0.0.1/32", "::1/128"),
+	}
+	gw, err := serve.New(context.Background(), gwCfg, serve.WithDecider(access.AllowAll()))
+	if err != nil {
+		t.Fatalf("ctxMitIdentitaet(%q): serve.New: %v", subject, err)
+	}
+	gw.AttachMCP(mcpServer)
+
+	srv := httptest.NewServer(gw.Handler())
+	t.Cleanup(srv.Close)
+
+	token := idp.Token(map[string]any{
+		"iss": idp.URL(), "aud": audience, "sub": subject,
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "read-generic-identity-test-client", Version: "0.0.0"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             srv.URL + "/mcp",
+		HTTPClient:           &http.Client{Transport: identityBearerRoundTripper{token: token}},
+		DisableStandaloneSSE: true,
+	}
+	session, err := client.Connect(context.Background(), transport, nil)
+	if err != nil {
+		t.Fatalf("ctxMitIdentitaet(%q): Connect: %v", subject, err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "capture"})
+	if err != nil {
+		t.Fatalf("ctxMitIdentitaet(%q): CallTool(capture): %v", subject, err)
+	}
+	if res.IsError {
+		t.Fatalf("ctxMitIdentitaet(%q): CallTool(capture): IsError = true, content = %+v", subject, res.Content)
+	}
+
+	return <-captured
+}
+
+// identityBearerRoundTripper injiziert ein festes Bearer-Token in jede
+// ausgehende Anfrage — dasselbe Muster wie
+// internal/issued/issued_test.go's bearerRoundTripper, hier eigens
+// benannt, um mit keinem gleichnamigen Bezeichner dieses Pakets zu
+// kollidieren.
+type identityBearerRoundTripper struct{ token string }
+
+func (rt identityBearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+rt.token)
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// mustIdentityPrefixes parst cidrs zu netip.Prefix — derselbe kleine
+// Helfer wie internal/issued/issued_test.go's mustPrefixes und
+// internal/server/server_test.go's mustPrefix, hier eigens benannt aus
+// demselben Sichtbarkeits-Grund wie ctxMitIdentitaet oben.
+func mustIdentityPrefixes(t *testing.T, cidrs ...string) []netip.Prefix {
+	t.Helper()
+	out := make([]netip.Prefix, 0, len(cidrs))
+	for _, c := range cidrs {
+		p, err := netip.ParsePrefix(c)
+		if err != nil {
+			t.Fatalf("mustIdentityPrefixes(%q): %v", c, err)
+		}
+		out = append(out, p)
+	}
+	return out
 }
