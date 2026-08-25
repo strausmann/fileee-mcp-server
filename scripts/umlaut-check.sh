@@ -21,9 +21,9 @@
 # oder (b) ein doppeltes Anführungszeichen enthalten — Letzteres deckt
 # t.Fatalf/t.Errorf-Meldungen samt mehrzeiliger String-Verkettung ab, ohne
 # einen echten Go-Parser zu brauchen. Go-Bezeichner (camelCase, keine
-# Wortgrenzen zwischen den Teilen) werden von der Wortgrenzen-Prüfung (\b)
-# der einzelnen Wörter unten NICHT getroffen — "issuedStore" enthält z. B.
-# kein von \b begrenztes "fuer"/"ueber"/etc.
+# Wortgrenzen zwischen den Teilen) werden von der Wortgrenzen-Prüfung
+# (\< / \>, siehe unten) der einzelnen Wörter unten NICHT getroffen —
+# "issuedStore" enthält z. B. kein von \</\> begrenztes "fuer"/"ueber"/etc.
 #
 # Ausnahmeliste (unten, `exceptions`): Bestandsdateien, die Issue #71 bereits
 # als Altlast erfasst hat, plus .github/workflows/test.yml (dort gilt bewusst
@@ -144,7 +144,12 @@ is_exception() {
 }
 
 pattern_body="$(printf '%s|' "${wrong_words[@]}")"
-pattern="\\b(${pattern_body%|})\\b"
+# \< und \> statt \b: \b ist in POSIX-ERE nicht definiert (Copilot-Review-
+# Fund, mehrfach) — GNU grep kennt es, andere grep-Implementierungen
+# (BSD/macOS, manche musl/busybox-Builds) nicht zuverlaessig, das Tor
+# koennte auf einer anderen Plattform still nichts mehr finden. \< / \>
+# (Wortanfang/-ende) sind die portablere, traditionelle Alternative.
+pattern="\\<(${pattern_body%|})\\>"
 # Der eigentliche Abgleich unten laeuft case-insensitiv (grep -Ei): ein
 # Satzanfang oder ein via Wortverkettung grossgeschriebenes "Fuer"/"Ueber"/
 # "Muesste"/"Koennte" faellt sonst durch, weil die Liste oben nur die
@@ -172,7 +177,7 @@ while IFS= read -r -d '' file; do
   # ein Tor, das korrekte Schreibung anmeckert, verliert seine Glaubwürdigkeit.
   # Deshalb: ae/oe/ue case-insensitiv (dort ist AE/OE/UE auch in Versalien
   # falsch), ss-Wörter nur, solange das Wort nicht durchgehend gross steht.
-  hits="$(printf '%s\n' "$candidates" | grep -Ei "$pattern" | grep -vE '\b[A-ZÄÖÜ]{2,}(SS|SZ)[A-ZÄÖÜ]*\b' || true)"
+  hits="$(printf '%s\n' "$candidates" | grep -Ei "$pattern" | grep -vE '\<[A-ZÄÖÜ]{2,}(SS|SZ)[A-ZÄÖÜ]*\>' || true)"
   # Der zweite Filter entfernt nur Zeilen, deren einziger Treffer ein reines
   # Versalien-Wort war; gemischte Zeilen bleiben erhalten, weil der erste
   # grep bereits zeilenweise arbeitet und ein echter Verstoß in derselben
