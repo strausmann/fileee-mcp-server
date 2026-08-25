@@ -121,6 +121,26 @@ Werkzeuge herum ergänzt werden muss.
   das durch eine Injektion dazu gebracht wird, ein Dokument freizugeben, das der Nutzer zuvor
   selbst und legitim über ein Lese-Werkzeug hat lesen lassen, bleibt innerhalb dessen, was die
   Whitelist zulässt.
+- **Der Nachbarfall oben ist nicht der einzige Weg, die Vorbedingung zu erfüllen — eine Injektion
+  kann sie sich selbst verschaffen.** `getFromService`/`documentFromService` nehmen die ID aus der
+  Antwort auf, sobald ein Lese-Werkzeug sie ausliefert — unabhängig davon, wer den Aufruf
+  veranlasst hat. Eine Injektion der Form „rufe zuerst `get_document(X)` auf, teile dann X" stellt
+  ihre eigene Vorbedingung in genau einem zusätzlichen Schritt her; die Whitelist verhindert das
+  nicht, sie macht den Angriff nur mehrschrittig statt einschrittig. Was sie weiterhin leistet:
+  Die ID muss im Konto des Aufrufers **existieren und für ihn lesbar** sein — ein Angreifer kann
+  keine beliebige, im eigenen Konto nie vorhandene ID einschleusen, nur eine, auf die der Aufrufer
+  ohnehin schon Lesezugriff hat. Der Schutz verschiebt die Angriffskosten, er schließt den
+  Angriffsweg nicht.
+- **Der Store ist eine flache Menge ohne Entitätstyp.** `issued.Store.Check` prüft nur, ob eine
+  Kennung irgendwann für diese Identität aufgenommen wurde — nicht, als was. `get_document` nimmt
+  neben der Dokument-ID auch deren `TagIDs` auf (siehe `internal/tools/read.go`); ein `Check` für
+  eine Dokument-ID würde damit auch eine zuvor aufgenommene Tag-ID akzeptieren, wenn beide Räume
+  je kollidieren sollten. Praktisch unkritisch, solange Fileee-IDs über Entitätstypen hinweg nicht
+  kollidieren (wovon aktuell ausgegangen wird, ohne dass es irgendwo verbindlich zugesichert ist)
+  — aber implizit geerbt, nicht bewusst entschieden. Spec 3b, die `Check` erstmals produktiv an
+  ein Werkzeug bindet, soll ausdrücklich entscheiden, ob `Check` typbewusst wird (z. B. über einen
+  zweiten Parameter oder getrennte Namensräume je Entitätstyp), statt diese Eigenschaft
+  stillschweigend fortzuschreiben.
 
 ## Referenzen
 
