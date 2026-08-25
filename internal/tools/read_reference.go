@@ -210,9 +210,10 @@ func referenceDocumentTypeSchemeDescriptor() readServiceDescriptor[fileee.Docume
 
 // registerReferenceTools mounts this file's four descriptors onto s —
 // called once from RegisterAll (read.go). logger and rec (Aufgabe 4) are
-// threaded straight through to registerReadService, the same pattern
-// registerSyncTools already follows (read_sync.go) for its own seven
-// descriptors.
+// threaded straight through to registerReadService — get_* nimmt die vom
+// Aufrufer genannte ID auf. registerSyncTools (read_sync.go) bekommt seit
+// der Verschärfung auf gezielte Einzelabrufe (ADR-0019) kein rec mehr:
+// sync_* nimmt nichts mehr auf.
 func registerReferenceTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) {
 	registerReadService(s, p, logger, referenceTagDescriptor(), rec)
 	registerReadService(s, p, logger, referenceCompanyDescriptor(), rec)

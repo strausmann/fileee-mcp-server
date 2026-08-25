@@ -194,9 +194,11 @@ const (
 // schema derivation and the ListTools call below do, neither of which
 // touches p. logger is a discarding *slog.Logger for the same reason:
 // nothing here calls a handler, so nothing here logs. rec (Aufgabe 4) is
-// (*issued.Store)(nil) for the identical reason — registerReadService/
-// registerSync only reach d.IDOf/rec.Record from inside a handler, and no
-// handler runs here.
+// (*issued.Store)(nil) for the identical reason — registerReadService
+// erreicht rec.Record nur aus einem Handler heraus, und hier läuft kein
+// Handler. registerSync nimmt seit der Verschärfung auf gezielte
+// Einzelabrufe (ADR-0019) gar kein rec mehr entgegen: sync_* nimmt nichts
+// mehr auf.
 func registeredReadTools() []*mcp.Tool {
 	ctx := context.Background()
 
