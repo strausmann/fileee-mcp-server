@@ -1149,8 +1149,8 @@ func TestInstanceDescriptionWirdGelesenUndBegrenzt(t *testing.T) {
 		}
 	})
 
-	t.Run("gesetzter Wert kommt unveraendert an", func(t *testing.T) {
-		// Umlaute und ein Zeilenumbruch muessen den Weg ueberstehen.
+	t.Run("gesetzter Wert kommt unverändert an", func(t *testing.T) {
+		// Umlaute und ein Zeilenumbruch müssen den Weg überstehen.
 		will := "Produktives Archiv.\nSchreibende Aufrufe nur auf ausdrückliche Anweisung."
 		cfg, err := LoadConfig(umgebung(map[string]string{"MCP_INSTANCE_DESCRIPTION": will}))
 		if err != nil {
@@ -1176,10 +1176,10 @@ func TestInstanceDescriptionWirdGelesenUndBegrenzt(t *testing.T) {
 		}
 	})
 
-	t.Run("die Grenze zaehlt Zeichen, nicht Bytes", func(t *testing.T) {
-		// 2000 Umlaute sind 4000 Bytes. Wuerde len() statt
-		// utf8.RuneCountInString() zaehlen, schluege dieser Fall
-		// faelschlich fehl.
+	t.Run("die Grenze zählt Zeichen, nicht Bytes", func(t *testing.T) {
+		// 2000 Umlaute sind 4000 Bytes. Würde len() statt
+		// utf8.RuneCountInString() zählen, schlüge dieser Fall
+		// fälschlich fehl.
 		cfg, err := LoadConfig(umgebung(map[string]string{
 			"MCP_INSTANCE_DESCRIPTION": strings.Repeat("ä", maxInstanceDescriptionRunes),
 		}))

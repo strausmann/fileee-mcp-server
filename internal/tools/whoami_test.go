@@ -78,7 +78,7 @@ func TestRegisterOpsToolsMountsWhoami(t *testing.T) {
 }
 
 func TestWhoamiGibtDieInstanzBeschreibungZurueck(t *testing.T) {
-	will := "Produktives Archiv. Echte Rechnungen und Vertraege."
+	will := "Produktives Archiv. Echte Rechnungen und Verträge."
 	ctx := context.Background()
 	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "nutzer@example.invalid", Password: "x"}))
 	id := &identity.Identity{Subject: "caller-123"}
@@ -104,12 +104,12 @@ func TestWhoamiGibtDieInstanzBeschreibungZurueck(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
 		}
-		// Die Pruefung laeuft ueber die ROHE Ausgabe, nicht ueber den
+		// Die Prüfung läuft über die ROHE Ausgabe, nicht über den
 		// dekodierten Wert: Ob das Feld ganz fehlt oder als leerer String
 		// erscheint, ist genau der Unterschied, den omitempty macht — und
-		// nach dem Dekodieren saehen beide Faelle gleich aus.
+		// nach dem Dekodieren sähen beide Fälle gleich aus.
 		if strings.Contains(string(roh), "instanceDescription") {
-			t.Errorf("Ausgabe enthaelt instanceDescription trotz leerem Wert: %s", roh)
+			t.Errorf("Ausgabe enthält instanceDescription trotz leerem Wert: %s", roh)
 		}
 	})
 }

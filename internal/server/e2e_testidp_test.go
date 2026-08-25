@@ -228,12 +228,12 @@ func TestEndToEndAgainstGangwaysTestIssuer(t *testing.T) {
 	}
 }
 
-// --- Instanz-Beschreibung erreicht den Client ueber initialize ------------
+// --- Instanz-Beschreibung erreicht den Client über initialize ------------
 //
 // Aufbau identisch zu TestEndToEndAgainstGangwaysTestIssuer oben: dieselbe
 // Reihenfolge von idp, fileeeMock, freeLocalAddr, t.Setenv, LoadConfig, New
-// und waitForListener. Der einzige Unterschied ist die zusaetzliche
-// Umgebungsvariable MCP_INSTANCE_DESCRIPTION und die Pruefung am Ende gegen
+// und waitForListener. Der einzige Unterschied ist die zusätzliche
+// Umgebungsvariable MCP_INSTANCE_DESCRIPTION und die Prüfung am Ende gegen
 // session.InitializeResult().Instructions statt gegen einen Tool-Aufruf.
 func TestInstanceDescriptionErreichtDenClientUeberInitialize(t *testing.T) {
 	idp := testidp.New(t)
@@ -289,10 +289,10 @@ func TestInstanceDescriptionErreichtDenClientUeberInitialize(t *testing.T) {
 	}
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		t.Fatalf("Connect ueber den echten Netzwerk-Weg (%s): %v", resourceURL, err)
+		t.Fatalf("Connect über den echten Netzwerk-Weg (%s): %v", resourceURL, err)
 	}
 
-	// Der Vergleich prueft den Inhalt, nicht die Existenz. Ein "if got == """
+	// Der Vergleich prüft den Inhalt, nicht die Existenz. Ein "if got == """
 	// bliebe grün, sobald irgendein Text ankommt — auch ein falscher.
 	got := session.InitializeResult().Instructions
 	if got != will {
@@ -310,6 +310,6 @@ func TestInstanceDescriptionErreichtDenClientUeberInitialize(t *testing.T) {
 			t.Fatalf("Run() = %v, erwartet nil nach geordnetem Shutdown", err)
 		}
 	case <-time.After(15 * time.Second):
-		t.Fatal("Run() kehrte nach Kontext-Abbruch nicht innerhalb von 15s zurueck")
+		t.Fatal("Run() kehrte nach Kontext-Abbruch nicht innerhalb von 15s zurück")
 	}
 }
