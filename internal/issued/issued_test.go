@@ -1,12 +1,15 @@
 package issued
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,6 +217,36 @@ func TestOhneGeprueteIdentitaetWirdWederAufgenommenNochFreigegeben(t *testing.T)
 	}
 }
 
+// TestRecordUndCheckSindNilEmpfaengerFest ist der Gegenprobe-Beleg zu
+// Records/Checks eigenen Nil-Guards (Copilot-Review-Fund an PR #75): beide
+// werden hier auf einem NIL *Store aufgerufen, mit einer ECHTEN Identität
+// im ctx — genau der Fall, in dem der frühere Code (Record kehrte nur
+// deshalb unfallfrei zurück, weil subjectOf(context.Background()) in JEDEM
+// bestehenden Aufrufer mit nil rec ok=false lieferte, nicht wegen eines
+// eigenen Guards) mit einer Nil-Pointer-Panik abgestürzt wäre: recordLocked
+// sperrt s.mu, ein Feld auf s, bevor der Nil-Guard existierte. Mehrere
+// Tests in internal/tools rufen Funktionen mit einem nil rec auf, weil
+// ihnen die Erfassung selbst gleichgültig ist (siehe Records eigenen
+// Doc-Kommentar) — ohne diesen Guard wäre ein künftiger Test, der
+// versehentlich einen identitätstragenden ctx mit einem nil rec
+// kombiniert, ein Absturz statt eines Fehlschlags.
+//
+// Ohne den Guard würde Record beim Zugriff auf s.mu in recordLocked
+// paniken; Check würde ebenfalls beim eigenen s.mu-Zugriff paniken. Mit
+// dem Guard bleibt Record ein No-op und Check liefert ErrNotIssued — NIE
+// nil (siehe Checks eigenen Doc-Kommentar für das WARUM: fail-closed,
+// nicht "kann nicht prüfen, also erlaubt").
+func TestRecordUndCheckSindNilEmpfaengerFest(t *testing.T) {
+	var s *Store
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	s.Record(ctx, "doc-1") // darf nicht paniken, tut nichts
+
+	if err := s.Check(ctx, "doc-1"); !errors.Is(err, ErrNotIssued) {
+		t.Fatalf("Check auf nil-Store: %v, want ErrNotIssued (fail-closed, nie nil)", err)
+	}
+}
+
 func TestLeereUndIdentischeIDsWerdenSauberBehandelt(t *testing.T) {
 	s := New(30*time.Minute, 1000)
 	ctx := ctxMitIdentitaet(t, "alice")
@@ -310,6 +343,46 @@ func TestDerDeckelVerdraengtDieAeltestenEintraege(t *testing.T) {
 		if err := s.Check(ctx, id); err != nil {
 			t.Fatalf("ID %q nach Überlauf: %v, want nil", id, err)
 		}
+	}
+}
+
+// TestSetLoggerLeitetDieVerdraengungsZeileUeberDenUebergebenenLoggerStattDenPaketDefault
+// belegt Befund 4 dieses Bot-Fix-Auftrags (Codex-Review-Fund an PR #75):
+// Record schreibt seine Verdrängungs-Debug-Zeile jetzt über s.logger — den
+// per SetLogger explizit übergebenen Logger —, nicht mehr über den
+// paketweiten slog-Default, den internal/server.New früher per
+// slog.SetDefault prozessglobal umbog. Ohne SetLogger würde diese Zeile
+// (New setzt s.logger auf slog.Default()) weiterhin den Paket-Default
+// treffen — das ist unverändert und beabsichtigt (siehe New's eigenen
+// Doc-Kommentar); dieser Test prüft die Abweichung DAVON: ein Store, dem
+// per SetLogger ein KONKRETER, eigener Logger gegeben wurde, schreibt
+// NICHT mehr in den Paket-Default, sondern ausschließlich in den
+// übergebenen.
+func TestSetLoggerLeitetDieVerdraengungsZeileUeberDenUebergebenenLoggerStattDenPaketDefault(t *testing.T) {
+	var buf bytes.Buffer
+	custom := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	u := &testUhr{jetzt: time.Unix(1000000, 0)}
+	s := New(30*time.Minute, 1)
+	s.SetClock(u.Now)
+	s.SetLogger(custom)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	s.Record(ctx, "a")
+	u.Vor(time.Second)
+	s.Record(ctx, "b") // sprengt den Deckel von 1, verdrängt "a"
+
+	got := buf.String()
+	if !strings.Contains(got, "evicted the oldest recorded id(s)") {
+		t.Fatalf("Verdrängungszeile fehlt im übergebenen Logger: %q", got)
+	}
+	if !strings.Contains(got, "evicted_count=1") {
+		t.Fatalf("Verdrängungszeile trägt nicht evicted_count=1: %q", got)
+	}
+	// Die verdrängte ID selbst darf NIE im Protokoll landen (Records
+	// eigener Doc-Kommentar: "wie viele" statt "welche").
+	if strings.Contains(got, "\"a\"") {
+		t.Fatalf("Verdrängungszeile enthält die verdrängte ID, darf sie nicht: %q", got)
 	}
 }
 

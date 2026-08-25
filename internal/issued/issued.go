@@ -110,6 +110,20 @@ type Store struct {
 	// Verdrängungstest echtes Warten und wäre zeitabhängig-flaky.
 	now func() time.Time
 
+	// logger ist der Logger, über den Record seine eine Protokollzeile
+	// schreibt (die Verdrängungs-Debug-Zeile, siehe Record's eigenen
+	// Doc-Kommentar) — NIE der paketweite slog-Default. New setzt logger
+	// auf slog.Default() (identisch zu log/slog's eigenem Nullwert-
+	// Verhalten, damit ein Store, den niemand explizit verdrahtet, sich
+	// nicht anders verhält als vorher); SetLogger überschreibt das mit
+	// einem konkreten Logger, denselben internal/diag-gebauten, den auch
+	// jeder andere Teil dieses Prozesses nutzt (siehe SetLogger's eigenen
+	// Doc-Kommentar für das WARUM des expliziten Durchreichens statt
+	// eines prozessglobalen slog.SetDefault-Eingriffs,
+	// internal/server/server.go's eigener Kommentar an der ehemaligen
+	// SetDefault-Stelle trägt die volle Historie).
+	logger *slog.Logger
+
 	mu sync.Mutex
 	// byIdent bildet das Subject einer verifizierten Identität auf die
 	// Menge der für sie aufgenommenen IDs ab, jede mit der time.Time ihrer
@@ -129,13 +143,68 @@ type Store struct {
 // nie als "unbegrenzt" gelesen). now startet auf time.Now; SetClock ist der
 // einzige Weg, das zu ändern, und ausschließlich für Tests gedacht (siehe
 // dessen eigenen Doc-Kommentar).
+//
+// New ändert dafür bewusst NICHT seine Signatur um einen *slog.Logger-
+// Parameter — das wäre der größere, riskantere Eingriff gegenüber
+// SetLogger (siehe dessen eigenen Doc-Kommentar): rund zwanzig
+// Aufrufstellen in diesem und dem tools-Paket bauen einen Store allein
+// für Tests, denen die Protokollzeile nie wichtig war und die keinen
+// Logger mitbringen wollen. logger startet deshalb auf slog.Default() —
+// New's altes, implizites Verhalten VOR dieser Änderung war exakt das
+// (Record lief über den paketweiten Default, weil es gar keinen eigenen
+// logger gab) —, SetLogger ist der einzige Weg, das für einen konkreten
+// Store gezielt zu ändern.
 func New(ttl time.Duration, maxPerIdentity int) *Store {
 	return &Store{
 		ttl:            ttl,
 		maxPerIdentity: maxPerIdentity,
 		now:            time.Now,
+		logger:         slog.Default(),
 		byIdent:        map[string]map[string]time.Time{},
 	}
+}
+
+// SetLogger überschreibt den Logger, über den Record seine Verdrängungs-
+// Debug-Zeile schreibt (Record's eigener Doc-Kommentar). Der einzige
+// Produktionsaufrufer ist internal/server.New, direkt nach issued.New,
+// mit demselben internal/diag-gebauten, stufengegatterten und
+// maskierenden Logger, den jeder andere Teil dieses Prozesses ohnehin
+// nutzt — genau wie SetClock (siehe dessen eigenen Doc-Kommentar) ein
+// bewusster, expliziter Test-/Wiring-Seam, keine Konfigurationsoption.
+//
+// Der Grund, warum das hier als eigene Methode statt als New-Parameter
+// existiert und warum es SetLogger überhaupt gibt, statt weiterhin über
+// den paketweiten slog.Default zu laufen: Vor dieser Änderung war
+// internal/issued.Record die EINZIGE Aufrufstelle in diesem gesamten
+// Repo, die den slog-Paket-Default berührte — internal/server.New rief
+// deshalb slog.SetDefault(logger) auf, ausschließlich um diese eine
+// Debug-Zeile durch denselben maskierenden Handler laufen zu lassen wie
+// jede andere Protokollzeile dieses Prozesses. Das mutierte
+// PROZESSGLOBALEN Zustand für einen Bedarf, der lokal an genau diesem
+// Store hängt (Copilot-Review-Fund an PR #75: mehrere *Server- bzw.
+// *Store-Instanzen im selben Prozess — vor allem in Tests, die New()
+// wiederholt ohne WithLogOutput aufrufen — überschreiben einander den
+// globalen Default). SetLogger schließt das: der Logger hängt jetzt AM
+// Store, nicht am Prozess, unabhängig davon, wie viele Server/Store-
+// Instanzen im selben Prozess laufen. Was dabei verloren geht — die
+// Nebenwirkung, dass slog.SetDefault zusätzlich Go's älteres log/log-
+// Paket umleitet und damit auch net/http's eigene Fallback-Meldungen
+// (z. B. "http: TLS handshake error", wenn Server.ErrorLog nirgends
+// gesetzt ist) durch denselben maskierenden Handler laufen ließ — ist in
+// internal/server.New's eigenem Kommentar an der ehemaligen
+// SetDefault-Stelle dokumentiert, mit der Begründung, warum dieser
+// Server das nicht anders erreichen kann (gangway/serve.Config bietet
+// keinen ErrorLog/Logger-Hook, der http.Server ist vollständig innerhalb
+// von gangway selbst gebaut) und warum das trotzdem hinnehmbar ist.
+//
+// logger darf nicht nil sein: SetLogger prüft das nicht, aus demselben
+// Grund, den SetClock für sich selbst nennt — ein nil-logger fiele beim
+// nächsten Record ohnehin sofort als Nil-Pointer-Panik auf (Aufruf einer
+// Methode auf einem nil *slog.Logger dereferenziert dessen Handler-Feld),
+// eine zusätzliche Guard-Klausel hier würde nur einen Fehler
+// verschleiern, den ein Aufrufer sofort selbst bemerkt.
+func (s *Store) SetLogger(logger *slog.Logger) {
+	s.logger = logger
 }
 
 // SetClock überschreibt die Uhr, die Record und Check befragen, um eine
@@ -190,7 +259,24 @@ func subjectOf(ctx context.Context) (string, bool) {
 // ids werden übersprungen; eine doppelte id (für diese Identität schon
 // aufgenommen) bekommt einfach ihre Aufnahmezeit aufgefrischt, was nie ein
 // Fehler ist.
+//
+// Record ist NIL-EMPFÄNGER-FEST: ein Aufruf auf einem nil *Store tut
+// nichts, statt zu paniken (Copilot-Review-Fund an PR #75). Das ist mehr
+// als Kosmetik — mehrere Tests in diesem Modul rufen Funktionen, die
+// intern Record aufrufen, absichtlich mit einem nil rec auf, weil ihnen
+// die Erfassung selbst gleichgültig ist (siehe z. B.
+// internal/tools/read_document_test.go). Das blieb bislang nur zufällig
+// unfallfrei: subjectOf(ctx) lieferte in all diesen Aufrufen ok=false
+// (context.Background() trägt nie eine Identität), Record kehrte also
+// VOR jedem Feldzugriff auf s zurück — ein Test, der versehentlich einen
+// identitätstragenden ctx an einen nil rec übergibt, hätte
+// s.recordLocked (das s.mu, ein Feld auf s, sperrt) mit einer
+// Nil-Pointer-Panik erreicht. Der Guard unten macht das explizit
+// sicher, statt sich weiter auf diesen Zufall zu verlassen.
 func (s *Store) Record(ctx context.Context, ids ...string) {
+	if s == nil {
+		return
+	}
 	subject, ok := subjectOf(ctx)
 	if !ok {
 		return
@@ -201,16 +287,16 @@ func (s *Store) Record(ctx context.Context, ids ...string) {
 		// Debug-Protokolleintrag OHNE die verdrängte(n) ID(s) selbst —
 		// internal/diag's Maskierungsgarantie (siehe dessen Paket-
 		// Doc-Kommentar) greift nur auf Attribute, die tatsächlich durch
-		// den dort gebauten Logger laufen; dieser hier läuft bewusst
-		// durch log/slog's eigenen paketweiten Standard-Logger
-		// (slog.DebugContext), nicht durch einen dieser Datei explizit
-		// mitgegebenen — Store.New ändert dafür keine Signatur (siehe
-		// Paket-Doc-Kommentar). Damit die ID selbst unter keinen
+		// den dort gebauten Logger laufen; dieser hier läuft über
+		// s.logger — den Store's eigenen, per SetLogger explizit
+		// durchgereichten Logger (siehe dessen Doc-Kommentar für das
+		// WARUM des Wechsels weg vom paketweiten slog-Default, den diese
+		// Zeile früher nutzte). Damit die ID selbst unter keinen
 		// Umständen im Protokoll landet, wird sie hier erst gar nicht als
 		// Attribut übergeben: "wie viele" statt "welche". Zweck laut
 		// Auftrag: im Betrieb sichtbar machen, ob der Deckel je greift,
 		// bevor die Ttl greift.
-		slog.DebugContext(ctx, "issued: per-identity cap evicted the oldest recorded id(s)",
+		s.logger.DebugContext(ctx, "issued: per-identity cap evicted the oldest recorded id(s)",
 			"evicted_count", evicted,
 			"max_per_identity", s.maxPerIdentity,
 		)
@@ -337,7 +423,25 @@ func evictionCandidate(bucket map[string]time.Time) string {
 // (heute keiner) eine leere id in byIdent ablegen würde — siehe
 // issued_test.go, TestCheckLehntLeereIDAbAuchWennSieImBucketStuende, wo
 // genau das isoliert geprüft wird.
+//
+// Check ist NIL-EMPFÄNGER-FEST und FAIL-CLOSED: ein Aufruf auf einem nil
+// *Store lehnt jede id ab — genau denselben Fehler wie eine echte, aber
+// nicht ausgelieferte id, NIE nil (Copilot-Review-Fund an PR #75, das
+// Gegenstück zu Records eigenem Nil-Guard oben). Der Fehlschlag statt
+// eines Durchlassens ist bewusst: ein nil-Store bedeutet, dass irgendwo
+// die Whitelist-Verdrahtung fehlt — ein destruktives Werkzeug ohne
+// erreichbaren Store hat keine Möglichkeit, IRGENDEINE id als
+// ausgeliefert zu bestätigen, und "ich kann nicht prüfen" ist in diesem
+// Paket, per Konstruktion (siehe den Paket-Doc-Kommentar, ADR-0013
+// Punkt 3), niemals gleichbedeutend mit "also erlaubt". Ein Check, der
+// bei nil s stattdessen nil zurückgäbe, würde eine vergessene
+// Store-Verdrahtung in genau die Lücke verwandeln, die dieses Paket
+// schließen soll — ein Bug in der Verdrahtung wäre dann ein Freifahrtschein
+// für JEDE id, nicht nur die versehentlich ungeprüfte.
 func (s *Store) Check(ctx context.Context, id string) error {
+	if s == nil {
+		return errNotIssuedFor()
+	}
 	subject, ok := subjectOf(ctx)
 	if !ok || id == "" {
 		return errNotIssuedFor()

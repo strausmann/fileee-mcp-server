@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -212,90 +211,78 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	}
 	logger := diag.New(cfg.LogLevel, logOutput)
 
-	// slog.SetDefault(logger) macht den paketweiten Standard-Logger (das,
-	// worauf slog.InfoContext/DebugContext etc. — OHNE explizit übergebenen
-	// Logger aufgerufen — zurückgreifen) zu demselben stufengegatterten,
-	// maskierten Logger, den jeder andere Teil dieses Prozesses bereits
-	// nutzt. Ohne diese Zeile bleibt log/slog's eigener Nullwert-Default
-	// (ein unmaskierter slog.TextHandler auf os.Stderr, fest auf LevelInfo,
-	// unabhängig von cfg.LogLevel) ein stiller zweiter Protokollierungsweg,
-	// der internal/diag's redactingHandler nie durchläuft.
+	// Bis zu dieser Änderung stand hier slog.SetDefault(logger) — ein
+	// prozessglobaler Eingriff, der den paketweiten log/slog-Standard-Logger
+	// (das, worauf slog.InfoContext/DebugContext etc. — OHNE explizit
+	// übergebenen Logger aufgerufen — zurückgreifen) auf denselben
+	// stufengegatterten, maskierten Logger umbog, den jeder andere Teil
+	// dieses Prozesses bereits nutzt. Grund dafür war GENAU EIN Aufrufer:
+	// internal/issued.Store.Record protokollierte die Anzahl der wegen des
+	// Deckels je Identität verdrängten Einträge über den paketweiten
+	// Default, weil Store.New keinen eigenen Logger entgegennahm.
 	//
-	// Das existiert heute für genau EINEN Aufrufer: internal/issued.Store.Record
-	// protokolliert die Anzahl der wegen des Deckels je Identität
-	// verdrängten Einträge über slog.DebugContext — den paketweiten
-	// Default, nicht einen Logger, den New() als Parameter entgegennimmt
-	// (siehe den Doc-Kommentar dieses Pakets für das WARUM: Store.New's
-	// Signatur ist Aufgabe 1/2's bereits reviewter, 100%-gedeckter Vertrag,
-	// und sie jetzt zu ändern — um einen *slog.Logger durch Record zu
-	// fädeln und jeden Aufrufer, Test und jede Attrappe entsprechend
-	// mitwachsen zu lassen — ist ein größerer und riskanterer Eingriff als
-	// die eine Zeile unten, für eine einzelne Debug-Zeile, die nie die ID
-	// selbst trägt (siehe Records Doc-Kommentar). Zwei verworfene
-	// Alternativen, für das Protokoll: (a) issued.New's Signatur um einen
-	// Logger erweitern — verworfen aus dem genannten Grund; (c) die
-	// Verdrängungszeile am unveränderten Default belassen — verworfen,
-	// weil dieser Default stderr/unmaskiert/immer-Info ist: FILEEE_LOG_LEVEL=debug
-	// würde diese Zeile nie sichtbar machen, und FILEEE_LOG_LEVEL=info
-	// würde sie trotzdem ungefiltert nach stderr schreiben, unmaskiert —
-	// genau der Fehler "geladen, aber nicht durchgesetzt", den diese
-	// Aufgabe schließen soll, hier nur für eine Logger-Einstellung statt
-	// für einen Konfigurationswert.
+	// Copilot-Review-Fund an PR #75: ein prozessglobaler Eingriff für einen
+	// Bedarf, der lokal an genau einer Store-Instanz hängt, überschreibt
+	// sich selbst, sobald mehr als eine *Server- bzw. *Store-Instanz im
+	// selben Prozess existiert — vor allem in Tests, die New() wiederholt
+	// ohne WithLogOutput aufrufen (die ausführliche frühere Fassung dieses
+	// Kommentars hatte das bereits als "bekannte Einschränkung" benannt,
+	// aber hingenommen statt behoben).
 	//
-	// Nebenwirkungen geprüft (grep nach slog.Info/Debug/Warn/Error/Default
-	// im gesamten Modul vor dieser Änderung): internal/issued.Record ist
-	// die EINZIGE Aufrufstelle in diesem gesamten Repo, die den paketweiten
-	// slog-Default-Logger berührt — kein anderes Paket in diesem Prozess
-	// liest oder schreibt ihn, es gibt also kein anderes Paket, dessen
-	// Verhalten sich durch diesen Aufruf still ändern könnte. cmd/fileee-mcp-server/main.go's
-	// eigene Start-/Shutdown-Zeilen nutzen durchgehend fmt.Fprintf, nicht
-	// log/slog, und bleiben so oder so unberührt.
+	// Fix: issued.Store.SetLogger (siehe dessen eigenen Doc-Kommentar) reicht
+	// logger jetzt EXPLIZIT und GEZIELT an genau diese eine Store-Instanz
+	// durch, statt den Prozess-Default zu mutieren — der Logger hängt am
+	// Store, nicht mehr am Prozess. Aufgerufen direkt nach issued.New unten.
 	//
-	// EIN grep-blinder Fleck bleibt: slog.SetDefault kapert intern zusätzlich
-	// das ältere stdlib-Paket log/log (log.SetOutput + log.SetFlags(0), Go's
-	// eigene Implementierung von slog.SetDefault) — eine Aufrufstelle, die
-	// kein "slog."-Grep findet, weil sie nicht als slog.* im Quelltext
-	// dieses Moduls steht, sondern in log/slog selbst. Betroffen ist
-	// net/http: Server.ErrorLog ist hier nirgends gesetzt, also fällt
-	// net/http intern auf log.Printf zurück (siehe dessen eigene Doku) —
-	// etwa für "http: TLS handshake error". Nach dieser Zeile läuft auch
-	// diese Meldung durch denselben stufengegatterten, maskierten Handler
-	// wie jede slog-Zeile, statt unmaskiert auf stderr zu landen. Das ist
-	// hier erwünscht, nicht bloß hingenommen: dieselbe Begründung wie oben
-	// für internal/issued.Record gilt auch für net/http's eigene Meldungen
-	// — ein zweiter, ungefilterter Protokollierungsweg am maskierenden
-	// Handler vorbei wäre genau die Lücke, die diese Zeile schließen soll.
+	// Ein Nebeneffekt geht dabei bewusst verloren, nicht übersehen:
+	// slog.SetDefault kapert intern zusätzlich das ältere stdlib-Paket
+	// log/log (log.SetOutput + log.SetFlags(0), Go's eigene Implementierung
+	// von slog.SetDefault) — eine Aufrufstelle, die kein "slog."-Grep im
+	// eigenen Modul findet, weil sie nicht als slog.* im Quelltext dieses
+	// Moduls steht, sondern in log/slog selbst. Betroffen ist net/http:
+	// Server.ErrorLog wird für DIESEN Server nirgends gesetzt — nicht aus
+	// Nachlässigkeit, sondern weil es KEINEN Weg gibt, es zu setzen. Der
+	// http.Server, den dieser Prozess tatsächlich bedient, wird
+	// vollständig INNERHALB von gangway/serve gebaut (serve.go, Server.run)
+	// und dort ohne ErrorLog konstruiert; github.com/strausmann/gangway
+	// v0.5.0s serve.Config (serve/config.go) hat kein Logger- oder
+	// ErrorLog-Feld, über das dieses Modul einen Wert hineinreichen könnte
+	// (gegen den tatsächlichen Modulquellcode geprüft, nicht angenommen).
+	// net/http fällt für seine eigenen Fallback-Meldungen (z. B.
+	// "http: TLS handshake error") deshalb auf log.Printf zurück (siehe
+	// dessen eigene Doku) — vor dieser Änderung lief das, als
+	// Nebenwirkung von slog.SetDefault, durch denselben maskierenden
+	// Handler wie jede slog-Zeile; ab jetzt läuft es durch log/slog's
+	// eigenen, unveränderten Nullwert-Default (unmaskierter
+	// slog.TextHandler auf os.Stderr, fest auf LevelInfo).
 	//
-	// Bekannte Einschränkung für Tests, nicht für den Produktivbetrieb:
-	// SetDefault verändert prozessglobalen Zustand. New() wird in der
-	// echten Binary genau einmal aufgerufen, dort bleibt das folgenlos.
-	// Mehrere Tests in diesem Paket rufen New() wiederholt auf, ohne
-	// logOutput umzuleiten — jeder Aufruf zeigt den globalen Default neu auf
-	// SEINEN eigenen Logger. Kein Test in internal/server nutzt aktuell
-	// t.Parallel() (Stand dieser Änderung, per grep bestätigt) — die
-	// wiederholten Aufrufe laufen also sequenziell, nicht gleichzeitig.
-	// slog.SetDefault selbst ist unter dem Race-Detector sicher (ein
-	// atomarer Zeiger-Tausch), aber sollte ein künftiger Test parallel
-	// laufen UND gleichzeitig (a) eine Verdrängung auslösen UND (b) den
-	// Inhalt der resultierenden Logzeile prüfen, wäre er anfällig für
-	// ein Wettrennen mit einem parallel laufenden New()-Aufruf. Kein
-	// bestehender Test tut beides — server_diag_test.go prüft die eigene
-	// `logger`-Variable direkt (nicht den paketweiten Default), und
-	// issued.Store's eigene Verdrängungs-Tests bauen einen *Store direkt
-	// über issued.New/SetClock und laufen nie über server.New. Sollte ein
-	// künftiger Test genau das prüfen wollen, darf er kein t.Parallel()
-	// zusammen mit einem anderen Test verwenden, der ebenfalls New() ohne
-	// WithLogOutput aufruft.
-	slog.SetDefault(logger)
+	// Das ist hinnehmbar, nicht nur mangels Alternative: net/http's eigene
+	// Fallback-Meldungen tragen keine Anwendungsdaten dieses Servers (keine
+	// Fileee-Zugangsdaten, keine Bearer-Token, keine Dokumentinhalte) — die
+	// Maskierungsgarantie, die internal/diag's redactingHandler für DIESEN
+	// Server bereitstellt, hatte hier ohnehin nichts zu maskieren; der
+	// einzige tatsächliche Nutzen war Konsistenz (ein einziger
+	// Protokollierungsweg für alles), nicht Sicherheit. Ein erneuter
+	// prozessglobaler Seiteneffekt einzig für diese Konsistenz wäre der
+	// falsche Tausch gegen den jetzt behobenen, echten Fund (mehrere
+	// Instanzen im selben Prozess überschreiben sich). Sollte net/http's
+	// eigene Fehlerausgabe künftig doch gezielt durch den maskierenden
+	// Handler laufen sollen, ist der richtige Ort dafür eine
+	// Upstream-Erweiterung von gangway/serve.Config um ein
+	// ErrorLog-/Logger-Feld — nicht ein erneuter slog.SetDefault hier.
 
 	// issuedStore ist der aus den beiden Aufgabe-3-Einstellungen gebaute
-	// internal/issued.Store — siehe Server.issuedStore's eigenen
-	// Doc-Kommentar dafür, warum er hier zwar gebaut, aber noch nicht an
-	// tools.RegisterAll durchgereicht wird.
+	// internal/issued.Store, unten an tools.RegisterAll durchgereicht.
+	// SetLogger verdrahtet direkt danach denselben logger, den auch jeder
+	// andere Teil dieses Prozesses nutzt, EXPLIZIT an genau diese eine
+	// Store-Instanz — siehe den langen Kommentar oben (an der ehemaligen
+	// slog.SetDefault-Stelle) für das WARUM dieses Wechsels und
+	// issued.Store.SetLogger's eigenen Doc-Kommentar für die Mechanik.
 	issuedStore := issued.New(
 		time.Duration(cfg.IssuedIDTTLSeconds)*time.Second,
 		int(cfg.IssuedIDMaxPerIdentity),
 	)
+	issuedStore.SetLogger(logger)
 
 	poolOptions := append([]clientpool.Option{
 		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
