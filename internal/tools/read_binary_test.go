@@ -13,11 +13,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // --- readLimited: Aufgabe 9's eigener Test aus dem Auftrag ---
@@ -86,7 +88,7 @@ func TestGetDocumentPDFOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 }
 
 func TestGetDocumentPDFHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *testing.T) {
-	handler := getDocumentPDFHandler(nil, discardLogger())
+	handler := getDocumentPDFHandler(nil, discardLogger(), nil)
 
 	_, _, err := handler(context.Background(), nil, getDocumentPDFInput{ID: "  "})
 	if err == nil {
@@ -98,7 +100,7 @@ func TestGetDocumentPDFHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb(t *test
 }
 
 func TestGetDocumentPDFHandlerLehntEinenUnbekanntenModusOhneNetzwerkzugriffAb(t *testing.T) {
-	handler := getDocumentPDFHandler(nil, discardLogger())
+	handler := getDocumentPDFHandler(nil, discardLogger(), nil)
 
 	_, _, err := handler(context.Background(), nil, getDocumentPDFInput{ID: "d1", Mode: "unsinn"})
 	if err == nil {
@@ -142,11 +144,19 @@ func (f *fakeDocumentBinaryService) PageOCR(context.Context, string) ([]fileee.O
 	return f.ocrResult, nil
 }
 
+// TestDocumentPDFFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin
+// nutzt seit Befund 1 (Codex-Review-Fund an PR #75) einen ECHTEN rec +
+// eine echte Identität statt nil — damit dieser Test GLEICHZEITIG belegt,
+// was documentFromService's eigener Doc-Kommentar (read.go) für alle
+// rec-Aufrufer dieses Repos verlangt: rec.Record läuft ausschließlich auf
+// dem Erfolgspfad, NIE wenn DownloadPDF selbst fehlschlägt.
 func TestDocumentPDFFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *testing.T) {
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeDocumentBinaryService{pdfErr: backendErr}
+	rec := issued.New(time.Hour, 100)
+	ctx := ctxMitIdentitaet(t, "alice")
 
-	_, _, err := documentPDFFromService(context.Background(), service, "d1", fileee.PDFModeDownload)
+	_, _, err := documentPDFFromService(ctx, service, "d1", fileee.PDFModeDownload, rec)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -156,13 +166,16 @@ func TestDocumentPDFFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenE
 	if !strings.Contains(err.Error(), ToolGetDocumentPDF) {
 		t.Errorf("Fehlermeldung %q enthaelt nicht den Werkzeugnamen %q", err.Error(), ToolGetDocumentPDF)
 	}
+	if err := rec.Check(ctx, "d1"); err == nil {
+		t.Error("rec.Check(\"d1\") = nil nach fehlgeschlagenem DownloadPDF — die ID darf NICHT aufgenommen worden sein")
+	}
 }
 
 func TestDocumentPDFFromServiceLiefertDenPDFInhaltAlsEingebettetesRessourcenObjekt(t *testing.T) {
 	pdfBytes := []byte("%PDF-1.4 Testinhalt")
 	service := &fakeDocumentBinaryService{pdfResult: io.NopCloser(bytes.NewReader(pdfBytes))}
 
-	result, out, err := documentPDFFromService(context.Background(), service, "d1", fileee.PDFModeDownload)
+	result, out, err := documentPDFFromService(context.Background(), service, "d1", fileee.PDFModeDownload, nil)
 	if err != nil {
 		t.Fatalf("documentPDFFromService: %v", err)
 	}
@@ -181,6 +194,29 @@ func TestDocumentPDFFromServiceLiefertDenPDFInhaltAlsEingebettetesRessourcenObje
 	}
 	if res.Resource.MIMEType != "application/pdf" {
 		t.Errorf("MIMEType = %q, want application/pdf", res.Resource.MIMEType)
+	}
+}
+
+// TestDocumentPDFFromServiceMerktDieAngeforderteKennungAlsAusgeliefert ist
+// Befund 1's eigener positiver Beleg (Codex-Review-Fund an PR #75): die
+// vom Aufrufer genannte Dokument-ID wird nach einem erfolgreichen
+// DownloadPDF tatsächlich in rec aufgenommen — siehe diese Datei's
+// eigenen WICHTIG-Kommentarblock am Kopf für die volle Begründung.
+// ctxMitIdentitaet (read_generic_test.go, gleiches Paket) liefert dafür
+// ein echtes, Gangway-verifiziertes ctx — ohne Identität würde rec.Record
+// nichts merken (issued.Store.Record's eigener Doc-Kommentar), ein Test
+// mit context.Background() könnte diesen Befund also gar nicht belegen.
+func TestDocumentPDFFromServiceMerktDieAngeforderteKennungAlsAusgeliefert(t *testing.T) {
+	pdfBytes := []byte("%PDF-1.4 Testinhalt")
+	service := &fakeDocumentBinaryService{pdfResult: io.NopCloser(bytes.NewReader(pdfBytes))}
+	rec := issued.New(time.Hour, 100)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	if _, _, err := documentPDFFromService(ctx, service, "d1", fileee.PDFModeDownload, rec); err != nil {
+		t.Fatalf("documentPDFFromService: %v", err)
+	}
+	if err := rec.Check(ctx, "d1"); err != nil {
+		t.Errorf("rec.Check(\"d1\") = %v, want nil — die angeforderte ID wurde nicht aufgenommen", err)
 	}
 }
 
@@ -358,7 +394,7 @@ func TestDocumentPageOCRFromServiceLiefertKoordinatenStrukturiertUndTextGerahmt(
 func TestRegisterBinaryToolsMeldetAlleDreiAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerBinaryTools(s, (*clientpool.Pool)(nil), discardLogger())
+	registerBinaryTools(s, (*clientpool.Pool)(nil), discardLogger(), nil)
 
 	names := toolNamesOf(t, s)
 	for _, name := range []string{ToolGetDocumentPDF, ToolGetPageImage, ToolGetPageOCR} {

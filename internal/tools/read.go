@@ -81,7 +81,10 @@ const (
 // list_*/search_* halves take no store, see registerReadService's own
 // doc comment, read_generic.go), get_document (getDocumentHandler),
 // registerBoxTools (get_box only — its list_boxes half takes no store
-// either, see registerBoxTools' own doc comment, read_boxes.go). Each
+// either, see registerBoxTools' own doc comment, read_boxes.go), and
+// registerBinaryTools' get_document_pdf (getDocumentPDFHandler — a
+// Codex-Review-Fund at PR #75 corrected the ORIGINAL Aufgabe 5 decision
+// for this one tool, see read_binary.go's own WICHTIG block). Each
 // records an id as issued after successfully delivering it (ADR-0013
 // Punkt 3) — the ids a later destructive tool's rec.Check call then
 // verifies against.
@@ -98,12 +101,16 @@ const (
 // comment (internal/issued) for the path forward a caller now needs: a
 // single-entity get tool for each id it wants recorded.
 //
-// registerBinaryTools deliberately does NOT take rec either, for an
-// UNRELATED reason predating ADR-0019: none of its three tools
-// (get_document_pdf, get_page_image, get_page_ocr) hands out a
-// Fileee-owned id a later tool could act on — see read_binary.go's own
-// doc comment for that decision, including why get_page_ocr's per-token
-// WebappID is the one field that looks like an id but is not recorded.
+// registerBinaryTools' OTHER two tools, get_page_image and get_page_ocr,
+// still do NOT take rec — for two independent, tool-specific reasons
+// (see read_binary.go's own WICHTIG block for the full reasoning): no
+// write tool in this server accepts a PAGE id as a parameter at all (so
+// recording one could never be checked against anything), and
+// get_page_image does not even hand its pageId back to the caller in any
+// form (unlike get_document_pdf, whose id travels in its Content's
+// Resource URI). get_page_ocr's own reason predates ADR-0019 entirely —
+// see read_binary.go's doc comment for why its per-token WebappID is the
+// one field that looks like an id but is not recorded.
 // registerAccountTools/registerOpsTools/registerWriteTools do not take
 // rec either: none of their tools hand out an entity id at all
 // (get_account_status' AccountTypeID is a subscription-plan code, not a
@@ -168,7 +175,7 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 	}, listDocumentConversationsHandler(p, logger))
 
 	registerBoxTools(s, p, logger, rec)
-	registerBinaryTools(s, p, logger)
+	registerBinaryTools(s, p, logger, rec)
 	registerAccountTools(s, p, logger)
 	registerOpsTools(s, p, info, logger)
 

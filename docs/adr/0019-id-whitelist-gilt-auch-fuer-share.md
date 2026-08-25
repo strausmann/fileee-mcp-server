@@ -216,6 +216,33 @@ NICHT. Per Gegenprobe belegt (beide Richtungen): `Record` aus `get_document` ent
 schlägt fehl und nennt `get_document`; `Record` erneut in `list_documents` eingebaut → Test
 schlägt fehl und nennt `list_documents`.
 
+### Korrektur (2026-08-25): `get_document_pdf` gehörte von Anfang an zu den Einzelabrufen
+
+**Codex-Review-Fund an PR #75, Bot-Fix nach diesem Nachtrag.** Die Liste oben („Nehmen weiterhin
+auf" / „Nehmen seit diesem Nachtrag NICHT MEHR auf") nannte `get_document_pdf` in KEINER der
+beiden Aufzählungen — ein Versehen der ursprünglichen Umsetzung, keine bewusste dritte
+Kategorie. `get_document_pdf(id)` erfüllt exakt die oben definierte Linie: der Aufrufer nennt EINE
+ID im Parameter, der Server bestätigt sie als existierend und lesbar, indem er das PDF erfolgreich
+lädt. Übersehen wurde es, weil die ID nicht in `StructuredContent` steht (dort nur `sizeBytes"`),
+sondern in der Resource-URI des zurückgegebenen `mcp.EmbeddedResource`
+(`"fileee://documents/"+id+"/pdf"`) — der ursprüngliche Guardrail-Test prüfte ausschließlich
+`StructuredContent`, nie `Content` selbst, und war für genau diesen Weg blind.
+
+**Konsequenz:** `get_document_pdf` gehört ab sofort zur „Nehmen auf"-Liste, mit derselben
+Begründung wie `get_document`/`get_box` — wer ein PDF geholt hat, muss das Dokument danach
+freigeben/löschen/ändern können, ohne es zusätzlich über `get_document` nachzuladen.
+`get_page_image` und `get_page_ocr` bleiben unverändert bei „nimmt nicht auf" — aus zwei eigenen,
+unabhängigen Gründen (kein Schreib-Werkzeug dieses Servers nimmt eine Seiten-ID entgegen, und
+`get_page_image` gibt seine Seiten-ID anders als `get_document_pdf` in keiner Form an den
+Aufrufer zurück — siehe `internal/tools/read_binary.go`'s eigenen WICHTIG-Kommentarblock für die
+vollständige Begründung beider Werkzeuge).
+
+**Guardrail erweitert:** `issued_coverage_test.go`s `resourceURIsOf` liest seither Resource-URIs
+aus `Content`, nicht nur `StructuredContent` — damit eine künftige, ähnlich versteckte ID nicht
+erneut unbemerkt bleibt. Per Gegenprobe belegt: `rec.Record(ctx, id)` aus `documentPDFFromService`
+entfernt → `TestJedesWerkzeugDasIDsAusliefertMerktSieAuch/get_document_pdf` schlägt fehl und nennt
+`get_document_pdf`.
+
 ## Referenzen
 
 - [ADR-0013](0013-prompt-injection-schutz.md) — Punkt 3 (Herkunft der Whitelist), Abschnitt

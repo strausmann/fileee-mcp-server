@@ -21,12 +21,59 @@
 // bounding-box coordinates do (ocrTokenPosition, deliberately excluding
 // Text).
 //
-// Aufgabe 5 (internal/issued, ADR-0013 Punkt 3) decided all three tools
-// in this file need NO *issued.Store — none of them hands out a
-// Fileee-owned id a later tool could act on:
+// Aufgabe 5 (internal/issued, ADR-0013 Punkt 3) originally decided all
+// three tools in this file need NO *issued.Store — none of them, back
+// then, was seen to hand out a Fileee-owned id a later tool could act
+// on. See ocrTokenPosition's own doc comment and the WICHTIG block below
+// for why that "nein" still holds for get_page_ocr and get_page_image,
+// and why it was CORRECTED for get_document_pdf.
+//
+// WICHTIG (Codex-Review-Fund an PR #75, Nachtrag zu ADR-0019 „Nur
+// gezielte Einzelabrufe erfassen"): get_document_pdf ist genau so ein
+// gezielter Einzelabruf — der Aufrufer nennt EINE ID im Parameter, der
+// Server bestätigt sie als existierend und lesbar, indem er das PDF
+// erfolgreich lädt — und muss deshalb seit dieser Korrektur erfassen,
+// exakt dieselbe Linie, die get_document/get_box bereits befolgen (siehe
+// documentFromService's eigenen Doc-Kommentar, read.go). Die ID geht
+// dabei sogar an den Aufrufer zurück, nur nicht in StructuredContent,
+// sondern eingebettet in die Resource-URI des zurückgegebenen
+// mcp.EmbeddedResource ("fileee://documents/"+id+"/pdf",
+// documentPDFFromService unten) — ein Weg, den der ursprüngliche
+// TestGetDocumentPdfUndGetPageImageLiefernKeineKennungInDerStruktur
+// (issued_coverage_test.go) blind war, weil er nur StructuredContent
+// prüfte, nie Content selbst (dort seither behoben, siehe dessen eigenen
+// Doc-Kommentar). Wer ein Dokument-PDF geholt hat, muss das Dokument
+// danach freigeben/löschen/ändern können, ohne es zusätzlich über
+// get_document nachzuladen — genau der Zweck der Whitelist.
+//
+// get_page_image und get_page_ocr bleiben dagegen bei "nein", aus ZWEI
+// unabhängigen, sich verstärkenden Gründen — nicht nur, weil das schon
+// vorher so war:
+//
+//   - Kein Werkzeug in diesem Server nimmt eine SEITEN-ID (pageId) als
+//     Parameter entgegen — write_boxes.go/write_documents.go/write.go/
+//     write_people.go akzeptieren ausschließlich boxId, documentId und
+//     id (Dokument-/Kontakt-/Reminder-Kennungen), nie eine pageId
+//     (per grep über alle Schreib-Werkzeuge dieses Repos bestätigt,
+//     nicht angenommen). Eine erfasste pageId könnte also, genau wie
+//     get_page_ocr's WebappID (siehe ocrTokenPosition's eigenen
+//     Doc-Kommentar), NIE gegen irgendetwas geprüft werden — sie würde
+//     nur einen Platz im Deckel je Identität verbrauchen, ohne jede
+//     schützende Wirkung.
+//
+//   - get_page_image gibt die pageId anders als get_document_pdf AUCH
+//     GAR NICHT an den Aufrufer zurück, in keiner Form: sein Ergebnis ist
+//     ein bloßes mcp.ImageContent{Data, MIMEType} — dieser Typ hat, im
+//     Gegensatz zu mcp.EmbeddedResource, kein URI-Feld überhaupt (siehe
+//     documentPageImageFromService unten). Es gibt also nicht einmal die
+//     Konstruktion, die get_document_pdf zum "gezielten Einzelabruf mit
+//     zurückgegebener ID" macht.
 //
 //   - getDocumentPDFOutput/getPageImageOutput carry only SizeBytes — no
-//     id field of any kind.
+//     id field of any kind, in StructuredContent — see the WICHTIG block
+//     above for why that alone no longer settles get_document_pdf's own
+//     decision (its id travels in Content, not StructuredContent).
+//
 //   - ocrTokenPosition.WebappID (json "webappId") is the one field in
 //     this file that LOOKS like an id — it is Fileee's own generated id
 //     for that OCR token (see ocrTokenPosition's own doc comment) — but
@@ -50,6 +97,7 @@ import (
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // maxBinaryBytes bounds get_document_pdf's and get_page_image's own read
@@ -156,7 +204,11 @@ func parsePDFMode(mode string) (fileee.PDFMode, error) {
 
 // getDocumentPDFHandler resolves get_document_pdf. The empty-ID check
 // and mode validation both run before clientFor.
-func getDocumentPDFHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandlerFor[getDocumentPDFInput, getDocumentPDFOutput] {
+//
+// rec is get_document_pdf's *issued.Store — see this file's own WICHTIG
+// doc-comment block for why get_document_pdf, unlike its two siblings in
+// this file, now takes one.
+func getDocumentPDFHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) mcp.ToolHandlerFor[getDocumentPDFInput, getDocumentPDFOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in getDocumentPDFInput) (*mcp.CallToolResult, getDocumentPDFOutput, error) {
 		start := time.Now()
 		logToolStart(ctx, logger, ToolGetDocumentPDF, slog.String("id", in.ID), slog.String("mode", in.Mode))
@@ -178,7 +230,7 @@ func getDocumentPDFHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHand
 			logToolEnd(ctx, logger, ToolGetDocumentPDF, start, "", 0, err)
 			return nil, getDocumentPDFOutput{}, err
 		}
-		result, out, err := documentPDFFromService(ctx, client.Documents, in.ID, mode)
+		result, out, err := documentPDFFromService(ctx, client.Documents, in.ID, mode, rec)
 		logToolEnd(ctx, logger, ToolGetDocumentPDF, start, getDocumentPDFEndpoint, out.SizeBytes, err)
 		return result, out, err
 	}
@@ -188,7 +240,16 @@ func getDocumentPDFHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHand
 // resolution — split out so a test can drive it against a
 // documentBinaryService fake (fakeDocumentBinaryService,
 // read_binary_test.go) instead of a live *fileee.Client.
-func documentPDFFromService(ctx context.Context, service documentBinaryService, id string, mode fileee.PDFMode) (*mcp.CallToolResult, getDocumentPDFOutput, error) {
+//
+// rec records id ONLY once the PDF has been fully, successfully read and
+// the result is fully built — the same "never on an error path" rule
+// documentFromService's own doc comment states (read.go). id is the one
+// the CALLER named in the request; recording it after a successful
+// DownloadPDF is what makes get_document_pdf a "gezielter Einzelabruf"
+// under ADR-0019's Nachtrag — see this file's own WICHTIG block above
+// for the full reasoning and for why get_page_image/get_page_ocr, just
+// below, do NOT take a rec at all.
+func documentPDFFromService(ctx context.Context, service documentBinaryService, id string, mode fileee.PDFMode, rec *issued.Store) (*mcp.CallToolResult, getDocumentPDFOutput, error) {
 	rc, err := service.DownloadPDF(ctx, id, mode)
 	if err != nil {
 		return nil, getDocumentPDFOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetDocumentPDF, err)
@@ -204,6 +265,7 @@ func documentPDFFromService(ctx context.Context, service documentBinaryService, 
 			Blob:     data,
 		},
 	}}}
+	rec.Record(ctx, id)
 	return result, getDocumentPDFOutput{SizeBytes: len(data)}, nil
 }
 
@@ -390,8 +452,10 @@ func documentPageOCRFromService(ctx context.Context, service documentBinaryServi
 }
 
 // registerBinaryTools mounts get_document_pdf, get_page_image and
-// get_page_ocr onto s — called once from RegisterAll (read.go).
-func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+// get_page_ocr onto s — called once from RegisterAll (read.go). rec is
+// passed only to get_document_pdf — see this file's own WICHTIG doc-
+// comment block for why get_page_image/get_page_ocr take none.
+func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetDocumentPDF,
 		Description: "Download a document's original PDF file. Returns it as embedded binary " +
@@ -402,7 +466,7 @@ func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger)
 			"get_page_image for a page-by-page fallback) and it does not return the document's " +
 			"OCR text (use get_page_ocr).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get document PDF"},
-	}, getDocumentPDFHandler(p, logger))
+	}, getDocumentPDFHandler(p, logger, rec))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetPageImage,

@@ -21,16 +21,29 @@
 // vollständig ungedeckelt — bei einem Konto mit ein paar hundert
 // Dokumenten war danach praktisch jede ID im Konto gültig.
 //
-// Von den zehn Werkzeugen nehmen seither NUR NOCH get_document und
-// get_box eine ID auf — und jeweils NUR die eine, vom Aufrufer per
-// Parameter genannte ID, NICHT die zusätzlichen IDs, die als
-// Nebenprodukt mitkommen (get_document's TagIDs, get_box's
-// DocumentIDs — siehe documentFromService's/boxFromService's eigene
-// Doc-Kommentare, read.go/read_boxes.go). Die übrigen acht (list_documents,
-// search_documents, sync_documents, list_document_conversations,
-// list_boxes, get_document_pdf, get_page_image, get_page_ocr) nehmen GAR
-// NICHTS mehr auf — die letzten drei taten das ohnehin nie (siehe
-// read_binary.go's eigener Doc-Kommentar, unverändert durch ADR-0019).
+// Von den zehn Werkzeugen nahmen unmittelbar nach ADR-0019 nur get_document
+// und get_box eine ID auf. KORRIGIERT (2026-08-25, Codex-Review-Fund an
+// PR #75): get_document_pdf gehört seither ebenfalls dazu — es ist genau so
+// ein gezielter Einzelabruf (der Aufrufer nennt EINE ID im Parameter, der
+// Server bestätigt sie als existierend/lesbar, indem er das PDF erfolgreich
+// lädt), nur wurde das bei ADR-0019s ursprünglicher Umsetzung übersehen,
+// weil die ID nicht in StructuredContent auftaucht, sondern eingebettet in
+// die Resource-URI des zurückgegebenen mcp.EmbeddedResource — siehe
+// read_binary.go's eigenen WICHTIG-Kommentarblock für die volle Begründung.
+// Alle DREI (get_document, get_box, get_document_pdf) nehmen dabei jeweils
+// NUR die eine, vom Aufrufer per Parameter genannte ID auf, NICHT die
+// zusätzlichen IDs, die als Nebenprodukt mitkommen (get_document's TagIDs,
+// get_box's DocumentIDs — siehe documentFromService's/boxFromService's
+// eigene Doc-Kommentare, read.go/read_boxes.go). Die übrigen sieben
+// (list_documents, search_documents, sync_documents,
+// list_document_conversations, list_boxes, get_page_image, get_page_ocr)
+// nehmen GAR NICHTS auf — get_page_ocr tat das ohnehin nie (siehe
+// read_binary.go's eigener Doc-Kommentar, unverändert durch ADR-0019),
+// get_page_image ebenfalls nicht: keine Seiten-ID (pageId) ist je Parameter
+// eines Schreib-Werkzeugs in diesem Server, UND get_page_image gibt seine
+// pageId — anders als get_document_pdf — in KEINER Form an den Aufrufer
+// zurück (mcp.ImageContent hat, anders als mcp.EmbeddedResource, kein
+// URI-Feld — siehe read_binary.go's WICHTIG-Block für beide Gründe).
 //
 // Umfang — genau die zehn Werkzeuge, die diese Datei schon vor ADR-0019
 // prüfte: die fünf Dokument-Werkzeuge (read.go: list_documents,
@@ -110,6 +123,13 @@
 //     Parameter entgegen — eine Aufnahme könnte also nie gegen irgendwas
 //     geprüft werden (read_binary.go's eigener Doc-Kommentar trägt
 //     dieselbe Begründung). Unverändert durch ADR-0019.
+//   - get_document_pdf's ID wird SEIT DER KORREKTUR AN PR #75 aufgenommen
+//     — siehe oben; get_page_image's pageId dagegen weiterhin NICHT: kein
+//     Schreib-Werkzeug dieses Servers nimmt eine pageId entgegen (dieselbe
+//     "könnte nie geprüft werden"-Begründung wie bei get_page_ocr), UND
+//     get_page_image gibt seine pageId in keiner Form an den Aufrufer
+//     zurück (mcp.ImageContent hat kein URI-Feld, anders als
+//     get_document_pdf's mcp.EmbeddedResource).
 package tools_test
 
 import (
@@ -387,14 +407,14 @@ func newCoverageSession(t *testing.T) (*mcp.ClientSession, *issued.Store, contex
 	return session, rec, identityCtx
 }
 
-// structuredContentOf ruft tool auf session mit args auf, lässt den Test
-// fehlschlagen, wenn der Aufruf selbst einen Fehler liefert, und gibt
-// StructuredContent als map[string]any zurück — genau die Form, die ein
-// echter MCP-Client tatsächlich sieht (ein rohes JSON-Objekt, generisch
-// dekodiert), nicht das konkrete Go-Struct des Servers; diese Datei
-// treibt bewusst dieselbe, für den Client sichtbare Form, die jeder
-// echte Aufrufer dieses Servers bekommt, keine interne Abkürzung.
-func structuredContentOf(t *testing.T, session *mcp.ClientSession, tool string, args map[string]any) map[string]any {
+// callTool ruft tool auf session mit args auf und gibt das VOLLE, rohe
+// *mcp.CallToolResult zurück — anders als structuredContentOf (das nur
+// StructuredContent dekodiert) bleibt hier auch res.Content erhalten:
+// der Weg, über den ein Werkzeug wie get_document_pdf eine ID an den
+// Aufrufer zurückgeben kann, OHNE sie je in StructuredContent zu tragen
+// (eingebettet in eine Resource-URI, siehe resourceURIsOf unten). Lässt
+// den Test fehlschlagen, wenn der Aufruf selbst einen Fehler liefert.
+func callTool(t *testing.T, session *mcp.ClientSession, tool string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
@@ -403,11 +423,50 @@ func structuredContentOf(t *testing.T, session *mcp.ClientSession, tool string, 
 	if res.IsError {
 		t.Fatalf("CallTool(%s): IsError = true, content = %+v", tool, res.Content)
 	}
+	return res
+}
+
+// structuredContentOf ruft tool auf session mit args auf und gibt
+// StructuredContent als map[string]any zurück — genau die Form, die ein
+// echter MCP-Client tatsächlich sieht (ein rohes JSON-Objekt, generisch
+// dekodiert), nicht das konkrete Go-Struct des Servers; diese Datei
+// treibt bewusst dieselbe, für den Client sichtbare Form, die jeder
+// echte Aufrufer dieses Servers bekommt, keine interne Abkürzung.
+func structuredContentOf(t *testing.T, session *mcp.ClientSession, tool string, args map[string]any) map[string]any {
+	t.Helper()
+	res := callTool(t, session, tool, args)
 	sc, ok := res.StructuredContent.(map[string]any)
 	if !ok {
 		t.Fatalf("CallTool(%s): StructuredContent = %T, want map[string]any (bekam %+v)", tool, res.StructuredContent, res.StructuredContent)
 	}
 	return sc
+}
+
+// resourceURIsOf sammelt jede Resource-URI aus res.Content — der Weg,
+// über den get_document_pdf seine Dokument-ID an den Aufrufer
+// zurückgibt ("fileee://documents/"+id+"/pdf", siehe
+// documentPDFFromService, read_binary.go), OHNE je in StructuredContent
+// zu stehen. Genau diese Lücke — die ursprüngliche Fassung dieses Tests
+// prüfte NUR StructuredContent — ließ Befund 1 (get_document_pdf's
+// fehlende Erfassung, Codex-Review-Fund an PR #75) unentdeckt: eine ID,
+// die ausschließlich in Content statt StructuredContent auftaucht, blieb
+// für diese Datei bis dahin unsichtbar. resourceURIsOf schließt das:
+// IDs, die als Resource-URI (oder, künftig, in anderem gerahmten
+// Content) an den Aufrufer zurückgehen, sind jetzt für Zusicherungen
+// dieser Datei erreichbar — siehe TestGetDocumentPdfUndGetPageImageLiefernKeineKennungInDerStruktur
+// und TestJedesWerkzeugDasIDsAusliefertMerktSieAuch's get_document_pdf-
+// Subtest weiter unten für die Anwendung.
+func resourceURIsOf(t *testing.T, res *mcp.CallToolResult) []string {
+	t.Helper()
+	var uris []string
+	for _, c := range res.Content {
+		er, ok := c.(*mcp.EmbeddedResource)
+		if !ok || er.Resource == nil {
+			continue
+		}
+		uris = append(uris, er.Resource.URI)
+	}
+	return uris
 }
 
 // stringsAt liest sc[key] und liefert es als []string zurück —
@@ -704,16 +763,57 @@ func TestJedesWerkzeugDasIDsAusliefertMerktSieAuch(t *testing.T) {
 		assertNoneIssued(t, rec, identityCtx, tools.ToolGetBox+" (documentIds, Nebenprodukt — nie vom Aufrufer genannt)", docIDs)
 	})
 
-	t.Run("get_document_pdf_und_get_page_image_liefern_keine_kennung", func(t *testing.T) {
-		session, _, _ := newCoverageSession(t)
-		pdf := structuredContentOf(t, session, tools.ToolGetDocumentPDF, map[string]any{"id": covDocument})
+	// get_document_pdf und get_page_image sind SEIT DER KORREKTUR AN PR #75
+	// (Codex-Review-Fund, Befund 1 dieses Bot-Fix-Auftrags) KEIN
+	// gemeinsamer Subtest mehr — sie haben seither unterschiedliche
+	// Erfassungs-Entscheidungen (siehe diese Datei's eigenen
+	// Paket-Doc-Kommentar und read_binary.go's WICHTIG-Block): beide
+	// tragen KEINE Kennung in StructuredContent, aber get_document_pdf
+	// trägt seine ID in einer Resource-URI (mcp.EmbeddedResource) und
+	// MUSS sie erfassen — get_page_image trägt gar keine Kennung, in
+	// keiner Form, und DARF nicht erfassen.
+	t.Run("get_document_pdf", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
+		res := callTool(t, session, tools.ToolGetDocumentPDF, map[string]any{"id": covDocument})
+
+		pdf, ok := res.StructuredContent.(map[string]any)
+		if !ok {
+			t.Fatalf("get_document_pdf: StructuredContent = %T, want map[string]any", res.StructuredContent)
+		}
 		if _, ok := pdf["id"]; ok {
 			t.Errorf("get_document_pdf's StructuredContent trägt unerwartet einen %q-Schlüssel: %+v", "id", pdf)
 		}
-		img := structuredContentOf(t, session, tools.ToolGetPageImage, map[string]any{"pageId": covPage, "version": 1})
+
+		uris := resourceURIsOf(t, res)
+		found := false
+		for _, u := range uris {
+			if strings.Contains(u, covDocument) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("get_document_pdf's Content trägt keine Resource-URI mit der angeforderten ID %q: %v — "+
+				"Fixture oder Rückgabeform ist abgedriftet, bevor dieser Zusicherung getraut wird", covDocument, uris)
+		}
+		assertAllIssued(t, rec, identityCtx, tools.ToolGetDocumentPDF, []string{covDocument})
+	})
+
+	t.Run("get_page_image", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
+		res := callTool(t, session, tools.ToolGetPageImage, map[string]any{"pageId": covPage, "version": 1})
+
+		img, ok := res.StructuredContent.(map[string]any)
+		if !ok {
+			t.Fatalf("get_page_image: StructuredContent = %T, want map[string]any", res.StructuredContent)
+		}
 		if _, ok := img["pageId"]; ok {
 			t.Errorf("get_page_image's StructuredContent trägt unerwartet einen %q-Schlüssel: %+v", "pageId", img)
 		}
+
+		if uris := resourceURIsOf(t, res); len(uris) != 0 {
+			t.Errorf("get_page_image's Content trägt unerwartet Resource-URIs: %v", uris)
+		}
+		assertNoneIssued(t, rec, identityCtx, tools.ToolGetPageImage, []string{covPage})
 	})
 }
 
@@ -780,15 +880,21 @@ func TestGetPageOcrMerktDieTokenKennungNicht(t *testing.T) {
 	assertNoneIssued(t, rec, identityCtx, tools.ToolGetPageOCR, webappIDs)
 }
 
-// TestGetDocumentPdfUndGetPageImageLiefernKeineKennungInDerStruktur ist
-// eine zweite, JSON-Ebenen-Bestätigung der "gar keine Kennungen"-Hälfte
-// des eigenen Subtests von TestJedesWerkzeugDasIDsAusliefertMerktSieAuch
-// — sie liest die rohen, dekodierten JSON-Schlüssel direkt (über einen
-// json.Marshal-Rundlauf) statt sich auf eine feste Feldnamen-Vermutung
-// zu verlassen, damit ein künftig zu einem der beiden Ausgabetypen
-// hinzugefügtes Feld, das wie eine Kennung aussieht, hier auffällt —
-// selbst wenn der obige Subtest nicht daran gedacht hätte, genau nach
-// diesem Namen zu suchen.
+// TestGetDocumentPdfUndGetPageImageLiefernKeineKennungInDerStruktur prüft
+// AUSDRÜCKLICH NUR StructuredContent — der Name trägt "InDerStruktur"
+// bewusst, seit der Korrektur an PR #75 (Befund 1, Codex-Review-Fund)
+// nicht mehr nur als Stil: get_document_pdf trägt seine ID SEHR WOHL an
+// den Aufrufer zurück, nur eben NICHT in StructuredContent, sondern in
+// einer Resource-URI innerhalb von Content (siehe resourceURIsOf's
+// eigenen Doc-Kommentar und den get_document_pdf-Subtest von
+// TestJedesWerkzeugDasIDsAusliefertMerktSieAuch, der genau DAS prüft).
+// Dieser Test hier bleibt eine zweite, JSON-Ebenen-Bestätigung nur für
+// die StructuredContent-Hälfte, für BEIDE Werkzeuge — er liest die
+// rohen, dekodierten JSON-Schlüssel direkt (über einen json.Marshal-
+// Rundlauf) statt sich auf eine feste Feldnamen-Vermutung zu verlassen,
+// damit ein künftig zu einem der beiden Ausgabetypen hinzugefügtes Feld,
+// das wie eine Kennung aussieht, hier auffällt — selbst wenn der obige
+// Subtest nicht daran gedacht hätte, genau nach diesem Namen zu suchen.
 func TestGetDocumentPdfUndGetPageImageLiefernKeineKennungInDerStruktur(t *testing.T) {
 	session, _, _ := newCoverageSession(t)
 
