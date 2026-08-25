@@ -216,15 +216,20 @@ type genericSyncOutput[S any] struct {
 // registerReadService (#45/#46 both shipped without it).
 //
 // It panics — like registerReadService already does for a leaking
-// list/get descriptor — if d fails mustNotLeakUntrustedText's check. That
-// check runs once, here, not per request: see mustNotLeakUntrustedText's
-// own doc comment (read_generic.go) for why.
+// list/get descriptor — if d fails mustNotLeakUntrustedText's check, OR if
+// d.IDOf is nil (mustHaveIDOf, read_generic.go). Both checks run once,
+// here, not per request: see mustNotLeakUntrustedText's own doc comment
+// (read_generic.go) for why, and mustHaveIDOf's own doc comment for why a
+// nil IDOf is worth the same registration-time treatment — a mounted
+// sync tool with a nil IDOf crashes the whole server process on its first
+// real call (genericSyncHandler's d.IDOf(&entry) below, Issue #70).
 //
 // rec (Aufgabe 4) is threaded straight through to genericSyncHandler — the
 // same pattern registerReadService follows for its own two tools
 // (read_generic.go).
 func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S], rec *issued.Store) {
 	mustNotLeakUntrustedText("syncDescriptor", d.SyncName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
+	mustHaveIDOf("syncDescriptor", d.SyncName, d.IDOf)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.SyncName,

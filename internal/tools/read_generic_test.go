@@ -505,6 +505,10 @@ func TestRegisterReadServicePanictNichtBeiUnabhaengigenLegitimenFeldern(t *testi
 		Summarize:       func(*fileee.Tag) tagSummary { return tagSummary{ID: "Rechnung-2026-001"} },
 		UntrustedLine:   func(tag *fileee.Tag) string { return tag.Name },
 		PoisonProbe:     func(marker string) *fileee.Tag { return &fileee.Tag{ID: "Rechnung-2026-001", Name: marker} },
+		// IDOf ist seit mustHaveIDOf (read_generic.go) Pflichtfeld -- dieser Test prueft
+		// eine andere Sache (mustNotLeakUntrustedLine's Fehlalarm-Freiheit) und darf deshalb
+		// nicht an der NEUEN Pruefung scheitern.
+		IDOf: func(tag *fileee.Tag) string { return tag.ID },
 	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
@@ -538,6 +542,8 @@ func TestRegisterReadServiceStartetSauberOhneFremdbestimmtenText(t *testing.T) {
 		Summarize:       func(tag *fileee.Tag) tagSummary { return tagSummary{ID: tag.ID} },
 		// UntrustedLine bewusst nicht gesetzt — kein Fremdtext bei diesem Typ.
 		// PoisonProbe bewusst nicht gesetzt — es gibt nichts zu vergiften.
+		// IDOf ist seit mustHaveIDOf (read_generic.go) Pflichtfeld, unabhaengig davon.
+		IDOf: func(tag *fileee.Tag) string { return tag.ID },
 	}
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)

@@ -215,9 +215,18 @@ type genericGetOutput[S any] struct {
 // own doc comment, read.go).
 //
 // It panics — like mcp.AddTool itself already does for a malformed tool —
-// if d fails mustNotLeakUntrustedLine's check. That check runs once, here,
-// not per request: see that function's own doc comment for why a
-// per-request version would be worse than the bug it replaces.
+// if d fails mustNotLeakUntrustedLine's check, OR if d.IDOf is nil
+// (mustHaveIDOf). Both checks run once, here, at registration time, not per
+// request: see mustNotLeakUntrustedLine's own doc comment for why a
+// per-request version would be worse than the bug it replaces — the same
+// reasoning applies to d.IDOf, whose absence is likewise a property of the
+// descriptor's CODE, never of a particular call. Before this check existed,
+// a nil d.IDOf was caught only by TestAlleGenerischenDeskriptorenHabenEinIDOf
+// (a test, not a build-time guard) and crashed the whole server process on
+// the first real call that reached genericListHandler's d.IDOf(&entry)
+// (Issue #70, no recover() in the SDK dispatch path) — mustHaveIDOf turns
+// that into a registration-time panic instead, matching how
+// mustNotLeakUntrustedLine already treats a comparable descriptor defect.
 //
 // rec (Aufgabe 4) is threaded straight through to genericListHandler/
 // genericGetHandler, never built here — the same pattern logger already
@@ -227,6 +236,7 @@ type genericGetOutput[S any] struct {
 // logger.
 func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) {
 	mustNotLeakUntrustedLine(d)
+	mustHaveIDOf("readServiceDescriptor", d.ListName+"/"+d.GetName, d.IDOf)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.ListName,
@@ -353,6 +363,36 @@ func mustNotLeakUntrustedText[T any, S any](descriptorType, label string, untrus
 					"a summary field's rendered value contains the probe's marker",
 				label, descriptorType))
 		}
+	}
+}
+
+// mustHaveIDOf panics if idOf is nil — used by registerReadService
+// (readServiceDescriptor.IDOf) and registerSync (syncDescriptor.IDOf) at
+// registration time, mirroring mustNotLeakUntrustedText's own
+// once-at-registration, panic-not-error treatment of a descriptor defect
+// that is a property of the descriptor's code, never of a particular call.
+//
+// Before this check existed, a nil IDOf was caught only by
+// TestAlleGenerischenDeskriptorenHabenEinIDOf (internal/tools/read_generic_test.go)
+// — a test a future descriptor constructor could simply not run for, or
+// whose failure could be missed in a partial test run. In production, a
+// mounted tool with a nil IDOf crashed the ENTIRE server process on its
+// first real call (genericListHandler's/genericSyncHandler's d.IDOf(&entry),
+// this file/read_sync.go, no recover() in the SDK dispatch path — Issue
+// #70): worse than the nil-UntrustedLine leak mustNotLeakUntrustedText
+// already guards against, because that leak is silent while this one is a
+// process-wide outage. label identifies which descriptor is at fault (its
+// ListName/GetName or SyncName), descriptorType which of the two
+// descriptor kinds it is — the same two-argument shape
+// mustNotLeakUntrustedText already uses for its own panic messages.
+func mustHaveIDOf[T any](descriptorType, label string, idOf func(*T) string) {
+	if idOf == nil {
+		panic(fmt.Sprintf(
+			"fileee-mcp: tools: %s: %s.IDOf is nil — a mounted read tool whose descriptor "+
+				"never sets IDOf crashes the whole server process on its first real call "+
+				"(Issue #70, no recover() in the SDK dispatch path); set IDOf in the "+
+				"descriptor constructor",
+			label, descriptorType))
 	}
 }
 
