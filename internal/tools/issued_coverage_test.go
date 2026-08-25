@@ -266,6 +266,41 @@ var knownNonEntityReadTools = map[string]bool{
 	tools.ToolGetAccountStatus: true,
 }
 
+// knownWriteTools sind die acht heute gemounteten Schreib-Werkzeuge
+// (write.go: update_contact/create_contact; write_people.go:
+// create_reminder/update_reminder; write_boxes.go:
+// box_add_document/box_remove_document; write_documents.go:
+// upload_document/update_document). Ihre eigene rec.Record-Verdrahtung
+// ist bewusst NICHT Gegenstand dieses Guardrails — das ist die
+// ausdrücklich offene, entschiedene Lücke aus Issue #74, kein
+// vergessener Fall. Diese Liste bleibt trotzdem hier eingetragen, statt
+// wie tools.GenericReadToolStatus() abgeleitet zu werden, und zwar aus
+// genau dem Grund, der TestAlleLeseWerkzeugeSindEinsortiert unten
+// unverändert lässt: ein KÜNFTIGES Schreib-Werkzeug, das seine eigene
+// rec.Record-Verdrahtung UND seinen Annotations-Eintrag vergisst, muss
+// weiterhin explizit hier eingetragen werden, um zu bestehen — fehlt der
+// Eintrag, schlägt der Test unten fehl und nennt den Namen, statt still
+// "außerhalb des Umfangs" zu übergehen. Eine aus ReadOnlyHint abgeleitete
+// Mitgliedschaft (etwa "ReadOnlyHint == false → Schreib-Werkzeug, also
+// unproblematisch") würde genau die Annahme wiederholen, die den Fund
+// dieser Aufgabe ausgemacht hat: eine vergessene Annotation wird dann
+// zur stillschweigenden Einordnung statt zum Fehlschlag. Diese Liste
+// verschwindet, sobald Issue #74 umgesetzt ist und die Schreib-Werkzeuge
+// eine eigene rec.Record-Verdrahtung plus eigene Fixtures/Zusicherungen
+// bekommen — dann werden sie aus dieser Handliste heraus in
+// handWrittenReadTools-artige Prüfungen überführt, nicht länger nur
+// zugelassen.
+var knownWriteTools = map[string]bool{
+	tools.ToolUpdateContact:     true,
+	tools.ToolCreateContact:     true,
+	tools.ToolCreateReminder:    true,
+	tools.ToolUpdateReminder:    true,
+	tools.ToolBoxAddDocument:    true,
+	tools.ToolBoxRemoveDocument: true,
+	tools.ToolUploadDocument:    true,
+	tools.ToolUpdateDocument:    true,
+}
+
 // newCoverageSession mountet den echten, mit RegisterAll angemeldeten
 // Server (mit einem echten *issued.Store), einen echten Gangway-Auth-
 // Stack und ein Fake-Fileee-Backend (newCoverageServer) und verbindet
@@ -414,10 +449,9 @@ func assertNoneIssued(t *testing.T, rec *issued.Store, identityCtx context.Conte
 	}
 }
 
-// TestAlleLeseWerkzeugeSindEinsortiert leitet die lebende Menge der
-// Lese-Werkzeuge aus dem ECHTEN, gemounteten Server ab (session.Tools,
-// gefiltert genau wie ops.go's eigenes deriveToolManifestKind es schon
-// tut: Annotations.ReadOnlyHint) und prüft jeden Namen gegen DREI
+// TestAlleLeseWerkzeugeSindEinsortiert leitet die lebende Menge ALLER
+// gemounteten Werkzeuge aus dem ECHTEN Server ab (session.Tools) und
+// prüft JEDEN Namen — unabhängig von seinen Annotations — gegen VIER
 // Quellen, in dieser Reihenfolge:
 //
 //  1. tools.GenericReadToolStatus() — ABGELEITET aus den 14 echten
@@ -432,10 +466,39 @@ func assertNoneIssued(t *testing.T, rec *issued.Store, identityCtx context.Conte
 //  3. knownNonEntityReadTools — die fünf Ops-/Konto-Werkzeuge ohne jede
 //     Entitäts-ID (siehe deren eigenen Doc-Kommentar, warum eine kleine
 //     Handliste dafür unproblematisch ist).
+//  4. knownWriteTools — die acht heute existierenden Schreib-Werkzeuge
+//     (siehe deren eigenen Doc-Kommentar) — bewusst NICHT über
+//     rec.Record geprüft (Issue #74, offen), aber trotzdem NAMENTLICH
+//     eingetragen, damit ein künftiges Schreib-Werkzeug hier ebenso
+//     hart auffällt wie ein künftiges Lese-Werkzeug.
 //
-// Ein Name, der in KEINER der drei Quellen auftaucht, ist ein
-// unbekanntes, neu aufgetauchtes Lese-Werkzeug — harter Fehlschlag, kein
+// Ein Name, der in KEINER der vier Quellen auftaucht, ist ein
+// unbekanntes, neu aufgetauchtes Werkzeug — harter Fehlschlag, kein
 // stilles Überspringen.
+//
+// WICHTIG (Sicherheitsaudit-Fund, zweiter Riss nach demselben Muster
+// wie der knownOutOfScopeReadTools-Fund unten): die frühere Fassung
+// filterte VOR der Einsortierung auf
+// "tool.Annotations == nil || !tool.Annotations.ReadOnlyHint { continue }"
+// — sie prüfte also nur Werkzeuge, die bereits korrekt als lesend
+// annotiert waren, und übersprang jedes andere stillschweigend als
+// "außerhalb des Umfangs". Ein KÜNFTIGES Lese-Werkzeug, das eine
+// fileee-eigene ID ausliefert, aber sein ReadOnlyHint:true vergisst,
+// wäre damit nie geprüft worden — genau die Annahme, die dieser Test
+// eigentlich verhindern soll (ein vergessenes Annotation-Feld darf
+// niemals zu "gilt als erledigt" führen, sondern muss zu einem
+// Fehlschlag führen). Reproduziert: ein Werkzeug, das eine ID
+// ausliefert, nichts aufnimmt und ReadOnlyHint auslässt, blieb bei
+// BEIDEN Guardrail-Tests grün. Der Fix entfernt den Annotations-Filter
+// komplett — JEDES gemountete Werkzeug muss jetzt in einer der vier
+// Quellen stehen, unabhängig davon, was seine Annotations behaupten;
+// ein Werkzeug ohne Annotations oder mit falschem ReadOnlyHint fällt
+// dadurch automatisch in "keine der vier Quellen" und schlägt fehl,
+// statt übersprungen zu werden. TestEveryMountedToolHasAnnotations
+// (descriptions_test.go) bleibt die separate, unabhängige Prüfung, dass
+// jedes Werkzeug überhaupt Annotations trägt — beide Tests widersprechen
+// sich nicht: dieser hier braucht Annotations gar nicht mehr, um jedes
+// Werkzeug zu erfassen.
 //
 // Vorher prüfte dieser Test Punkt 1 über eine zweite, unabhängig
 // getippte Namensliste (knownOutOfScopeReadTools) — die akzeptierte
@@ -458,12 +521,21 @@ func TestAlleLeseWerkzeugeSindEinsortiert(t *testing.T) {
 		if err != nil {
 			t.Fatalf("session.Tools: %v", err)
 		}
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-			continue // ein schreibendes/mutierendes Werkzeug — außerhalb des Umfangs dieses Guardrails
+		if tool.Name == "capture" {
+			// newCoverageSession's eigenes Wegwerf-Werkzeug (siehe dessen
+			// Doc-Kommentar) — kein Produkt von tools.RegisterAll, nur ein
+			// Hilfsmittel dieser Testdatei selbst, um an ein echtes,
+			// Gangway-verifiziertes ctx zu kommen. Es liefert nie eine
+			// fileee-eigene ID und gehört deshalb in keine der vier
+			// Produktions-Quellen — anders als jedes ECHTE Werkzeug bleibt
+			// es hier per Namensvergleich übersprungen, nicht per
+			// Annotations-Filter (der wäre wieder genau die Lücke, die
+			// dieser Test jetzt schließt).
+			continue
 		}
 		if idOf, isGeneric := genericStatus[tool.Name]; isGeneric {
 			if !idOf {
-				t.Errorf("Lese-Werkzeug %q läuft über einen generischen Deskriptor "+
+				t.Errorf("Werkzeug %q läuft über einen generischen Deskriptor "+
 					"(registerReadService/registerSync), dessen IDOf-Feld nil ist — das gehört im "+
 					"jeweiligen Deskriptor-Konstruktor gesetzt (siehe readServiceDescriptor.IDOf/"+
 					"syncDescriptor.IDOf, read_generic.go/read_sync.go), NICHT hier irgendwo "+
@@ -479,14 +551,21 @@ func TestAlleLeseWerkzeugeSindEinsortiert(t *testing.T) {
 		if knownNonEntityReadTools[tool.Name] {
 			continue
 		}
-		t.Errorf("Lese-Werkzeug %q ist in keiner der drei bekannten Quellen (tools.GenericReadToolStatus, "+
-			"handWrittenReadTools, knownNonEntityReadTools) — ein neues Lese-Werkzeug ist aufgetaucht. "+
-			"Entscheiden: läuft es über registerReadService/registerSync mit gesetztem IDOf — dann "+
-			"gehört es automatisch zu tools.GenericReadToolStatus(), nichts hier einzutragen, nur "+
-			"prüfen, dass IDOf im Deskriptor gesetzt ist — oder ist es ein handgeschriebener Handler, "+
-			"der eine eigene rec.Record-Verdrahtung UND eine eigene Fixture/Zusicherung in dieser Datei "+
-			"braucht — dann in handWrittenReadTools eintragen und unten mitprüfen — oder liefert es "+
-			"nachweislich keine fileee-eigene Entitäts-ID — dann in knownNonEntityReadTools eintragen",
+		if knownWriteTools[tool.Name] {
+			continue
+		}
+		t.Errorf("Werkzeug %q ist in keiner der vier bekannten Quellen (tools.GenericReadToolStatus, "+
+			"handWrittenReadTools, knownNonEntityReadTools, knownWriteTools) — ein neues, ungetriagtes "+
+			"Werkzeug ist aufgetaucht (Annotations spielen für diese Prüfung KEINE Rolle mehr — auch "+
+			"ein Werkzeug ohne oder mit falschem ReadOnlyHint muss hier einsortiert sein). Entscheiden: "+
+			"läuft es über registerReadService/registerSync mit gesetztem IDOf — dann gehört es "+
+			"automatisch zu tools.GenericReadToolStatus(), nichts hier einzutragen, nur prüfen, dass "+
+			"IDOf im Deskriptor gesetzt ist — oder ist es ein handgeschriebener LESE-Handler, der eine "+
+			"eigene rec.Record-Verdrahtung UND eine eigene Fixture/Zusicherung in dieser Datei braucht "+
+			"— dann in handWrittenReadTools eintragen und unten mitprüfen — oder liefert es "+
+			"nachweislich keine fileee-eigene Entitäts-ID — dann in knownNonEntityReadTools eintragen "+
+			"— oder ist es ein SCHREIB-Werkzeug — dann in knownWriteTools eintragen (siehe dessen "+
+			"eigenen Doc-Kommentar zu Issue #74)",
 			tool.Name)
 	}
 }
