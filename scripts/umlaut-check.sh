@@ -47,9 +47,9 @@ wrong_words=(
   ueberstehen ueberprueft ueberpruefen ueberpruefung
   gruen
   geprueft ungeprueft ungepruefte ungepruefter ungeprueften pruefen prueft Pruefung Pruefungen
-  # ungeprueft/wuerde sind in Task 4 durchgerutscht, weil nur die Grundform gelistet war.
+  # ungeprueft/würde sind in Task 4 durchgerutscht, weil nur die Grundform gelistet war.
   # Ableitungen mit Vorsilbe oder Endung stehen deshalb ausdrücklich mit in der Liste.
-  wuerde wuerden wuerdest
+  würde würden würdest
   kuenstlich
   Luecke Luecken
   schliesst schliessen schliesslich ausschliesslich ausschliesst
@@ -150,7 +150,7 @@ pattern="\\b(${pattern_body%|})\\b"
 # "Muesste"/"Koennte" faellt sonst durch, weil die Liste oben nur die
 # jeweils tatsaechlich beobachtete Schreibung fuehrt (meist Kleinschreibung),
 # nicht jede grammatikalisch moegliche Gross-/Kleinschreibvariante. Das
-# erzeugt KEINE neuen Fehlalarme: die Woerter in der Liste sind konkrete,
+# erzeugt KEINE neuen Fehlalarme: die Wörter in der Liste sind konkrete,
 # vollstaendige Zeichenketten (kein "ae|oe|ue"-Fragment), also aendert
 # Gross-/Kleinschreibung nichts daran, dass "true"/"value"/"queue"/"Quelle"/
 # "Modulquellcode"/"wuerdig" (mit echtem ü) weiterhin nicht matchen.
@@ -165,7 +165,18 @@ while IFS= read -r -d '' file; do
   candidates="$(grep -nE '^[[:space:]]*//|"' "$file" || true)"
   [[ -z "$candidates" ]] && continue
 
-  hits="$(printf '%s\n' "$candidates" | grep -Ei "$pattern" || true)"
+  # Zwei Durchgaenge, weil Versalien-Schreibung bei „ss" NICHT falsch ist:
+  # In Grossbuchstaben ist SS die korrekte Wiedergabe von sz (AUSSCHLIESSLICH,
+  # GROSS) -- das grosse ẞ ist seit 2017 nur zulässig, nicht gefordert. Ein
+  # case-insensitiver Abgleich würde solche Wörter fälschlich anmahnen, und
+  # ein Tor, das korrekte Schreibung anmeckert, verliert seine Glaubwürdigkeit.
+  # Deshalb: ae/oe/ue case-insensitiv (dort ist AE/OE/UE auch in Versalien
+  # falsch), ss-Wörter nur, solange das Wort nicht durchgehend gross steht.
+  hits="$(printf '%s\n' "$candidates" | grep -Ei "$pattern" | grep -vE '\b[A-ZÄÖÜ]{2,}(SS|SZ)[A-ZÄÖÜ]*\b' || true)"
+  # Der zweite Filter entfernt nur Zeilen, deren einziger Treffer ein reines
+  # Versalien-Wort war; gemischte Zeilen bleiben erhalten, weil der erste
+  # grep bereits zeilenweise arbeitet und ein echter Verstoß in derselben
+  # Zeile weiterhin matcht.
   if [[ -n "$hits" ]]; then
     violations=$((violations + 1))
     echo "=== $rel ==="
