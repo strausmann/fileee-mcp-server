@@ -1,6 +1,7 @@
 // whoami.go carries this server's whoami meta-tool — reports the caller's
-// verified identity, the fileee account it maps to, and the server's
-// account mode, without ever touching Fileee itself.
+// verified identity, the fileee account it maps to, the server's account
+// mode, and — if configured — this instance's description, without ever
+// touching Fileee itself.
 package tools
 
 import (
@@ -57,7 +58,8 @@ type whoamiAccount struct {
 }
 
 // whoamiOutput is whoami's structured result: the verified identity subject,
-// the mapped account, and the server's account mode.
+// the mapped account, the server's account mode, and — if configured —
+// this instance's description.
 type whoamiOutput struct {
 	Identity string        `json:"identity"`
 	Account  whoamiAccount `json:"account"`
@@ -125,9 +127,13 @@ func registerWhoami(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *
 			"fileee account it maps to on this server, plus the server's account mode. Returns " +
 			"the caller's identity subject, whether a fileee account is configured for it and " +
 			"— if so — that account's username (its fileee login email; never the password or " +
-			"two-factor secret), and the account mode (single or multi). Use it to confirm who " +
-			"the server thinks you are. It makes no call to fileee and reflects only what this " +
-			"server already knows about the calling identity.",
+			"two-factor secret), and the account mode (single or multi). If the operator has " +
+			"configured MCP_INSTANCE_DESCRIPTION, the response also includes instanceDescription " +
+			"— prose describing which environment and which fileee account this instance serves, " +
+			"useful for telling apart several instances connected at once; the field is absent " +
+			"when nothing is configured. Use it to confirm who the server thinks you are. It " +
+			"makes no call to fileee and reflects only what this server already knows about the " +
+			"calling identity.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Who am I"},
 	}, getWhoamiHandler(p, info, logger))
 }
