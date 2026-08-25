@@ -47,9 +47,9 @@ wrong_words=(
   ueberstehen ueberprueft ueberpruefen ueberpruefung
   gruen
   geprueft ungeprueft ungepruefte ungepruefter ungeprueften pruefen prueft Pruefung Pruefungen
-  # ungeprueft/würde sind in Task 4 durchgerutscht, weil nur die Grundform gelistet war.
+  # ungeprueft/wuerde sind in Task 4 durchgerutscht, weil nur die Grundform gelistet war.
   # Ableitungen mit Vorsilbe oder Endung stehen deshalb ausdrücklich mit in der Liste.
-  würde würden würdest
+  wuerde wuerden wuerdest
   kuenstlich
   Luecke Luecken
   schliesst schliessen schliesslich ausschliesslich ausschliesst
