@@ -289,3 +289,36 @@ Für den Fall, dass ein bereits getaggter Stand nachträglich gebaut werden
 muss (z. B. weil der tägliche Ablauf zwischenzeitlich übersprungen hat),
 existiert `.github/workflows/publish-image.yml` als manuell auslösbarer
 Ablauf (`workflow_dispatch`) mit dem Git-Tag als Eingabe.
+
+## Mehrere Instanzen unterscheiden
+
+Laufen mehrere Instanzen dieses Servers gegen verschiedene Fileee-Konten und sind beide
+gleichzeitig in einem Client eingebunden, braucht das Modell einen Anhaltspunkt, welche es gerade
+benutzt.
+
+Der **Name des Connectors** ist der stärkste Unterscheider — er landet im Präfix jedes
+Werkzeugaufrufs. Er wird aber im Client vergeben und ist vom Server aus nicht beeinflussbar: Der
+Server meldet sich als `fileee-mcp-server`, die Oberfläche zeigt den Namen, den der Betreiber dort
+eingetragen hat. Ein Versuch, den Namen über eine Umgebungsvariable zu steuern, ginge ins Leere.
+
+Was der Server beitragen kann, ist **`MCP_INSTANCE_DESCRIPTION`** (optional, höchstens 2000
+Zeichen). Der Wert erscheint im `instructions`-Feld der `initialize`-Antwort und als
+`instanceDescription` in `whoami`.
+
+Zwei Sätze haben sich bewährt — **wer**, und **wie zu behandeln**:
+
+    Testumgebung. Wegwerfdaten, hier darf experimentiert werden.
+    Nicht das produktive Archiv.
+
+    Produktives Fileee-Archiv. Echte Rechnungen und Verträge. Schreibende
+    und teilende Aufrufe nur auf ausdrückliche Anweisung.
+
+Der zweite Satz ist der wertvolle. „Wer" allein sagt schon der Connector-Name.
+
+**Das ist ein Wegweiser, keine Schranke.** Der Text hilft bei der Auswahl und verhindert nichts,
+wenn das Modell danebengreift. Durchgesetzt wird die Trennung an anderer Stelle: durch getrennte
+Fileee-Zugangsdaten je Instanz, durch die client-seitige Werkzeug-Freischaltung (Always allow /
+Needs approval / Blocked, siehe [ADR-0018](../adr/0018-werkzeug-freigabe-und-client-steuerung.md))
+und durch die ID-Whitelist ([ADR-0019](../adr/0019-id-whitelist-gilt-auch-fuer-share.md)).
+
+Ist die Variable nicht gesetzt, fehlen beide Felder — der Server verhält sich wie zuvor.

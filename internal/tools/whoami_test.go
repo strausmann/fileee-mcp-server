@@ -76,3 +76,40 @@ func TestRegisterOpsToolsMountsWhoami(t *testing.T) {
 		t.Errorf("tool %q was not mounted", ToolWhoami)
 	}
 }
+
+func TestWhoamiGibtDieInstanzBeschreibungZurueck(t *testing.T) {
+	will := "Produktives Archiv. Echte Rechnungen und Vertraege."
+	ctx := context.Background()
+	pool := clientpool.New(accounts.NewSingle(fileee.Credentials{Username: "nutzer@example.invalid", Password: "x"}))
+	id := &identity.Identity{Subject: "caller-123"}
+
+	t.Run("gesetzter Wert erscheint im Ergebnis", func(t *testing.T) {
+		info := ServerInfo{Mode: "single", InstanceDescription: will}
+		out, err := whoamiResultFor(ctx, pool, info, id)
+		if err != nil {
+			t.Fatalf("whoamiResultFor: %v", err)
+		}
+		if out.InstanceDescription != will {
+			t.Errorf("InstanceDescription = %q, erwartet %q", out.InstanceDescription, will)
+		}
+	})
+
+	t.Run("leerer Wert erzeugt kein Feld in der Ausgabe", func(t *testing.T) {
+		info := ServerInfo{Mode: "single"}
+		out, err := whoamiResultFor(ctx, pool, info, id)
+		if err != nil {
+			t.Fatalf("whoamiResultFor: %v", err)
+		}
+		roh, err := json.Marshal(out)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		// Die Pruefung laeuft ueber die ROHE Ausgabe, nicht ueber den
+		// dekodierten Wert: Ob das Feld ganz fehlt oder als leerer String
+		// erscheint, ist genau der Unterschied, den omitempty macht — und
+		// nach dem Dekodieren saehen beide Faelle gleich aus.
+		if strings.Contains(string(roh), "instanceDescription") {
+			t.Errorf("Ausgabe enthaelt instanceDescription trotz leerem Wert: %s", roh)
+		}
+	})
+}

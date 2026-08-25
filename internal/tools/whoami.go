@@ -26,6 +26,11 @@ type ServerInfo struct {
 	// Mode is whoami's own fact: the server's account mode ("single" /
 	// "multi").
 	Mode string
+	// InstanceDescription describes in prose which environment and which
+	// fileee account this instance serves. It comes from
+	// MCP_INSTANCE_DESCRIPTION and is empty when nothing is configured
+	// there.
+	InstanceDescription string
 	// MaxUploadBytes is upload_document's own fact: the configured
 	// upload size ceiling (FILEEE_MAX_UPLOAD_BYTES, config.go,
 	// Config.MaxUploadBytes), enforced by uploadDocumentHandler
@@ -57,6 +62,10 @@ type whoamiOutput struct {
 	Identity string        `json:"identity"`
 	Account  whoamiAccount `json:"account"`
 	Mode     string        `json:"mode"`
+	// InstanceDescription carries omitempty: when nothing is configured,
+	// the field is absent from the response entirely, rather than
+	// appearing as an empty string.
+	InstanceDescription string `json:"instanceDescription,omitempty"`
 }
 
 // whoamiResultFor is whoami's logic below identity resolution — split out of
@@ -66,7 +75,7 @@ type whoamiOutput struct {
 // It never returns the password or TOTP seed, and an unmapped subject is a
 // normal result (Configured:false), not an error.
 func whoamiResultFor(ctx context.Context, p *clientpool.Pool, info ServerInfo, id *identity.Identity) (whoamiOutput, error) {
-	out := whoamiOutput{Identity: id.Subject, Mode: info.Mode}
+	out := whoamiOutput{Identity: id.Subject, Mode: info.Mode, InstanceDescription: info.InstanceDescription}
 
 	username, err := p.AccountUsername(ctx, id)
 	if err != nil {

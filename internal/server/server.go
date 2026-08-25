@@ -320,7 +320,11 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 		&mcp.Implementation{Name: "fileee-mcp-server", Version: config.Version()},
 		&mcp.ServerOptions{Instructions: cfg.InstanceDescription},
 	)
-	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode), MaxUploadBytes: cfg.MaxUploadBytes}, logger, issuedStore)
+	tools.RegisterAll(instance, pool, tools.ServerInfo{
+		Mode:                string(cfg.AccountMode),
+		MaxUploadBytes:      cfg.MaxUploadBytes,
+		InstanceDescription: cfg.InstanceDescription,
+	}, logger, issuedStore)
 	instance.AddReceivingMiddleware(limiter.middleware())
 	gw.AttachMCPSelector(func(ctx context.Context, id *identity.Identity) *mcp.Server {
 		// scopesSatisfied ist die einzige Stelle, die MCP_OIDC_REQUIRED_SCOPES
