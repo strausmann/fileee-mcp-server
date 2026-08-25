@@ -102,6 +102,20 @@ FILEEE_ACCOUNT_BOB_USERNAME=…
 
 Die Zuordnung läuft über einen konfigurierbaren Claim aus dem Token (Default `sub`). Mehrere Identitäten dürfen auf **ein** Fileee-Konto zeigen; eine Identität auf zwei Konten ist ein Startup-Fehler, kein „first match wins". Ein unbekanntes Subject bekommt `403` — es gibt keinen Fallback auf ein Standardkonto.
 
+### Mehrere Instanzen unterscheiden
+
+Laufen mehrere Instanzen dieses Servers gegen verschiedene Fileee-Konten und sind beide gleichzeitig in einem Client eingebunden, hilft `MCP_INSTANCE_DESCRIPTION` (optional, höchstens 2000 Zeichen) dabei, sie auseinanderzuhalten:
+
+```dotenv
+MCP_INSTANCE_DESCRIPTION="Testumgebung. Wegwerfdaten, hier darf experimentiert werden. Nicht das produktive Archiv."
+```
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `MCP_INSTANCE_DESCRIPTION` | Prosa, welche Umgebung und welches Fileee-Konto diese Instanz bedient — erscheint im `instructions`-Feld der `initialize`-Antwort und als `instanceDescription` in `whoami` | leer — kein Feld in keiner der beiden Antworten |
+
+Das ist ein Wegweiser, keine Schranke — durchgesetzt wird die Trennung durch getrennte Fileee-Zugangsdaten je Instanz, durch die client-seitige Werkzeug-Freigabe und durch die ID-Whitelist. Details und bewährte Formulierungen: [`docs/betrieb/aufbau.md`](docs/betrieb/aufbau.md), Abschnitt „Mehrere Instanzen unterscheiden".
+
 ## Funktionsumfang
 
 Der Server registriert **alle** Werkzeuge für jeden authentifizierten Aufrufer — es gibt keine
