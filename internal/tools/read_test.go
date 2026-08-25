@@ -29,16 +29,27 @@ import (
 
 // testRec builds a fresh *issued.Store for tests in this file and in
 // read_diag_test.go that pass one into tools.RegisterAll but do not
-// themselves assert on what it records (Aufgabe 5): every real round
-// trip through a mounted server now runs list_documents'/
-// search_documents' own rec.Record call unconditionally once a handler
-// actually executes (unlike registeredReadTools()'s ListTools-only
-// probe in names.go, which never runs a handler at all) — a nil
-// *issued.Store would panic the instant one of these tests' real,
-// gangway-verified callers reaches that call. ttl/cap are generous
-// (never expire or evict within a single test) since none of these
-// tests are about internal/issued's own limits — issued_test.go/
-// issued_coverage_test.go own that.
+// themselves assert on what it records (Aufgabe 5).
+//
+// WICHTIG (Nachprüfungs-Befund, Copilot-Review): the doc comment that used
+// to sit here was stale even before ADR-0019's tightening reached this
+// file — list_documents/search_documents never call rec.Record at all
+// (see listFromService's own doc comment, read_generic.go: ADR-0019
+// restricts recording to targeted single-entity lookups — get_document,
+// get_box, get_document_pdf, and the generic get_* path behind
+// registerReferenceTools/registerPeopleTools — precisely because a single
+// list_*/search_*/sync_* call could otherwise hand out up to 100+ ids the
+// caller never individually named). Passing nil here would also not
+// panic: issued.Store.Record is nil-receiver-safe by design (Copilot
+// review fund at PR #75, see Record's own doc comment, internal/issued/
+// issued.go) — a real *issued.Store is still built here for a different,
+// still-valid reason: it lets the get_document/get_box/get_document_pdf
+// round trips this file and read_diag_test.go actually drive through a
+// mounted server exercise their real rec.Record call, the same way
+// production wiring does, instead of silently no-op'ing against nil.
+// ttl/cap are generous (never expire or evict within a single test)
+// since none of these tests are about internal/issued's own limits —
+// issued_test.go/issued_coverage_test.go own that.
 func testRec(t *testing.T) *issued.Store {
 	t.Helper()
 	return issued.New(time.Hour, 1000)
