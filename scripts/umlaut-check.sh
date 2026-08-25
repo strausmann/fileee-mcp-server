@@ -145,6 +145,15 @@ is_exception() {
 
 pattern_body="$(printf '%s|' "${wrong_words[@]}")"
 pattern="\\b(${pattern_body%|})\\b"
+# Der eigentliche Abgleich unten laeuft case-insensitiv (grep -Ei): ein
+# Satzanfang oder ein via Wortverkettung grossgeschriebenes "Fuer"/"Ueber"/
+# "Muesste"/"Koennte" faellt sonst durch, weil die Liste oben nur die
+# jeweils tatsaechlich beobachtete Schreibung fuehrt (meist Kleinschreibung),
+# nicht jede grammatikalisch moegliche Gross-/Kleinschreibvariante. Das
+# erzeugt KEINE neuen Fehlalarme: die Woerter in der Liste sind konkrete,
+# vollstaendige Zeichenketten (kein "ae|oe|ue"-Fragment), also aendert
+# Gross-/Kleinschreibung nichts daran, dass "true"/"value"/"queue"/"Quelle"/
+# "Modulquellcode"/"wuerdig" (mit echtem ü) weiterhin nicht matchen.
 
 violations=0
 while IFS= read -r -d '' file; do
@@ -156,7 +165,7 @@ while IFS= read -r -d '' file; do
   candidates="$(grep -nE '^[[:space:]]*//|"' "$file" || true)"
   [[ -z "$candidates" ]] && continue
 
-  hits="$(printf '%s\n' "$candidates" | grep -E "$pattern" || true)"
+  hits="$(printf '%s\n' "$candidates" | grep -Ei "$pattern" || true)"
   if [[ -n "$hits" ]]; then
     violations=$((violations + 1))
     echo "=== $rel ==="

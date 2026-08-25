@@ -141,7 +141,7 @@ func New(ttl time.Duration, maxPerIdentity int) *Store {
 // SetClock überschreibt die Uhr, die Record und Check befragen, um eine
 // ID-Aufnahmezeit zu setzen bzw. gegen ttl zu vergleichen.
 //
-// Das ist AUSSCHLIESSLICH ein Test-Seam. Produktionscode ruft SetClock nie
+// Das ist AUSSCHLIEẞLICH ein Test-Seam. Produktionscode ruft SetClock nie
 // auf — New verdrahtet now bereits auf time.Now, und genau das behält jeder
 // Store, den ein Nicht-Test baut, für seine gesamte Lebensdauer bei. Ein
 // Test, der Verfall (ttl) oder die Verdrängungsreihenfolge des Deckels
