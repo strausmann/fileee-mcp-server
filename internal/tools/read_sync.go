@@ -28,7 +28,6 @@ import (
 	"github.com/strausmann/go-fileee/fileee"
 
 	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
-	"github.com/strausmann/fileee-mcp-server/internal/issued"
 )
 
 // encodeCursor renders a fileee.Cursor as an opaque string a caller can
@@ -167,10 +166,26 @@ type syncDescriptor[T any, S any] struct {
 	UntrustedLine func(*T) string
 	PoisonProbe   func(marker string) *T
 	// IDOf: see readServiceDescriptor.IDOf's own doc comment
-	// (read_generic.go) — the identical contract, here for syncFromService,
-	// which records d.IDOf(&entry) for every changed/added row (never for
-	// res.DeletedIDs — a deleted entity is no longer a valid target for a
-	// later destructive tool). Pflichtfeld, same reasoning as there.
+	// (read_generic.go).
+	//
+	// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem
+	// Sicherheits-Audit): syncFromService ruft d.IDOf SEIT DIESER
+	// VERSCHÄRFUNG NICHT MEHR AUF — sync_* liefert wie list_*/search_*
+	// mehrere Zeilen zurück, ohne dass der Aufrufer eine davon einzeln
+	// genannt hätte, und fällt damit unter dieselbe "nur gezielte
+	// Einzelabrufe" Linie wie listFromService (siehe dessen eigenen
+	// Doc-Kommentar, read_generic.go, für die volle Begründung). IDOf
+	// bleibt hier trotzdem ein Pflichtfeld (mustHaveIDOf, unverändert
+	// durchgesetzt) — bewusst, nicht aus Versehen stehengelassen: es hält
+	// die Deskriptor-Form über alle 14 generischen Konstruktoren hinweg
+	// einheitlich und wäre der erste Baustein, sollte syncDescriptor
+	// jemals ein eigenes, gezieltes Einzelabruf-Gegenstück bekommen (das
+	// syncDescriptor selbst heute nicht hat — anders als
+	// readServiceDescriptor, das ListName UND GetName trägt). Aktuell
+	// hat d.IDOf für syncDescriptor also KEINEN Aufrufer mehr zur
+	// Laufzeit — nur die 14 Deskriptor-Konstruktoren setzen es weiterhin,
+	// und TestAlleGenerischenDeskriptorenHabenEinIDOf prüft weiterhin,
+	// dass keiner es vergisst.
 	IDOf func(*T) string
 }
 
@@ -220,14 +235,20 @@ type genericSyncOutput[S any] struct {
 // d.IDOf is nil (mustHaveIDOf, read_generic.go). Both checks run once,
 // here, not per request: see mustNotLeakUntrustedText's own doc comment
 // (read_generic.go) for why, and mustHaveIDOf's own doc comment for why a
-// nil IDOf is worth the same registration-time treatment — a mounted
-// sync tool with a nil IDOf crashes the whole server process on its first
-// real call (genericSyncHandler's d.IDOf(&entry) below, Issue #70).
+// nil IDOf is worth the same registration-time treatment — historically
+// (Issue #70) a mounted sync tool with a nil IDOf crashed the whole server
+// process on its first real call; syncDescriptor.IDOf's own doc comment
+// explains that, since ADR-0019, that call site no longer exists (nothing
+// in the sync path calls d.IDOf any more) — mustHaveIDOf is nonetheless
+// left in place, unchanged, for the reasons that doc comment gives.
 //
-// rec (Aufgabe 4) is threaded straight through to genericSyncHandler — the
-// same pattern registerReadService follows for its own two tools
-// (read_generic.go).
-func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S], rec *issued.Store) {
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit):
+// registerSync takes NO *issued.Store — sync_* tools never recorded a
+// single-entity get target to begin with (syncDescriptor has no GetName),
+// and now they no longer record the multiple rows they DO return either.
+// See genericSyncHandler's/syncFromService's own doc comments for the
+// full reasoning (identical to listFromService's, read_generic.go).
+func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S]) {
 	mustNotLeakUntrustedText("syncDescriptor", d.SyncName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
 	mustHaveIDOf("syncDescriptor", d.SyncName, d.IDOf)
 
@@ -235,7 +256,7 @@ func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.
 		Name:        d.SyncName,
 		Description: d.SyncDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.SyncTitle},
-	}, genericSyncHandler(p, logger, d, rec))
+	}, genericSyncHandler(p, logger, d))
 }
 
 // genericSyncHandler resolves d.SyncName. It checks the caller's cursor
@@ -251,7 +272,7 @@ func registerSync[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.
 // endpoint-argument caveat that applies here too): the caller's cursor is
 // logged at debug only via logToolStart, on every path including a
 // rejected cursor or a clientFor failure.
-func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S], rec *issued.Store) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[S]] {
+func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d syncDescriptor[T, S]) mcp.ToolHandlerFor[genericSyncInput, genericSyncOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericSyncInput) (*mcp.CallToolResult, genericSyncOutput[S], error) {
 		start := time.Now()
 		logToolStart(ctx, logger, d.SyncName, slog.String("cursor", in.Cursor))
@@ -268,7 +289,7 @@ func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 			logToolEnd(ctx, logger, d.SyncName, start, "", 0, err)
 			return nil, genericSyncOutput[S]{}, err
 		}
-		result, out, err := syncFromService(ctx, d, d.Service(client), cursor, rec)
+		result, out, err := syncFromService(ctx, d, d.Service(client), cursor)
 		logToolEnd(ctx, logger, d.SyncName, start, "", len(out.Entries), err)
 		return result, out, err
 	}
@@ -282,13 +303,24 @@ func genericSyncHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 // it directly against a fake service and an already-validated cursor
 // instead of a live *fileee.Client and a caller-supplied string.
 //
-// rec.Record (Aufgabe 4) runs, after the response is fully and
-// successfully built, with d.IDOf(&entry) for every row in res.Rows —
-// entities changed or added since the caller's cursor, i.e. entities this
-// call actually delivered. res.DeletedIDs are deliberately NOT recorded:
-// an id that no longer exists is never a valid target for a later
-// destructive tool (see syncDescriptor.IDOf's own doc comment).
-func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], service fileee.ReadService[T], cursor fileee.Cursor, rec *issued.Store) (*mcp.CallToolResult, genericSyncOutput[S], error) {
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit):
+// syncFromService nimmt SEIT DIESER VERSCHÄRFUNG KEINE der zurückgegebenen
+// IDs mehr in die issued-Whitelist auf — auch nicht die geänderten/neuen
+// Zeilen aus res.Rows. Vorher rief diese Funktion rec.Record(ctx, ids...)
+// für jede geänderte/neue Zeile auf (nie für res.DeletedIDs — eine
+// gelöschte Entität ist für kein späteres destruktives Werkzeug mehr ein
+// gültiges Ziel, das blieb unverändert die Regel, solange überhaupt
+// aufgenommen wurde). sync_* liefert wie list_*/search_* mehrere Zeilen
+// zurück, ohne dass der Aufrufer eine davon einzeln genannt hätte — bei
+// der ERSTEN Synchronisierung eines Kontos (kein Cursor) liefert ein
+// einziger Aufruf sogar potenziell den GESAMTEN aktuellen Bestand dieser
+// Entität, genau das Szenario, das listFromService's eigener
+// Doc-Kommentar (read_generic.go) für list_* beschreibt — für sync_* gilt
+// dieselbe Begründung unverändert. Ein Aufrufer, der eine per sync_*
+// gesehene ID als gültiges Ziel für ein späteres destruktives Werkzeug
+// braucht, muss sie über den passenden gezielten Einzelabruf (z. B.
+// get_document, get_contact) nachladen.
+func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], service fileee.ReadService[T], cursor fileee.Cursor) (*mcp.CallToolResult, genericSyncOutput[S], error) {
 	res, err := service.Diff(ctx, cursor)
 	if err != nil {
 		return nil, genericSyncOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.SyncName, err)
@@ -300,11 +332,9 @@ func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], 
 		Entries:    make([]S, 0, len(res.Rows)),
 	}
 	lines := make([]string, 0, len(res.Rows))
-	ids := make([]string, 0, len(res.Rows))
 	for i := range res.Rows {
 		entry := res.Rows[i]
 		out.Entries = append(out.Entries, d.Summarize(&entry))
-		ids = append(ids, d.IDOf(&entry))
 		if line := untrustedLineOfSync(d, &entry); line != "" {
 			lines = append(lines, line)
 		}
@@ -320,7 +350,6 @@ func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], 
 	if err != nil {
 		return nil, genericSyncOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.SyncName, err)
 	}
-	rec.Record(ctx, ids...)
 	return result, out, nil
 }
 
@@ -613,15 +642,19 @@ func conversationSyncDescriptor() syncDescriptor[fileee.Conversation, syncConver
 // going through RegisterAll, to keep those tests independent of the
 // unrelated tools RegisterAll mounts.
 //
-// logger and rec (Aufgabe 4) are threaded straight through to every
-// registerSync call — the same logger/store RegisterAll itself received,
-// neither ever rebuilt here (see RegisterAll's own doc comment, read.go).
-func registerSyncTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) {
-	registerSync(s, p, logger, tagSyncDescriptor(), rec)
-	registerSync(s, p, logger, companySyncDescriptor(), rec)
-	registerSync(s, p, logger, documentTypeSyncDescriptor(), rec)
-	registerSync(s, p, logger, documentTypeSchemeSyncDescriptor(), rec)
-	registerSync(s, p, logger, contactSyncDescriptor(), rec)
-	registerSync(s, p, logger, reminderSyncDescriptor(), rec)
-	registerSync(s, p, logger, conversationSyncDescriptor(), rec)
+// logger is threaded straight through to every registerSync call — the
+// same logger RegisterAll itself received, never rebuilt here (see
+// RegisterAll's own doc comment, read.go). Unlike registerReferenceTools/
+// registerPeopleTools, this function takes NO *issued.Store — none of the
+// seven sync tools it mounts records anything as issued (ADR-0019, see
+// registerSync's/genericSyncHandler's/syncFromService's own doc comments,
+// all above in this file).
+func registerSyncTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger) {
+	registerSync(s, p, logger, tagSyncDescriptor())
+	registerSync(s, p, logger, companySyncDescriptor())
+	registerSync(s, p, logger, documentTypeSyncDescriptor())
+	registerSync(s, p, logger, documentTypeSchemeSyncDescriptor())
+	registerSync(s, p, logger, contactSyncDescriptor())
+	registerSync(s, p, logger, reminderSyncDescriptor())
+	registerSync(s, p, logger, conversationSyncDescriptor())
 }

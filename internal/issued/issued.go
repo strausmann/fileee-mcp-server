@@ -398,10 +398,20 @@ func (s *Store) isExpired(recorded time.Time) bool {
 // dieses Pakets; CONTRIBUTING.md zu nutzersichtbarem Text), wickelt
 // ErrNotIssued ein, damit Aufrufer mit errors.Is dagegen prüfen können,
 // und nennt den Weg nach vorn statt nur die Ablehnung.
+//
+// Der Beispielweg nennt seit der Betreiber-Entscheidung "nur gezielte
+// Einzelabrufe whitelisten" (ADR-0019, Verschärfung nach dem
+// Sicherheits-Audit) ausschließlich get_document — list_documents nimmt
+// seit dieser Verschärfung KEINE ID mehr auf (genau wie jedes andere
+// Listen-/Such-/Sync-Werkzeug), wäre als Beispiel für "wie bekomme ich
+// diese ID aufgenommen" also irreführend. Ein Modell, das erst
+// list_documents aufruft, um an eine ID heranzukommen, muss diese ID
+// zusätzlich per get_document (o. ä. einem anderen gezielten
+// Einzelabruf) nachladen, bevor Check dafür gelingt.
 func errNotIssuedFor() error {
 	return fmt.Errorf(
 		"this id was not handed out by a read tool in this session; fetch it first "+
-			"(for example via list_documents or get_document) and retry: %w",
+			"via a single-entity get tool (for example get_document) and retry: %w",
 		ErrNotIssued,
 	)
 }

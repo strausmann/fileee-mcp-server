@@ -97,7 +97,7 @@ func TestCheckCursorEntityTypeAkzeptiertPassendenCursor(t *testing.T) {
 func TestRegisterSyncMeldetDasWerkzeugAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerSync(s, (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor(), nil)
+	registerSync(s, (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor())
 
 	names := toolNamesOf(t, s)
 	if !names["sync_tags"] {
@@ -114,7 +114,7 @@ func TestSyncFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *t
 	d := tagSyncDescriptor()
 	service := &fakeReadService[fileee.Tag]{diffErr: backendErr}
 
-	_, _, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"), nil)
+	_, _, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"))
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -136,7 +136,7 @@ func TestGenericSyncHandlerLehntVertauschtenCursorOhneNetzwerkzugriffAb(t *testi
 	// Nil-Pointer-Dereferenzierung ab statt still zu bestehen -- das ist der Beleg, dass der
 	// vertauschte Cursor VOR jedem Netzwerkzugriff abgefangen wird (derselbe Aufbau wie
 	// TestGenericGetHandlerLehntEineLeereKennungOhneNetzwerkzugriffAb in read_generic_test.go).
-	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d, nil)
+	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d)
 
 	_, _, err = handler(context.Background(), nil, genericSyncInput{Cursor: falscher})
 	if err == nil {
@@ -149,7 +149,7 @@ func TestGenericSyncHandlerLehntVertauschtenCursorOhneNetzwerkzugriffAb(t *testi
 
 func TestGenericSyncHandlerLehntUngueltigenCursorOhneNetzwerkzugriffAb(t *testing.T) {
 	d := tagSyncDescriptor()
-	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d, nil)
+	handler := genericSyncHandler[fileee.Tag, syncTagSummary](nil, discardLogger(), d)
 
 	_, _, err := handler(context.Background(), nil, genericSyncInput{Cursor: "kein-gueltiger-cursor"})
 	if err == nil {
@@ -173,7 +173,7 @@ func TestSyncFromServiceKodiertDenFolgeCursor(t *testing.T) {
 		},
 	}
 
-	_, out, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"), nil)
+	_, out, err := syncFromService(context.Background(), d, service, fileee.NewCursor("Tag"))
 	if err != nil {
 		t.Fatalf("syncFromService: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestRegisterSyncPanictWennSummarizeFremdtextReproduziert(t *testing.T) {
 			t.Error("erwartete Panic (Summarize reproduziert UntrustedLine's Fremdtext) blieb aus")
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 func TestRegisterSyncPanictWennPoisonProbeFehlt(t *testing.T) {
@@ -245,7 +245,7 @@ func TestRegisterSyncPanictWennPoisonProbeFehlt(t *testing.T) {
 			t.Error("erwartete Panic (PoisonProbe fehlt) blieb aus")
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 func TestRegisterSyncPanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *testing.T) {
@@ -257,7 +257,7 @@ func TestRegisterSyncPanictWennPoisonProbeOhneUntrustedLineGesetztIst(t *testing
 			t.Error("erwartete Panic (PoisonProbe gesetzt, UntrustedLine nil) blieb aus")
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 // TestMustNotLeakUntrustedTextMeldetSyncDeskriptorTyp ist
@@ -282,14 +282,14 @@ func TestMustNotLeakUntrustedTextMeldetSyncDeskriptorTyp(t *testing.T) {
 			t.Errorf("Panic-Meldung %q nennt nicht den Deskriptor-Typ syncDescriptor", msg)
 		}
 	}()
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d, nil)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), d)
 }
 
 func TestRegisterSyncOhneFremdtextfelderBleibtSauber(t *testing.T) {
 	// tagSyncDescriptor() laesst UntrustedLine/PoisonProbe bewusst nil -- Tag traegt keinen
 	// Fremdtext (dieselbe Einstufung wie Aufgabe 3's tag-Deskriptor, read_generic.go). Das
 	// darf NICHT paniken.
-	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor(), nil)
+	registerSync(mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil), (*clientpool.Pool)(nil), discardLogger(), tagSyncDescriptor())
 }
 
 // tagSyncDescriptorMitFremdtext ist tagSyncDescriptor() plus einem funktionierenden
@@ -384,7 +384,7 @@ func TestSyncConversationSummaryEnthaeltKeinenBetreff(t *testing.T) {
 func TestRegisterSyncToolsMeldetAlleSiebenAn(t *testing.T) {
 	s := mcp.NewServer(&mcp.Implementation{Name: "probe", Version: "0"}, nil)
 
-	registerSyncTools(s, (*clientpool.Pool)(nil), discardLogger(), nil)
+	registerSyncTools(s, (*clientpool.Pool)(nil), discardLogger())
 
 	names := toolNamesOf(t, s)
 	want := []string{

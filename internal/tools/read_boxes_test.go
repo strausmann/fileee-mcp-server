@@ -78,7 +78,7 @@ func TestBoxesFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeBoxService{listErr: backendErr}
 
-	_, _, err := boxesFromService(context.Background(), service, nil)
+	_, _, err := boxesFromService(context.Background(), service)
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -96,7 +96,7 @@ func TestBoxesFromServiceLiefertAlleBoxenOhneSeitenaufteilung(t *testing.T) {
 		{ID: "b2", BoxNr: 2, BoxName: "Versicherungen"},
 	}}
 
-	_, out, err := boxesFromService(context.Background(), service, nil)
+	_, out, err := boxesFromService(context.Background(), service)
 	if err != nil {
 		t.Fatalf("boxesFromService: %v", err)
 	}

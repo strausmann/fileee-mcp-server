@@ -142,24 +142,34 @@ type readServiceDescriptor[T any, S any] struct {
 	//		return &fileee.Contact{LastName: marker}
 	//	}
 	PoisonProbe func(marker string) *T
-	// IDOf liefert die Fileee-eigene ID einer Entität. Beide generischen
-	// Handler (genericListHandler/genericGetHandler) melden damit über
-	// listFromService/getFromService an rec (issued.Store), was sie
-	// tatsächlich ausgeliefert haben (ADR-0013 Punkt 3) — erst diese
-	// Meldung erlaubt einem späteren destruktiven Werkzeug, per
-	// issued.Store.Check zu prüfen, ob eine ID wirklich über einen echten
-	// Lese-Schritt herausging, statt z. B. nur im Text eines fremden
-	// Dokuments aufgetaucht zu sein.
+	// IDOf liefert die Fileee-eigene ID einer Entität. NUR noch
+	// getFromService ruft es tatsächlich auf und meldet damit an rec
+	// (issued.Store), was dieser EINE, vom Aufrufer per ID angeforderte
+	// Treffer war (ADR-0013 Punkt 3; ADR-0019, Verschärfung nach dem
+	// Sicherheits-Audit) — erst diese Meldung erlaubt einem späteren
+	// destruktiven Werkzeug, per issued.Store.Check zu prüfen, ob eine ID
+	// wirklich über einen echten, GEZIELTEN Lese-Schritt herausging, statt
+	// z. B. nur im Text eines fremden Dokuments aufgetaucht zu sein.
+	//
+	// WICHTIG (Verschärfung, ADR-0019): listFromService ruft d.IDOf seit
+	// dem Sicherheits-Audit NICHT mehr auf — ein einziger list_*-Aufruf
+	// (Standardgrenze 100, paginierbar bis zum Deckel von 1000) hätte
+	// sonst praktisch jede ID im Konto in die Whitelist heben können,
+	// ohne dass der Aufrufer sie je einzeln genannt hätte. Der erste Satz
+	// oben ("IDOf liefert die Fileee-eigene ID einer Entität") beschreibt
+	// deshalb bewusst nur noch den EINEN verbleibenden Aufrufer,
+	// getFromService — nicht mehr "beide generischen Handler" wie vor
+	// dieser Verschärfung.
 	//
 	// Pflichtfeld — anders als UntrustedLine/PoisonProbe gibt es keinen
-	// Fall, in dem ein T legitim keine ID hätte. Ein nil IDOf fällt beim
+	// Fall, in dem ein T legitim keine ID hätte, UND getFromService
+	// braucht es weiterhin unbedingt. Ein nil IDOf fällt beim
 	// tatsächlichen Aufruf sofort als Nil-Pointer-Panik auf
-	// (listFromService/getFromService rufen es ungeprüft auf); der
-	// billige Teil des Schutzes davor ist der Guardrail-Test in
-	// read_generic_test.go (Aufgabe 4, geht über jeden von RegisterAll
-	// tatsächlich angemeldeten Deskriptor), der teurere — auch die
-	// handgeschriebenen Werkzeuge — folgt in issued_coverage_test.go
-	// (Aufgabe 5).
+	// (getFromService ruft es ungeprüft auf); der billige Teil des
+	// Schutzes davor ist der Guardrail-Test in read_generic_test.go
+	// (Aufgabe 4, geht über jeden von RegisterAll tatsächlich
+	// angemeldeten Deskriptor), der teurere — auch die handgeschriebenen
+	// Werkzeuge — folgt in issued_coverage_test.go (Aufgabe 5).
 	IDOf func(*T) string
 }
 
@@ -223,17 +233,25 @@ type genericGetOutput[S any] struct {
 // descriptor's CODE, never of a particular call. Before this check existed,
 // a nil d.IDOf was caught only by TestAlleGenerischenDeskriptorenHabenEinIDOf
 // (a test, not a build-time guard) and crashed the whole server process on
-// the first real call that reached genericListHandler's d.IDOf(&entry)
-// (Issue #70, no recover() in the SDK dispatch path) — mustHaveIDOf turns
-// that into a registration-time panic instead, matching how
-// mustNotLeakUntrustedLine already treats a comparable descriptor defect.
+// the first real call that reached a handler's d.IDOf(&entry) — at the time
+// that was genericListHandler's own call (Issue #70, no recover() in the SDK
+// dispatch path); mustHaveIDOf turns that into a registration-time panic
+// instead, matching how mustNotLeakUntrustedLine already treats a comparable
+// descriptor defect. Since ADR-0019's whitelist tightening below,
+// genericListHandler no longer calls d.IDOf at all — the same risk now sits
+// exclusively in genericGetHandler's own d.IDOf(entry) call, and
+// mustHaveIDOf still guards it exactly the same way, at the same single
+// registration point, for both handlers' sake.
 //
-// rec (Aufgabe 4) is threaded straight through to genericListHandler/
-// genericGetHandler, never built here — the same pattern logger already
-// establishes: RegisterAll (read.go) owns the one *issued.Store this
-// process uses and passes it down through registerSyncTools/
+// rec is threaded straight through to genericGetHandler ONLY, never built
+// here — the same pattern logger establishes: RegisterAll (read.go) owns
+// the one *issued.Store this process uses and passes it down through
 // registerReferenceTools/registerPeopleTools, exactly as it does for
-// logger.
+// logger. genericListHandler does NOT receive rec (ADR-0019): since the
+// audit-driven whitelist tightening, only a single-entity get call records
+// an id as issued — see genericListHandler's/listFromService's own doc
+// comments for why a list/search/sync call recording every id it returns
+// made the whole whitelist nearly meaningless.
 func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) {
 	mustNotLeakUntrustedLine(d)
 	mustHaveIDOf("readServiceDescriptor", d.ListName+"/"+d.GetName, d.IDOf)
@@ -242,7 +260,7 @@ func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger
 		Name:        d.ListName,
 		Description: d.ListDescription,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.ListTitle},
-	}, genericListHandler(p, logger, d, rec))
+	}, genericListHandler(p, logger, d))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        d.GetName,
@@ -439,7 +457,15 @@ func summaryFieldValues(summary any) []string {
 // carries no such field, and go-fileee's fileee.ReadService[T] does not
 // expose it either — so logToolEnd's endpoint argument is passed as "",
 // deliberately, rather than a guessed or hardcoded value.
-func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) mcp.ToolHandlerFor[genericListInput, genericListOutput[S]] {
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit):
+// this handler takes NO *issued.Store — unlike genericGetHandler, it never
+// records any of the ids it returns as issued. See listFromService's own
+// doc comment for the full reasoning; in short, a single call here can
+// return up to maxLimit rows (and, paginated, an entire account's worth),
+// none of which the caller named individually — recording all of them
+// would have made the whitelist almost meaningless.
+func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericListInput, genericListOutput[S]] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericListInput) (*mcp.CallToolResult, genericListOutput[S], error) {
 		start := time.Now()
 		logToolStart(ctx, logger, d.ListName, slog.Int("start", in.Start), slog.Int("limit", in.Limit))
@@ -449,7 +475,7 @@ func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 			logToolEnd(ctx, logger, d.ListName, start, "", 0, err)
 			return nil, genericListOutput[S]{}, err
 		}
-		result, out, err := listFromService(ctx, d, d.Service(client), in, rec)
+		result, out, err := listFromService(ctx, d, d.Service(client), in)
 		logToolEnd(ctx, logger, d.ListName, start, "", len(out.Entries), err)
 		return result, out, err
 	}
@@ -461,12 +487,37 @@ func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d
 // separate from genericListHandler so a test can drive it directly against
 // a fake service instead of a live *fileee.Client.
 //
-// rec.Record (Aufgabe 4) runs ONCE, with every returned row's d.IDOf(&entry)
-// collected first, and only AFTER the response is fully, successfully built
-// (past wrapUntrustedLines' own possible error) — never on an error path,
-// so a row this call never actually delivered can never end up recorded as
-// issued.
-func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], in genericListInput, rec *issued.Store) (*mcp.CallToolResult, genericListOutput[S], error) {
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 4/5-Fassung): dieser
+// Pfad nimmt SEIT DEM AUDIT KEINE der zurückgegebenen IDs mehr in die
+// issued-Whitelist auf — weder hier noch über einen rec-Parameter, den
+// diese Funktion deshalb absichtlich nicht mehr entgegennimmt. Vorher rief
+// listFromService rec.Record(ctx, ids...) für JEDE Zeile auf, die eine
+// einzige Query lieferte (Standardgrenze defaultLimit=20, per Parameter
+// bis maxLimit=100 pro Aufruf, per wiederholtem Start/Limit-Paging bis zum
+// Deckel von 1000 IDs je Identität, issued.Store.maxPerIdentity) — bei
+// einem Konto mit ein paar hundert Dokumenten hebt EIN einziger
+// list_*-Aufruf damit praktisch den gesamten erreichbaren ID-Raum in die
+// Whitelist, ohne dass der Aufrufer auch nur eine dieser IDs je selbst
+// genannt hätte. Die Zusage "nur was echt gelesen wurde" entwertete sich
+// damit faktisch zu "fast alles im Konto" (Sicherheits-Audit, zwei
+// unabhängige Hunter, siehe ADR-0019).
+//
+// Die neue Linie: NUR ein gezielter Einzelabruf — ein Werkzeug, dem der
+// Aufrufer eine ID NENNT und das GENAU DIESE eine, vom Server als
+// existierend und lesbar bestätigte Entität zurückgibt (getFromService,
+// unten) — nimmt eine ID auf. Ein Werkzeug wie dieses hier, das MEHRERE
+// Entitäten liefert, ohne dass der Aufrufer sie einzeln genannt hat, nimmt
+// KEINE mehr auf. Der bewusst gezahlte Preis: ein Aufrufer, der mehrere
+// konkrete Treffer als gültige Ziele für ein späteres destruktives
+// Werkzeug braucht, muss sie nach einem list_*-Aufruf einzeln per
+// getFromService nachladen — errNotIssuedFor (internal/issued) nennt
+// genau diesen Weg. Was der Mechanismus damit weiterhin NICHT leistet:
+// eine Injektion kann weiterhin "ruf erst get_X(Y) auf, dann nutze Y" im
+// Text eines fremden Dokuments verlangen — der Schutz erzwingt nur, dass Y
+// wirklich im Konto existiert und lesbar ist, und macht den Angriff
+// mehrschrittig, mehr nicht (siehe ADR-0019).
+func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], in genericListInput) (*mcp.CallToolResult, genericListOutput[S], error) {
 	res, err := service.Query(ctx, fileee.QueryOptions{
 		Start: nonNegative(in.Start),
 		Limit: clampLimit(in.Limit),
@@ -477,11 +528,9 @@ func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[
 
 	out := genericListOutput[S]{TotalRows: res.TotalRows, Entries: make([]S, 0, len(res.Rows))}
 	lines := make([]string, 0, len(res.Rows))
-	ids := make([]string, 0, len(res.Rows))
 	for i := range res.Rows {
 		entry := res.Rows[i]
 		out.Entries = append(out.Entries, d.Summarize(&entry))
-		ids = append(ids, d.IDOf(&entry))
 		if line := untrustedLineOf(d, &entry); line != "" {
 			lines = append(lines, line)
 		}
@@ -491,7 +540,6 @@ func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[
 	if err != nil {
 		return nil, genericListOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.ListName, err)
 	}
-	rec.Record(ctx, ids...)
 	return result, out, nil
 }
 

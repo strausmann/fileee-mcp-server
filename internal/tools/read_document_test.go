@@ -232,7 +232,7 @@ func TestSyncDocumentsHandlerLehntVertauschtenCursorOhneNetzwerkzugriffAb(t *tes
 	// p bleibt nil: derselbe Beleg wie bei den uebrigen Handler-Tests in
 	// dieser Datei — ein vertauschter Cursor muss VOR jedem
 	// Netzwerkzugriff abgelehnt werden.
-	handler := syncDocumentsHandler(nil, discardLogger(), nil)
+	handler := syncDocumentsHandler(nil, discardLogger())
 
 	_, _, err = handler(context.Background(), nil, genericSyncInput{Cursor: fremderCursor})
 	if err == nil {
@@ -244,7 +244,7 @@ func TestSyncDocumentsHandlerLehntVertauschtenCursorOhneNetzwerkzugriffAb(t *tes
 }
 
 func TestSyncDocumentsHandlerLehntUngueltigenCursorOhneNetzwerkzugriffAb(t *testing.T) {
-	handler := syncDocumentsHandler(nil, discardLogger(), nil)
+	handler := syncDocumentsHandler(nil, discardLogger())
 
 	_, _, err := handler(context.Background(), nil, genericSyncInput{Cursor: "!!!nicht-base64!!!"})
 	if err == nil {
@@ -259,7 +259,7 @@ func TestDocumentsSyncFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugname
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeDocumentService{diffErr: backendErr}
 
-	_, _, err := documentsSyncFromService(context.Background(), service, fileee.NewCursor("Document"), nil)
+	_, _, err := documentsSyncFromService(context.Background(), service, fileee.NewCursor("Document"))
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -285,7 +285,7 @@ func TestDocumentsSyncFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfol
 		NextCursor: nextCursor,
 	}}
 
-	result, out, err := documentsSyncFromService(context.Background(), service, fileee.NewCursor("Document"), nil)
+	result, out, err := documentsSyncFromService(context.Background(), service, fileee.NewCursor("Document"))
 	if err != nil {
 		t.Fatalf("documentsSyncFromService: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestDocumentsSyncFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfol
 // --- list_document_conversations: listDocumentConversationsHandler / documentConversationsFromService ---
 
 func TestListDocumentConversationsHandlerLehntEineLeereDokumentkennungOhneNetzwerkzugriffAb(t *testing.T) {
-	handler := listDocumentConversationsHandler(nil, discardLogger(), nil)
+	handler := listDocumentConversationsHandler(nil, discardLogger())
 
 	_, _, err := handler(context.Background(), nil, listDocumentConversationsInput{DocumentID: "  "})
 	if err == nil {
@@ -329,7 +329,7 @@ func TestDocumentConversationsFromServiceWickeltEinenGegenseitenFehlerMitDemWerk
 	backendErr := errors.New("Gegenseite antwortet nicht")
 	service := &fakeDocumentService{conversationsErr: backendErr}
 
-	_, _, err := documentConversationsFromService(context.Background(), service, "d1", nil)
+	_, _, err := documentConversationsFromService(context.Background(), service, "d1")
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -361,7 +361,7 @@ func TestDocumentConversationsFromServiceZaehltNurTeilnehmer(t *testing.T) {
 		},
 	}}}
 
-	result, out, err := documentConversationsFromService(context.Background(), service, "d1", nil)
+	result, out, err := documentConversationsFromService(context.Background(), service, "d1")
 	if err != nil {
 		t.Fatalf("documentConversationsFromService: %v", err)
 	}

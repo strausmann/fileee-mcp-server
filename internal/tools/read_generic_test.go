@@ -194,7 +194,7 @@ func TestListFromServiceWickeltEinenGegenseitenFehlerMitDemWerkzeugnamenEin(t *t
 	d := tagDescriptor()
 	service := &fakeReadService[fileee.Tag]{queryErr: backendErr}
 
-	_, _, err := listFromService(context.Background(), d, service, genericListInput{}, nil)
+	_, _, err := listFromService(context.Background(), d, service, genericListInput{})
 	if err == nil {
 		t.Fatal("erwarteter Fehler blieb aus")
 	}
@@ -321,7 +321,7 @@ func TestListFromServiceLiefertMehrereEintraegeUndSammeltGerahmtenFremdtext(t *t
 		},
 	}
 
-	result, out, err := listFromService(context.Background(), d, service, genericListInput{}, nil)
+	result, out, err := listFromService(context.Background(), d, service, genericListInput{})
 	if err != nil {
 		t.Fatalf("listFromService: %v", err)
 	}
@@ -668,33 +668,43 @@ func TestWrapUntrustedLinesWithBoundaryMatchesWrapUntrustedLinesFormat(t *testin
 	}
 }
 
-// --- Aufgabe 4: rec.Record über die generischen Handler --------------------
+// --- rec.Record über die generischen Handler --------------------------------
 //
 // Jeder andere Test dieser Datei bleibt bewusst UNTERHALB der ctx-Grenze
 // (siehe Datei-Kopfkommentar) — er prüft entweder einen Fehlerpfad oder
 // eine reine Struktur-Zusicherung, keiner von beiden braucht je eine
-// echte, verifizierte Identität. TestGenericHandlerMerktAusgelieferteIDs
-// ist die erste Ausnahme in dieser Datei: um zu belegen, dass
-// listFromService/getFromService tatsächlich bei rec (issued.Store)
-// melden, muss Record ein ctx sehen, aus dem serve.IdentityFrom(ctx) eine
-// echte Identität liest — dieselbe Einschränkung, die
-// internal/issued/issued_test.go's eigener Kommentar zu ctxMitIdentitaet
-// ausführlich begründet (kein exportierter Setter in gangway v0.5.0, die
-// Identität wird ausschließlich von Gangways Authentifizierungs-
-// Middleware gesetzt, nie von einer selbstgebauten Attrappe). Der Test
-// bleibt trotzdem UNTERHALB von clientFor: er ruft listFromService/
-// getFromService direkt mit einem Fake-Service auf, genau wie jeder
-// andere Erfolgsfall-Test dieser Datei (z. B.
+// echte, verifizierte Identität. TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts
+// ist die erste Ausnahme in dieser Datei: um zu belegen, dass getFromService
+// tatsächlich bei rec (issued.Store) meldet — UND dass listFromService das
+// SEIT ADR-0019 NICHT mehr tut —, muss Check ein ctx sehen, aus dem
+// serve.IdentityFrom(ctx) eine echte Identität liest — dieselbe
+// Einschränkung, die internal/issued/issued_test.go's eigener Kommentar
+// zu ctxMitIdentitaet ausführlich begründet (kein exportierter Setter in
+// gangway v0.5.0, die Identität wird ausschließlich von Gangways
+// Authentifizierungs-Middleware gesetzt, nie von einer selbstgebauten
+// Attrappe). Der Test bleibt trotzdem UNTERHALB von clientFor: er ruft
+// listFromService/getFromService direkt mit einem Fake-Service auf, genau
+// wie jeder andere Erfolgsfall-Test dieser Datei (z. B.
 // TestListFromServiceLiefertMehrereEintraegeUndSammeltGerahmtenFremdtext)
 // — nur eben mit einem echten, identitätstragenden ctx statt
 // context.Background().
 
-// TestGenericHandlerMerktAusgelieferteIDs treibt tagDescriptor() über
-// listFromService mit zwei Zeilen und über getFromService mit einer
-// weiteren, gegen einen echten *issued.Store. Nach dem List-Aufruf müssen
-// beide gelisteten IDs per Check gültig sein, nach dem Get-Aufruf die
-// geholte.
-func TestGenericHandlerMerktAusgelieferteIDs(t *testing.T) {
+// TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts
+// ist die "beide Richtungen"-Umkehrung von ADR-0019: sie treibt
+// tagDescriptor() über listFromService mit zwei Zeilen UND über
+// getFromService mit einer weiteren, gegen einen echten *issued.Store —
+// und prüft, dass NACH dem List-Aufruf KEINE der beiden gelisteten IDs
+// per Check gültig ist (sie wurden vom Aufrufer nie einzeln genannt, siehe
+// listFromService's eigener Doc-Kommentar), während die per getFromService
+// geholte ID gültig ist (der eine gezielte Einzelabruf, den ADR-0019
+// weiterhin erfasst).
+//
+// Vor dieser Verschärfung hieß dieser Test
+// TestGenericHandlerMerktAusgelieferteIDs und prüfte das genaue Gegenteil
+// der List-Hälfte (beide gelisteten IDs müssen gültig sein) — siehe
+// Git-Historie für die alte Fassung, falls der frühere, breitere
+// Aufnahme-Mechanismus je nachvollzogen werden muss.
+func TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts(t *testing.T) {
 	d := tagDescriptor()
 	service := &fakeReadService[fileee.Tag]{
 		queryResult: &fileee.QueryResult[fileee.Tag]{
@@ -706,12 +716,12 @@ func TestGenericHandlerMerktAusgelieferteIDs(t *testing.T) {
 	rec := issued.New(time.Hour, 100)
 	ctx := ctxMitIdentitaet(t, "alice")
 
-	if _, _, err := listFromService(ctx, d, service, genericListInput{}, rec); err != nil {
+	if _, _, err := listFromService(ctx, d, service, genericListInput{}); err != nil {
 		t.Fatalf("listFromService: %v", err)
 	}
 	for _, id := range []string{"t1", "t2"} {
-		if err := rec.Check(ctx, id); err != nil {
-			t.Errorf("Check(%q) nach dem List-Aufruf: %v, want nil (id gehört zu den ausgelieferten Zeilen)", id, err)
+		if err := rec.Check(ctx, id); err == nil {
+			t.Errorf("Check(%q) nach dem List-Aufruf: nil, want einen Fehler — list_* darf seit ADR-0019 keine ID mehr aufnehmen, die der Aufrufer nicht einzeln genannt hat", id)
 		}
 	}
 
@@ -719,7 +729,7 @@ func TestGenericHandlerMerktAusgelieferteIDs(t *testing.T) {
 		t.Fatalf("getFromService: %v", err)
 	}
 	if err := rec.Check(ctx, "t3"); err != nil {
-		t.Errorf("Check(t3) nach dem Get-Aufruf: %v, want nil (id wurde soeben ausgeliefert)", err)
+		t.Errorf("Check(t3) nach dem Get-Aufruf: %v, want nil (id wurde soeben gezielt per ID abgerufen)", err)
 	}
 }
 
