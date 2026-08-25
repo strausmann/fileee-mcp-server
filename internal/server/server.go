@@ -307,7 +307,19 @@ func New(ctx context.Context, cfg *config.Config, opts ...Option) (*Server, erro
 	// instead of the 401 challenge from authentication — see
 	// TestUnauthenticatedRequestReachesTheChallengeNotA404.
 	limiter := newToolCallLimiter(cfg)
-	instance := mcp.NewServer(&mcp.Implementation{Name: "fileee-mcp-server", Version: config.Version()}, nil)
+	// Instructions ist das vom MCP-Protokoll dafuer vorgesehene Feld: Der
+	// Server sagt dem Aufrufer beim Verbinden, wie mit dieser Instanz
+	// umzugehen ist. Bei mehreren gleichzeitig eingebundenen Instanzen
+	// desselben Diensts ist das der einzige Weg, ihnen etwas anderes
+	// mitzugeben als den Namen, den der Client selbst vergibt (siehe
+	// docs/betrieb/aufbau.md, Abschnitt "Mehrere Instanzen unterscheiden").
+	//
+	// Kein "if leer"-Zweig: Das Protokollfeld traegt omitempty, ein leerer
+	// Wert erzeugt also von sich aus kein Feld in der Antwort.
+	instance := mcp.NewServer(
+		&mcp.Implementation{Name: "fileee-mcp-server", Version: config.Version()},
+		&mcp.ServerOptions{Instructions: cfg.InstanceDescription},
+	)
 	tools.RegisterAll(instance, pool, tools.ServerInfo{Mode: string(cfg.AccountMode), MaxUploadBytes: cfg.MaxUploadBytes}, logger, issuedStore)
 	instance.AddReceivingMiddleware(limiter.middleware())
 	gw.AttachMCPSelector(func(ctx context.Context, id *identity.Identity) *mcp.Server {

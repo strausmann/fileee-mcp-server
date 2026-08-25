@@ -227,3 +227,89 @@ func TestEndToEndAgainstGangwaysTestIssuer(t *testing.T) {
 		t.Fatal("Run() kehrte nach Kontext-Abbruch nicht innerhalb von 15s zurueck")
 	}
 }
+
+// --- Instanz-Beschreibung erreicht den Client ueber initialize ------------
+//
+// Aufbau identisch zu TestEndToEndAgainstGangwaysTestIssuer oben: dieselbe
+// Reihenfolge von idp, fileeeMock, freeLocalAddr, t.Setenv, LoadConfig, New
+// und waitForListener. Der einzige Unterschied ist die zusaetzliche
+// Umgebungsvariable MCP_INSTANCE_DESCRIPTION und die Pruefung am Ende gegen
+// session.InitializeResult().Instructions statt gegen einen Tool-Aufruf.
+func TestInstanceDescriptionErreichtDenClientUeberInitialize(t *testing.T) {
+	idp := testidp.New(t)
+	fileeeMock := newFileeeMock(t)
+	listenAddr := freeLocalAddr(t)
+	resourceURL := "http://" + listenAddr + "/mcp"
+
+	will := "Testumgebung. Wegwerfdaten, hier darf experimentiert werden. Nicht das produktive Archiv."
+
+	t.Setenv("MCP_AUTH_MODE", "oidc")
+	t.Setenv("MCP_OIDC_PROVIDER", "generic")
+	t.Setenv("MCP_OIDC_ISSUER", idp.URL())
+	t.Setenv("MCP_OIDC_CLIENT_ID", "fileee-mcp-server")
+	t.Setenv("MCP_RESOURCE_URL", resourceURL)
+	t.Setenv("MCP_ALLOWED_SUBJECTS", "e2e-subject")
+	t.Setenv("MCP_LISTEN_ADDR", listenAddr)
+	t.Setenv("FILEEE_ALLOWED_ORIGIN_PREFIXES", "127.0.0.1/32,::1/128")
+	t.Setenv("FILEEE_USERNAME", "e2e@example.invalid")
+	t.Setenv("FILEEE_PASSWORD", "kein-echtes-passwort-e2e")
+	t.Setenv("MCP_INSTANCE_DESCRIPTION", will)
+
+	cfg, err := config.LoadConfig(os.Getenv)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s, err := New(ctx, cfg, WithPoolOptions(
+		clientpool.WithClientOptions(fileee.WithBaseURL(fileeeMock), fileee.WithRateLimit(1000, 1000)),
+		clientpool.WithSessionStore(func(accountKey string) fileee.SessionStore {
+			return fileee.NewFileSessionStore(filepath.Join(t.TempDir(), accountKey+".json"))
+		}),
+	))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	runErrc := make(chan error, 1)
+	go func() { runErrc <- s.Run(ctx) }()
+	waitForListener(t, listenAddr, runErrc)
+
+	token := idp.Token(map[string]any{
+		"iss": idp.URL(), "aud": "fileee-mcp-server", "sub": "e2e-subject",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-testidp", Version: "0.0.0"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             resourceURL,
+		HTTPClient:           &http.Client{Transport: bearerRoundTripper{token: token}},
+		DisableStandaloneSSE: true,
+	}
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		t.Fatalf("Connect ueber den echten Netzwerk-Weg (%s): %v", resourceURL, err)
+	}
+
+	// Der Vergleich prueft den Inhalt, nicht die Existenz. Ein "if got == """
+	// bliebe grün, sobald irgendein Text ankommt — auch ein falscher.
+	got := session.InitializeResult().Instructions
+	if got != will {
+		t.Errorf("Instructions = %q, erwartet %q", got, will)
+	}
+
+	if err := session.Close(); err != nil {
+		t.Fatalf("session.Close(): %v", err)
+	}
+
+	cancel()
+	select {
+	case err := <-runErrc:
+		if err != nil {
+			t.Fatalf("Run() = %v, erwartet nil nach geordnetem Shutdown", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run() kehrte nach Kontext-Abbruch nicht innerhalb von 15s zurueck")
+	}
+}
