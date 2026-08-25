@@ -501,21 +501,37 @@ func TestAlleLeseWerkzeugeSindEinsortiert(t *testing.T) {
 // WebappID) haben ihre EIGENEN Tests weiter unten, hier nicht mitgeprüft
 // — die Aufgabe dieses Tests ist ausschließlich der positive Fall.
 func TestJedesWerkzeugDasIDsAusliefertMerktSieAuch(t *testing.T) {
-	session, rec, identityCtx := newCoverageSession(t)
-
+	// WICHTIG (Fix nach Review-Fund, Befund 1): JEDER Subtest ruft
+	// newCoverageSession(t) SELBST auf und bekommt damit eine frische
+	// Sitzung + einen frischen *issued.Store. Der frühere Aufbau rief
+	// newCoverageSession(t) einmal oben auf und teilte Sitzung/Store über
+	// alle Subtests — dieselben Fixture-Kennungen (covDocument für
+	// list_documents/search_documents/get_document, covBox für
+	// list_boxes/get_box) tauchen in mehreren Werkzeugen auf, und ein
+	// früherer Subtest hatte die Kennung dadurch schon aufgenommen, bevor
+	// der eigentlich zu prüfende Subtest überhaupt lief — assertAllIssued
+	// wurde dann aus dem falschen Grund grün. Per Gegenversuch belegt:
+	// rec.Record(...) komplett aus searchDocumentsHandler (read.go) bzw.
+	// boxFromService (read_boxes.go) entfernt, das ganze Paket blieb
+	// trotzdem grün. Mit einer frischen Sitzung je Subtest kann eine
+	// fehlende Record-Verdrahtung nicht mehr hinter einem fremden Subtest
+	// verschwinden.
 	t.Run("list_documents", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
 		sc := structuredContentOf(t, session, tools.ToolListDocuments, nil)
 		ids := sliceOfMapStringsAt(t, sc, "documents", "id")
 		assertAllIssued(t, rec, identityCtx, tools.ToolListDocuments, ids)
 	})
 
 	t.Run("search_documents", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
 		sc := structuredContentOf(t, session, tools.ToolSearchDocuments, map[string]any{"term": "invoice"})
 		ids := stringsAt(t, sc, "ids")
 		assertAllIssued(t, rec, identityCtx, tools.ToolSearchDocuments, ids)
 	})
 
 	t.Run("get_document", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
 		sc := structuredContentOf(t, session, tools.ToolGetDocument, map[string]any{"id": covDocument})
 		ids := stringsAt(t, sc, "id")
 		ids = append(ids, stringsAt(t, sc, "tagIds")...)
@@ -523,24 +539,28 @@ func TestJedesWerkzeugDasIDsAusliefertMerktSieAuch(t *testing.T) {
 	})
 
 	t.Run("sync_documents", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
 		sc := structuredContentOf(t, session, tools.ToolSyncDocuments, nil)
 		ids := sliceOfMapStringsAt(t, sc, "entries", "id")
 		assertAllIssued(t, rec, identityCtx, tools.ToolSyncDocuments, ids)
 	})
 
 	t.Run("list_document_conversations", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
 		sc := structuredContentOf(t, session, tools.ToolListDocumentConversations, map[string]any{"documentId": covDocument})
 		ids := sliceOfMapStringsAt(t, sc, "conversations", "id")
 		assertAllIssued(t, rec, identityCtx, tools.ToolListDocumentConversations, ids)
 	})
 
 	t.Run("list_boxes", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
 		sc := structuredContentOf(t, session, tools.ToolListBoxes, nil)
 		ids := sliceOfMapStringsAt(t, sc, "boxes", "id")
 		assertAllIssued(t, rec, identityCtx, tools.ToolListBoxes, ids)
 	})
 
 	t.Run("get_box", func(t *testing.T) {
+		session, rec, identityCtx := newCoverageSession(t)
 		sc := structuredContentOf(t, session, tools.ToolGetBox, map[string]any{"id": covBox})
 		ids := stringsAt(t, sc, "id")
 		ids = append(ids, stringsAt(t, sc, "documentIds")...)
@@ -548,6 +568,7 @@ func TestJedesWerkzeugDasIDsAusliefertMerktSieAuch(t *testing.T) {
 	})
 
 	t.Run("get_document_pdf_und_get_page_image_liefern_keine_kennung", func(t *testing.T) {
+		session, _, _ := newCoverageSession(t)
 		pdf := structuredContentOf(t, session, tools.ToolGetDocumentPDF, map[string]any{"id": covDocument})
 		if _, ok := pdf["id"]; ok {
 			t.Errorf("get_document_pdf's StructuredContent trägt unerwartet einen %q-Schlüssel: %+v", "id", pdf)
