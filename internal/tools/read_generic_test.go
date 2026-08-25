@@ -733,6 +733,37 @@ func TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts(t 
 	}
 }
 
+// TestGetFromServiceMerktDieAngeforderteIDNichtDieAntwortID ist die
+// Gegenprobe zum Nachprüfungs-Befund (Codex-Review nach ADR-0019,
+// getFromService's eigener WICHTIG-Kommentar): der Fake-Service liefert
+// für die angeforderte ID "t3" absichtlich eine ABWEICHENDE Antwort-ID
+// ("t3-kanonisch") zurück — genau das Szenario, das ein fremder
+// Fileee-Server bei einer serverseitigen Normalisierung/einem Alias
+// erzeugen könnte, ohne dass go-fileee das je bemerken würde (siehe
+// getFromService's eigenen Kommentar für die Quellenbelege). Vor dem Fix
+// hätte diese Funktion rec.Record(ctx, d.IDOf(entry)) aufgerufen — also
+// "t3-kanonisch" — und die tatsächlich angeforderte "t3" NIE
+// gewhitelistet: exakt die Umkehrung, die diese Gegenprobe belegt.
+func TestGetFromServiceMerktDieAngeforderteIDNichtDieAntwortID(t *testing.T) {
+	d := tagDescriptor()
+	service := &fakeReadService[fileee.Tag]{
+		getResult: &fileee.Tag{ID: "t3-kanonisch", Name: "Vertrag"},
+	}
+	rec := issued.New(time.Hour, 100)
+	ctx := ctxMitIdentitaet(t, "alice")
+
+	if _, _, err := getFromService(ctx, d, service, "t3", rec); err != nil {
+		t.Fatalf("getFromService: %v", err)
+	}
+
+	if err := rec.Check(ctx, "t3"); err != nil {
+		t.Errorf(`Check("t3") nach get_tag("t3"): %v, want nil — "t3" ist die vom Aufrufer genannte und vom Server bestätigte ID, unabhängig davon, was die Antwort als ID-Feld trägt`, err)
+	}
+	if err := rec.Check(ctx, "t3-kanonisch"); err == nil {
+		t.Error(`Check("t3-kanonisch") nach get_tag("t3"): nil, want einen Fehler — der Aufrufer hat diese ID nie genannt, sie darf nicht gewhitelistet sein`)
+	}
+}
+
 // TestAlleGenerischenDeskriptorenHabenEinIDOf ist Aufgabe 4's Schritt 4 —
 // die günstige Hälfte des Guardrails: geht über jeden von RegisterAll
 // (über registerSyncTools/registerReferenceTools/registerPeopleTools)

@@ -834,10 +834,11 @@ func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Sto
 // documentReadService fake instead of a live *fileee.Client (see
 // fakeDocumentService, read_document_test.go).
 //
-// rec records ONLY out.ID — the document id — once wrapUntrustedLines has
-// already succeeded, the same "only after the response is fully built,
-// never on an error path" rule genericGetHandler's own doc comment
-// states (read_generic.go).
+// rec records ONLY id — the caller-requested document id, the string this
+// function's own caller (getDocumentHandler) received as in.ID — once
+// wrapUntrustedLines has already succeeded, the same "only after the
+// response is fully built, never on an error path" rule
+// genericGetHandler's own doc comment states (read_generic.go).
 //
 // WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
 // verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): dieser
@@ -845,17 +846,41 @@ func getDocumentHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Sto
 // SELBST und, angehängt, out.TagIDs (siehe getDocumentOutput's eigenen
 // Doc-Kommentar: strukturelle Fremdschlüssel-IDs in list_tags/get_tag,
 // kein Fremdtext). Die neue Linie aus dem Audit lautet aber "erfasst wird
-// NUR die ID, die der Aufrufer im Parameter genannt hat" — out.ID ist
-// genau das (die von get_document(id) angeforderte Entität), out.TagIDs
-// dagegen NICHT: der Aufrufer hat keinen dieser Tags einzeln genannt, sie
-// kommen als NEBENPRODUKT der Dokument-Antwort mit, exakt dasselbe Muster
-// wie get_box's DocumentIDs (read_boxes.go, boxFromService's eigener
-// Doc-Kommentar) und list_document_conversations' Konversations-IDs
-// (documentConversationsFromService's eigener Doc-Kommentar) — beide
-// ebenfalls seit ADR-0019 NICHT mehr aufgenommen. Ein Aufrufer, der einen
-// per get_document zurückgegebenen Tag als gültiges Ziel für ein späteres
-// destruktives Werkzeug braucht, muss ihn gezielt per get_tag nachladen
-// (registerReferenceTools' generischer Get-Pfad, weiterhin erfassend).
+// NUR die ID, die der Aufrufer im Parameter genannt hat" — out.TagIDs
+// erfüllt das nicht: der Aufrufer hat keinen dieser Tags einzeln genannt,
+// sie kommen als NEBENPRODUKT der Dokument-Antwort mit, exakt dasselbe
+// Muster wie get_box's DocumentIDs (read_boxes.go, boxFromService's
+// eigener Doc-Kommentar) und list_document_conversations'
+// Konversations-IDs (documentConversationsFromService's eigener
+// Doc-Kommentar) — beide ebenfalls seit ADR-0019 NICHT mehr aufgenommen.
+// Ein Aufrufer, der einen per get_document zurückgegebenen Tag als
+// gültiges Ziel für ein späteres destruktives Werkzeug braucht, muss ihn
+// gezielt per get_tag nachladen (registerReferenceTools' generischer
+// Get-Pfad, weiterhin erfassend).
+//
+// WICHTIG (Nachprüfungs-Befund, Codex-Review nach ADR-0019): rec.Record
+// lief hier zuvor mit out.ID (documentDetail's doc.ID-Feld — die ID aus
+// der ANTWORT), NICHT mit id (der vom Aufrufer im Parameter genannten).
+// Der frühere Kommentar oben behauptete, "out.ID ist genau das (die von
+// get_document(id) angeforderte Entität)" — das gilt nur, solange der
+// fremde Fileee-Server für jede erfolgreich aufgelöste id ein
+// identisches "id"-Feld im JSON-Body zurückliefert. go-fileee selbst
+// kanonisiert nichts (documentReadService.Get ruft restService[T].Get
+// auf, das den Response-Body direkt in T dekodiert, ohne id vorher
+// umzuschreiben oder das dekodierte ID-Feld gegen id zu vergleichen) —
+// eine Divergenz (Groß-/Kleinschreibungs-Normalisierung, Alias, Dublette
+// auf Fileee-Server-Seite) ist von hier aus also nicht ausschließbar.
+// Divergierten beide, hätte diese Funktion die tatsächlich angeforderte
+// id NIE gewhitelistet und stattdessen eine ID aufgenommen, die der
+// Aufrufer nie genannt hat — die exakte Umkehrung der oben zitierten
+// Linie. id selbst erfüllt beide Hälften unabhängig von out.ID: der
+// Aufrufer hat sie im Parameter genannt, und der erfolgreiche,
+// fehlerfrei dekodierte service.Get-Aufruf IST die Bestätigung, dass sie
+// bei diesem Server auf eine existierende, lesbare Entität auflöst.
+// Dieselbe Korrektur, aus demselben Fund, trifft getFromService
+// (read_generic.go) und boxFromService (read_boxes.go) gleichermaßen —
+// siehe deren eigene Doc-Kommentare für die volle Begründung, warum
+// weder "nur out.ID" noch "beide IDs aufnehmen" gewählt wurde.
 func documentFromService(ctx context.Context, service documentReadService, id string, rec *issued.Store) (*mcp.CallToolResult, getDocumentOutput, error) {
 	doc, err := service.Get(ctx, id)
 	if err != nil {
@@ -867,7 +892,7 @@ func documentFromService(ctx context.Context, service documentReadService, id st
 	if err != nil {
 		return nil, getDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetDocument, err)
 	}
-	rec.Record(ctx, out.ID)
+	rec.Record(ctx, id)
 	return result, out, nil
 }
 

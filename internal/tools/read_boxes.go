@@ -204,10 +204,10 @@ func getBoxHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) m
 // boxFromService is getBoxHandler's logic below client resolution — split
 // out for the same testability reason boxesFromService is.
 //
-// rec records ONLY detail.ID — the box id, the one the caller actually
-// named in getBoxInput.ID — once the full result is built. service.Get
-// cannot fail after this point, so recording right before the return is
-// already the success-only point.
+// rec records ONLY id — the box id the caller actually named in
+// getBoxInput.ID — once the full result is built. service.Get cannot
+// fail after this point, so recording right before the return is already
+// the success-only point.
 //
 // WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
 // verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): dieser
@@ -216,25 +216,48 @@ func getBoxHandler(p *clientpool.Pool, logger *slog.Logger, rec *issued.Store) m
 // abgelegten Dokumente — boxDetail's eigener Doc-Kommentar: "a caller
 // wanting a document's own detail calls get_document with the returned
 // ID"). Die neue Linie aus dem Audit lautet aber "erfasst wird NUR die
-// ID, die der Aufrufer im Parameter genannt hat" — detail.ID ist genau
-// das (die von get_box(id) angeforderte Box), detail.DocumentIDs dagegen
-// NICHT: der Aufrufer hat keines dieser Dokumente einzeln genannt, sie
-// kommen als NEBENPRODUKT der Box-Antwort mit, exakt dasselbe Muster wie
-// get_document's TagIDs (read.go, documentFromService's eigener
-// Doc-Kommentar) und list_document_conversations' Konversations-IDs
+// ID, die der Aufrufer im Parameter genannt hat" — detail.DocumentIDs
+// erfüllt das nicht: der Aufrufer hat keines dieser Dokumente einzeln
+// genannt, sie kommen als NEBENPRODUKT der Box-Antwort mit, exakt
+// dasselbe Muster wie get_document's TagIDs (read.go,
+// documentFromService's eigener Doc-Kommentar) und
+// list_document_conversations' Konversations-IDs
 // (documentConversationsFromService's eigener Doc-Kommentar) — beide
 // ebenfalls seit ADR-0019 NICHT mehr aufgenommen. Ein Aufrufer, der ein
 // per get_box zurückgegebenes Dokument als gültiges Ziel für ein
 // späteres destruktives Werkzeug braucht (z. B. box_add_document/
 // box_remove_document, write_boxes.go), muss es gezielt per get_document
 // nachladen.
+//
+// WICHTIG (Nachprüfungs-Befund, Codex-Review nach ADR-0019): rec.Record
+// lief hier zuvor mit detail.ID (boxDetailOf's b.ID-Feld — die ID aus
+// der ANTWORT), NICHT mit id (der vom Aufrufer im Parameter genannten).
+// Der frühere Kommentar oben behauptete, "detail.ID ist genau das (die
+// von get_box(id) angeforderte Box)" — das gilt nur, solange der fremde
+// Fileee-Server für jede erfolgreich aufgelöste id ein identisches
+// "id"-Feld im JSON-Body zurückliefert. go-fileee selbst kanonisiert
+// nichts (boxReadService.Get dekodiert den Response-Body direkt in
+// *fileee.Box, ohne id vorher umzuschreiben oder das dekodierte ID-Feld
+// gegen id zu vergleichen) — eine Divergenz ist von hier aus also nicht
+// ausschließbar. Divergierten beide, hätte diese Funktion die
+// tatsächlich angeforderte id NIE gewhitelistet und stattdessen eine ID
+// aufgenommen, die der Aufrufer nie genannt hat — die exakte Umkehrung
+// der oben zitierten Linie. id selbst erfüllt beide Hälften unabhängig
+// von detail.ID: der Aufrufer hat sie im Parameter genannt, und der
+// erfolgreiche, fehlerfrei dekodierte service.Get-Aufruf IST die
+// Bestätigung, dass sie bei diesem Server auf eine existierende, lesbare
+// Entität auflöst. Dieselbe Korrektur, aus demselben Fund, trifft
+// getFromService (read_generic.go) und documentFromService (read.go)
+// gleichermaßen — siehe deren eigene Doc-Kommentare für die volle
+// Begründung, warum weder "nur detail.ID" noch "beide IDs aufnehmen"
+// gewählt wurde.
 func boxFromService(ctx context.Context, service boxReadService, id string, rec *issued.Store) (*mcp.CallToolResult, boxDetail, error) {
 	box, err := service.Get(ctx, id)
 	if err != nil {
 		return nil, boxDetail{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetBox, err)
 	}
 	detail := boxDetailOf(box)
-	rec.Record(ctx, detail.ID)
+	rec.Record(ctx, id)
 	return &mcp.CallToolResult{}, detail, nil
 }
 

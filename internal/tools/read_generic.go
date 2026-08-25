@@ -142,34 +142,30 @@ type readServiceDescriptor[T any, S any] struct {
 	//		return &fileee.Contact{LastName: marker}
 	//	}
 	PoisonProbe func(marker string) *T
-	// IDOf liefert die Fileee-eigene ID einer Entität. NUR noch
-	// getFromService ruft es tatsächlich auf und meldet damit an rec
-	// (issued.Store), was dieser EINE, vom Aufrufer per ID angeforderte
-	// Treffer war (ADR-0013 Punkt 3; ADR-0019, Verschärfung nach dem
-	// Sicherheits-Audit) — erst diese Meldung erlaubt einem späteren
-	// destruktiven Werkzeug, per issued.Store.Check zu prüfen, ob eine ID
-	// wirklich über einen echten, GEZIELTEN Lese-Schritt herausging, statt
-	// z. B. nur im Text eines fremden Dokuments aufgetaucht zu sein.
+	// IDOf liefert die Fileee-eigene ID einer Entität.
 	//
-	// WICHTIG (Verschärfung, ADR-0019): listFromService ruft d.IDOf seit
-	// dem Sicherheits-Audit NICHT mehr auf — ein einziger list_*-Aufruf
-	// (Standardgrenze 100, paginierbar bis zum Deckel von 1000) hätte
-	// sonst praktisch jede ID im Konto in die Whitelist heben können,
-	// ohne dass der Aufrufer sie je einzeln genannt hätte. Der erste Satz
-	// oben ("IDOf liefert die Fileee-eigene ID einer Entität") beschreibt
-	// deshalb bewusst nur noch den EINEN verbleibenden Aufrufer,
-	// getFromService — nicht mehr "beide generischen Handler" wie vor
-	// dieser Verschärfung.
+	// WICHTIG (Nachprüfungs-Befund, Codex-Review nach ADR-0019):
+	// getFromService ruft d.IDOf SEIT DIESEM FIX NICHT MEHR AUF — es
+	// nahm zuvor entry's ANTWORT-ID auf (d.IDOf(entry)) statt der vom
+	// Aufrufer im Parameter genannten id, und hätte bei einer Divergenz
+	// zwischen beiden (der fremde Fileee-Server liefert theoretisch kein
+	// Kanonisierungsversprechen für entry.ID gegenüber der angefragten
+	// id) genau die falsche ID gewhitelistet — siehe getFromService's
+	// eigenen Doc-Kommentar für die volle Begründung. rec.Record läuft
+	// dort seither mit id, nicht mit d.IDOf(entry).
 	//
-	// Pflichtfeld — anders als UntrustedLine/PoisonProbe gibt es keinen
-	// Fall, in dem ein T legitim keine ID hätte, UND getFromService
-	// braucht es weiterhin unbedingt. Ein nil IDOf fällt beim
-	// tatsächlichen Aufruf sofort als Nil-Pointer-Panik auf
-	// (getFromService ruft es ungeprüft auf); der billige Teil des
-	// Schutzes davor ist der Guardrail-Test in read_generic_test.go
-	// (Aufgabe 4, geht über jeden von RegisterAll tatsächlich
-	// angemeldeten Deskriptor), der teurere — auch die handgeschriebenen
-	// Werkzeuge — folgt in issued_coverage_test.go (Aufgabe 5).
+	// IDOf bleibt hier trotzdem ein Pflichtfeld (mustHaveIDOf, unverändert
+	// durchgesetzt) — aus demselben Grund, den syncDescriptor.IDOf's
+	// eigener Doc-Kommentar (read_sync.go) für seinen bereits länger
+	// laufenden Aufrufer-losen Zustand nennt: es hält die Deskriptor-Form
+	// über alle generischen Konstruktoren hinweg einheitlich, und ein
+	// vergessenes IDOf bliebe ohne diesen Guard bis zum ersten realen
+	// Aufruf unsichtbar (mustHaveIDOf, unten). d.IDOf hat für
+	// readServiceDescriptor damit — wie für syncDescriptor bereits seit
+	// der ADR-0019-Verschärfung — KEINEN Aufrufer mehr zur Laufzeit; nur
+	// die Deskriptor-Konstruktoren setzen es weiterhin, und
+	// TestAlleGenerischenDeskriptorenHabenEinIDOf prüft weiterhin, dass
+	// keiner es vergisst.
 	IDOf func(*T) string
 }
 
@@ -237,11 +233,17 @@ type genericGetOutput[S any] struct {
 // that was genericListHandler's own call (Issue #70, no recover() in the SDK
 // dispatch path); mustHaveIDOf turns that into a registration-time panic
 // instead, matching how mustNotLeakUntrustedLine already treats a comparable
-// descriptor defect. Since ADR-0019's whitelist tightening below,
-// genericListHandler no longer calls d.IDOf at all — the same risk now sits
-// exclusively in genericGetHandler's own d.IDOf(entry) call, and
-// mustHaveIDOf still guards it exactly the same way, at the same single
-// registration point, for both handlers' sake.
+// descriptor defect. Since ADR-0019's whitelist tightening, genericListHandler
+// no longer calls d.IDOf at all; since a later fix (the same review round
+// that produced this comment — see getFromService's own doc comment,
+// readServiceDescriptor.IDOf's own doc comment), genericGetHandler's
+// getFromService no longer calls it either — rec.Record there runs with the
+// caller's requested id, not d.IDOf(entry). d.IDOf has, like
+// syncDescriptor.IDOf (read_sync.go) already did before it, no runtime
+// caller left at all; mustHaveIDOf still guards its non-nilness the same
+// way, at the same single registration point, purely to keep the
+// descriptor's shape consistent and to catch an author who forgets to set
+// it.
 //
 // rec is threaded straight through to genericGetHandler ONLY, never built
 // here — the same pattern logger establishes: RegisterAll (read.go) owns
@@ -580,10 +582,55 @@ func genericGetHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d 
 // getFromService is genericGetHandler's logic below client resolution —
 // split out for the same testability reason as listFromService.
 //
-// rec.Record (Aufgabe 4) runs with d.IDOf(entry) only AFTER the response is
-// fully, successfully built — the same "never on an error path" rule
+// rec.Record (Aufgabe 4) runs only AFTER the response is fully,
+// successfully built — the same "never on an error path" rule
 // listFromService's own doc comment states, so a Get call whose response
 // never actually reached the caller can never mark its id as issued.
+//
+// WICHTIG (Nachprüfungs-Befund, Codex-Review nach ADR-0019): Record läuft
+// hier mit dem vom Aufrufer im Parameter genannten id, NICHT mehr mit
+// d.IDOf(entry) — der ID aus der ANTWORT. Vor diesem Fix nahm getFromService
+// entry's eigene ID auf, nicht die angeforderte; d.IDOf(entry) blieb dabei
+// weiterhin ein Pflichtfeld für mustHaveIDOf (readServiceDescriptor.IDOf's
+// eigener Doc-Kommentar), nur getFromService selbst ruft es seither nicht
+// mehr auf.
+//
+// Der Unterschied ist mehr als kosmetisch: service.Get(ctx, id) fragt
+// service.inner.Get intern per HTTP GET .../rest/<id> ab (go-fileee,
+// restService[T].Get) und dekodiert den Response-Body direkt in T — es gibt
+// dort KEINE clientseitige Kanonisierung, die id vor dem Request umschreiben
+// würde. Trotzdem ist entry.ID (das Feld, das der FREMDE Fileee-Server im
+// JSON-Body zurückgibt) nicht per Konstruktion identisch mit id: bestätigt
+// wird nur, dass die vom Aufrufer genannte id bei DIESEM Server auf eine
+// existierende, lesbare Entität auflöst — nicht, dass ihr "id"-Feld in der
+// Antwort exakt derselbe String ist (z. B. bei serverseitiger
+// Groß-/Kleinschreibungs-Normalisierung oder einem Alias/einer Dublette).
+// Divergiert id von entry's tatsächlicher ID, hätte d.IDOf(entry) also eine
+// ID aufgenommen, die der Aufrufer NIE genannt hat — und Check hätte
+// ausgerechnet die tatsächlich angeforderte id als "nicht ausgeliefert"
+// abgelehnt: die exakte Umkehrung von ADR-0019s Linie "erfasst wird nur die
+// ID, die der Aufrufer selbst im Parameter genannt hat UND die der Server
+// als existierend und lesbar bestätigt hat" (issued-Paket-Doc-Kommentar).
+//
+// id selbst erfüllt beide Hälften dieser Linie unabhängig davon, was
+// entry.ID enthält: der Aufrufer hat sie im Parameter genannt (erste
+// Hälfte), und der erfolgreiche, fehlerfrei dekodierte service.Get-Aufruf
+// IST die Bestätigung, dass sie bei diesem Server auf eine existierende,
+// lesbare Entität auflöst (zweite Hälfte) — unabhängig vom exakten Wert
+// von entry.ID. Dieselbe Begründung trägt bereits documentFromService
+// (read.go) und boxFromService (read_boxes.go), beide seit demselben Fund
+// ebenfalls auf id statt auf die jeweilige Antwort-ID umgestellt.
+//
+// Bewusst NICHT gewählt: BEIDE IDs aufnehmen, falls sie divergieren. Das
+// würde entry.ID als NEBENPRODUKT der Antwort in die Whitelist heben, ohne
+// dass der Aufrufer sie je einzeln genannt hätte — exakt das Muster, das
+// dieselbe Verschärfung für TagIDs/DocumentIDs/Konversations-IDs bereits
+// ausschließt (documentFromService's/boxFromService's eigene
+// Doc-Kommentare). Ob eine Divergenz bei diesem fremden Server überhaupt
+// vorkommt, ist von hier aus nicht belegbar (go-fileee selbst kanonisiert
+// nichts) — die gewählte Variante bleibt aber auch dann korrekt, wenn sie
+// künftig doch vorkäme, ohne eine zusätzliche, vom Aufrufer nie genannte ID
+// zu whitelisten.
 func getFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], id string, rec *issued.Store) (*mcp.CallToolResult, genericGetOutput[S], error) {
 	entry, err := service.Get(ctx, id)
 	if err != nil {
@@ -595,7 +642,7 @@ func getFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T
 	if err != nil {
 		return nil, genericGetOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.GetName, err)
 	}
-	rec.Record(ctx, d.IDOf(entry))
+	rec.Record(ctx, id)
 	return result, out, nil
 }
 
