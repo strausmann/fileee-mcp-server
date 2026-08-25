@@ -142,6 +142,80 @@ Werkzeuge herum ergänzt werden muss.
   zweiten Parameter oder getrennte Namensräume je Entitätstyp), statt diese Eigenschaft
   stillschweigend fortzuschreiben.
 
+## Nachtrag (2026-08-25): Nur gezielte Einzelabrufe erfassen
+
+**Betreiber-Entscheidung, direkte Folge eines Sicherheits-Audits.** Dieser Nachtrag ändert NICHT
+die Entscheidung oben (welche Werkzeuggruppen — `destructive`/`share` — die Whitelist per `Check`
+prüfen) — er ändert die ANDERE Seite derselben Mechanik: welche Lese-Werkzeuge überhaupt eine ID
+in die Whitelist AUFNEHMEN (`Record`). Kontext und Entscheidung oben bleiben unverändert stehen,
+als historisches Protokoll (siehe `docs/adr/README.md`, „Beim Ablösen nur den Header anfassen") —
+dieser Abschnitt ergänzt, statt zu überschreiben.
+
+### Befund
+
+Zwei unabhängige Hunter im Sicherheits-Audit fanden, dass die Erfassung vor diesem Nachtrag
+praktisch wertlos war: Ein einziger `list_documents`-Aufruf hebt bis zu 100 IDs in die Whitelist
+(Standardgrenze), paginierbar bis zum Deckel von 1000 je Identität (`IssuedIDMaxPerIdentity`);
+`sync_documents` nimmt beim ersten Aufruf (kein Cursor) gleich den kompletten aktuellen Bestand
+auf; `list_boxes`/`get_box` waren vollständig ungedeckelt. Bei einem Konto mit ein paar hundert
+Dokumenten macht das praktisch **jede** ID im Konto zu einer gültigen. Der Angreifer muss die
+Ziel-ID nicht mehr kennen — er muss das Modell nur zum Auflisten bringen. Die Zusage „nur was
+echt gelesen wurde" degenerierte damit zu „fast alles im Konto".
+
+### Entscheidung (Ergänzung)
+
+**Nur gezielte Einzelabrufe nehmen eine ID in die Whitelist auf.** Ein Werkzeug, das EINE Entität
+anhand einer VOM AUFRUFER GENANNTEN ID liefert (ein `get_*`-Werkzeug), nimmt diese eine ID auf.
+Ein Werkzeug, das MEHRERE Entitäten liefert, ohne dass der Aufrufer sie einzeln genannt hat
+(`list_*`, `search_*`, `sync_*`), nimmt KEINE mehr auf — unabhängig davon, ob es zur `destructive`/
+`share`-Prüfung selbst gehört oder nur Vorstufe dafür ist (z. B. `list_documents` als
+Entdeckungsschritt vor `get_document`).
+
+Konkret, in `internal/tools`:
+
+- **Nehmen weiterhin auf** (unverändert): `get_document`, `get_box`, und der generische
+  Einzelabruf-Pfad (`getFromService`, `read_generic.go`) hinter `registerReferenceTools`/
+  `registerPeopleTools` — jeweils NUR die eine, per `id`-Parameter angeforderte ID.
+- **Nehmen seit diesem Nachtrag NICHT MEHR auf**: `list_documents`, `search_documents`,
+  `sync_documents`, `list_document_conversations`, `list_boxes`, sowie der generische
+  Listen-Pfad (`listFromService`) und alle sieben generischen Sync-Werkzeuge
+  (`syncFromService`/`registerSyncTools`).
+- **Zwei Grenzfälle, nach derselben Linie entschieden** — beide waren zuvor Nebenprodukte, die der
+  Aufrufer nie einzeln genannt hatte, und wurden trotzdem aufgenommen:
+  - `get_document` nahm bislang zusätzlich `TagIDs` auf (Tags des Dokuments, nicht vom Aufrufer
+    angefordert) — das behebt genau die im „Negativ"-Abschnitt oben offen gelassene
+    Kollisionsfrage („Der Store ist eine flache Menge ohne Entitätstyp") für diesen konkreten
+    Fall, indem `TagIDs` gar nicht mehr in die Menge gelangen — nicht, indem `Check` typbewusst
+    wird (das bleibt eine offene Frage für den Rest der flachen Menge).
+  - `get_box` nahm bislang zusätzlich `DocumentIDs` auf (die im Karton abgelegten Dokumente,
+    ebenfalls nicht vom Aufrufer angefordert) — dieselbe Begründung, dasselbe Ergebnis.
+
+### Der bewusst gezahlte Preis
+
+Wer mehrere konkrete Treffer als gültige Ziele für ein späteres `destructive`/`share`-Werkzeug
+braucht, muss sie nach einem `list_*`/`search_*`/`sync_*`-Aufruf einzeln per Einzelabruf (z. B.
+`get_document`) nachladen — ein zusätzlicher Schritt pro ID. `internal/issued.errNotIssuedFor`
+nennt genau diesen Weg in seiner Fehlermeldung.
+
+### Was der Mechanismus weiterhin NICHT leistet
+
+Unverändert gegenüber dem „Negativ"-Absatz oben, der das für die ursprüngliche Fassung bereits
+festhielt: Eine Injektion kann weiterhin „ruf erst `get_document(X)` auf, dann nutze X" im Text
+eines fremden Dokuments verlangen — der Schutz erzwingt nur, dass X wirklich im Konto des
+Aufrufers existiert und für ihn lesbar ist, und macht den Angriff dadurch mehrschrittig statt
+einschrittig, mehr nicht. Dieser Nachtrag verengt lediglich, WELCHE Aufrufe eine ID überhaupt in
+die Whitelist heben können — er schafft keinen neuen Schutz gegen den mehrschrittigen Weg.
+
+### Guardrail
+
+`internal/tools/issued_coverage_test.go` (`TestJedesWerkzeugDasIDsAusliefertMerktSieAuch`) und
+`internal/tools/read_generic_test.go`
+(`TestGetFromServiceMerktDenGezieltenEinzelabrufListFromServiceMerktNichts`) prüfen seit diesem
+Nachtrag BEIDE Richtungen: Einzelabrufe MÜSSEN aufnehmen, Listen-/Such-/Sync-Werkzeuge DÜRFEN
+NICHT. Per Gegenprobe belegt (beide Richtungen): `Record` aus `get_document` entfernt → Test
+schlägt fehl und nennt `get_document`; `Record` erneut in `list_documents` eingebaut → Test
+schlägt fehl und nennt `list_documents`.
+
 ## Referenzen
 
 - [ADR-0013](0013-prompt-injection-schutz.md) — Punkt 3 (Herkunft der Whitelist), Abschnitt
