@@ -1,3 +1,29 @@
+## [0.8.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.7.0...v0.8.0) (2026-08-25)
+
+### Features
+
+* **config:** add and enforce issued-id ttl and per-identity cap ([e5e15f6](https://github.com/strausmann/fileee-mcp-server/commit/e5e15f6d05b66872d2e2330ad67434b2ba0917cd))
+* **issued:** expire recorded ids by age and per-identity cap ([e61b6b0](https://github.com/strausmann/fileee-mcp-server/commit/e61b6b0096123a0ca3aab669d394f6548b62f8b2))
+* **issued:** record ids handed out per verified identity ([f6f7ba6](https://github.com/strausmann/fileee-mcp-server/commit/f6f7ba65fd93c6f4eb994f35dbcd42b5f86d2c19))
+* **tools:** record ids handed out by the document read tools ([0ba9691](https://github.com/strausmann/fileee-mcp-server/commit/0ba96918edd9e98b776e6f7c9c1374480d659958))
+* **tools:** record ids handed out by the generic read handlers ([b884d1f](https://github.com/strausmann/fileee-mcp-server/commit/b884d1f062e4bf200b4c227fe9aeab687657faee))
+
+### Bug Fixes
+
+* **ci:** umlaut-check case-insensitiv machen, echte Luecke schliessen ([9f4523f](https://github.com/strausmann/fileee-mcp-server/commit/9f4523f55f664a8547bba63d0b076be37b62f2b4))
+* **ci:** umlaut-check je Treffer statt je Zeile pruefen, Wortgrenzen tokenbasiert ([6cd5acc](https://github.com/strausmann/fileee-mcp-server/commit/6cd5accda010db52564f2f403a8b4fc13cd96bb6)), closes [#75](https://github.com/strausmann/fileee-mcp-server/issues/75)
+* **ci:** versalien nicht als ersatzschreibung anmahnen ([0869897](https://github.com/strausmann/fileee-mcp-server/commit/0869897862a6245d8dee63e449607658abea8f17))
+* **ci:** wortgrenzen im umlaut-check portabel machen ([8d4f617](https://github.com/strausmann/fileee-mcp-server/commit/8d4f617881b1f67b2dbea6d3ca3836af9d26e80b))
+* **ci:** wortliste nach versehentlicher ersetzung wiederherstellen ([1892317](https://github.com/strausmann/fileee-mcp-server/commit/189231708e95c165f560223416af92dddd2e70d5))
+* **issued:** angeforderte ID erfassen statt der Antwort-ID ([c8f7b94](https://github.com/strausmann/fileee-mcp-server/commit/c8f7b942650f7b7b4051f0f7cf711d5e7b112dc2)), closes [#75](https://github.com/strausmann/fileee-mcp-server/issues/75) [#75](https://github.com/strausmann/fileee-mcp-server/issues/75)
+* **issued:** nil-empfaenger sicher machen, logger statt slog.SetDefault durchreichen ([43b61b8](https://github.com/strausmann/fileee-mcp-server/commit/43b61b86320da50b54588d60c1a34030bc1a08cd)), closes [#75](https://github.com/strausmann/fileee-mcp-server/issues/75)
+* **tools:** frische Sitzung je Guardrail-Subtest statt geteiltem Zustand ([5c44bc0](https://github.com/strausmann/fileee-mcp-server/commit/5c44bc0f7e827250c73c9f3bf7642c897c58e3eb))
+* **tools:** generische werkzeuge im guardrail ableiten statt auflisten ([395bf06](https://github.com/strausmann/fileee-mcp-server/commit/395bf0662fc43d2276bba987a781189abd182f52))
+* **tools:** get_document_pdf in die ID-Whitelist aufnehmen ([7f14e7d](https://github.com/strausmann/fileee-mcp-server/commit/7f14e7d8f550c1f0bc9c3f990879f6ad24536124))
+* **tools:** jedes gemountete werkzeug muss triagiert sein ([321fbfe](https://github.com/strausmann/fileee-mcp-server/commit/321fbfe4bc7559e237ea2205cd8fad801ed8ba5f))
+* **tools:** nil IDOf paniken lassen statt nur per Test abzusichern ([b0f814e](https://github.com/strausmann/fileee-mcp-server/commit/b0f814e697ed0da1ceb1be72e45c633b81f15f17)), closes [#70](https://github.com/strausmann/fileee-mcp-server/issues/70)
+* **tools:** nur gezielte Einzelabrufe in die id-whitelist aufnehmen ([06f8012](https://github.com/strausmann/fileee-mcp-server/commit/06f80121133e7145f163030345a6431fe077fe99))
+
 ## [0.7.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.6.0...v0.7.0) (2026-08-24)
 
 ### Features
