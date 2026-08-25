@@ -6,7 +6,7 @@
 **Ersetzt durch:** —
 **Überarbeitet:** [ADR-0010](0010-idp-agnostische-konfiguration.md) — Punkt 3 (`MCP_OIDC_CAPABILITY_CLAIM` entfällt), [ADR-0013](0013-prompt-injection-schutz.md) — Punkt 4 (Funktionsumfang ist nicht mehr die primäre Absicherung, siehe dortiger Nachtrag)
 **Überarbeitet durch:** —
-**Verwandt:** [ADR-0012](0012-multi-account-mapping.md), [ADR-0015](0015-gangway-als-unterbau.md)
+**Verwandt:** [ADR-0012](0012-multi-account-mapping.md), [ADR-0015](0015-gangway-als-unterbau.md), [ADR-0020](0020-instanz-beschreibung.md)
 
 ## Kontext
 
