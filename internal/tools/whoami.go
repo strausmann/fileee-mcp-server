@@ -1,6 +1,7 @@
 // whoami.go carries this server's whoami meta-tool — reports the caller's
-// verified identity, the fileee account it maps to, and the server's
-// account mode, without ever touching Fileee itself.
+// verified identity, the fileee account it maps to, the server's account
+// mode, and — if configured — this instance's description, without ever
+// touching Fileee itself.
 package tools
 
 import (
@@ -26,6 +27,11 @@ type ServerInfo struct {
 	// Mode is whoami's own fact: the server's account mode ("single" /
 	// "multi").
 	Mode string
+	// InstanceDescription describes in prose which environment and which
+	// fileee account this instance serves. It comes from
+	// MCP_INSTANCE_DESCRIPTION and is empty when nothing is configured
+	// there.
+	InstanceDescription string
 	// MaxUploadBytes is upload_document's own fact: the configured
 	// upload size ceiling (FILEEE_MAX_UPLOAD_BYTES, config.go,
 	// Config.MaxUploadBytes), enforced by uploadDocumentHandler
@@ -52,11 +58,16 @@ type whoamiAccount struct {
 }
 
 // whoamiOutput is whoami's structured result: the verified identity subject,
-// the mapped account, and the server's account mode.
+// the mapped account, the server's account mode, and — if configured —
+// this instance's description.
 type whoamiOutput struct {
 	Identity string        `json:"identity"`
 	Account  whoamiAccount `json:"account"`
 	Mode     string        `json:"mode"`
+	// InstanceDescription carries omitempty: when nothing is configured,
+	// the field is absent from the response entirely, rather than
+	// appearing as an empty string.
+	InstanceDescription string `json:"instanceDescription,omitempty"`
 }
 
 // whoamiResultFor is whoami's logic below identity resolution — split out of
@@ -66,7 +77,7 @@ type whoamiOutput struct {
 // It never returns the password or TOTP seed, and an unmapped subject is a
 // normal result (Configured:false), not an error.
 func whoamiResultFor(ctx context.Context, p *clientpool.Pool, info ServerInfo, id *identity.Identity) (whoamiOutput, error) {
-	out := whoamiOutput{Identity: id.Subject, Mode: info.Mode}
+	out := whoamiOutput{Identity: id.Subject, Mode: info.Mode, InstanceDescription: info.InstanceDescription}
 
 	username, err := p.AccountUsername(ctx, id)
 	if err != nil {
@@ -116,9 +127,13 @@ func registerWhoami(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *
 			"fileee account it maps to on this server, plus the server's account mode. Returns " +
 			"the caller's identity subject, whether a fileee account is configured for it and " +
 			"— if so — that account's username (its fileee login email; never the password or " +
-			"two-factor secret), and the account mode (single or multi). Use it to confirm who " +
-			"the server thinks you are. It makes no call to fileee and reflects only what this " +
-			"server already knows about the calling identity.",
+			"two-factor secret), and the account mode (single or multi). If the operator has " +
+			"configured MCP_INSTANCE_DESCRIPTION, the response also includes instanceDescription " +
+			"— prose describing which environment and which fileee account this instance serves, " +
+			"useful for telling apart several instances connected at once; the field is absent " +
+			"when nothing is configured. Use it to confirm who the server thinks you are. It " +
+			"makes no call to fileee and reflects only what this server already knows about the " +
+			"calling identity.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Who am I"},
 	}, getWhoamiHandler(p, info, logger))
 }

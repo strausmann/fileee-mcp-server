@@ -6,7 +6,7 @@
 **Ersetzt durch:** —
 **Überarbeitet:** —
 **Überarbeitet durch:** —
-**Verwandt:** [ADR-0013](0013-prompt-injection-schutz.md)
+**Verwandt:** [ADR-0013](0013-prompt-injection-schutz.md), [ADR-0020](0020-instanz-beschreibung.md)
 
 ## Kontext
 

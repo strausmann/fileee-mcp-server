@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/strausmann/fileee-mcp-server/internal/diag"
 	"github.com/strausmann/gangway/origin"
@@ -48,6 +49,13 @@ const (
 // defaultAccountKey ist der Konto-Key im single-Modus. Der Pool behandelt
 // beide Modi damit identisch — single ist ein Pool mit genau einem Eintrag.
 const defaultAccountKey = "default"
+
+// maxInstanceDescriptionRunes begrenzt MCP_INSTANCE_DESCRIPTION. Die Grenze
+// dient nicht der Sicherheit — der Wert ist Betreiber-Konfiguration —, sondern
+// verhindert, dass eine versehentlich falsch belegte Variable (etwa ein
+// hineinkopierter Dateiinhalt) den Kontext jeder Sitzung flutet, ohne beim
+// Start aufzufallen. Gezählt werden ZEICHEN, nicht Bytes.
+const maxInstanceDescriptionRunes = 2000
 
 // accountKeyMuster begrenzt Konto-Keys auf Zeichen, die als Dateiname sicher
 // sind. Ohne diese Pruefung waere ein Key wie "../../etc/x" ein Schreibzugriff
@@ -112,6 +120,19 @@ type Config struct {
 
 	AccountMode AccountMode
 	Accounts    []Account
+
+	// InstanceDescription beschreibt in Prosa, welche Umgebung und welches
+	// Fileee-Konto diese Instanz bedient — etwa "Testumgebung, Wegwerfdaten"
+	// gegenüber "produktives Archiv, echte Verträge". Der Wert wird über das
+	// instructions-Feld der initialize-Antwort und über whoami ausgespielt.
+	//
+	// Er stammt aus der Betreiber-Konfiguration (Infisical), nie aus einer
+	// Aufrufereingabe und nie aus einem Dokumentinhalt — deshalb ist er keine
+	// Fläche für eingeschleuste Anweisungen.
+	//
+	// Leer bedeutet: kein instructions-Feld, kein whoami-Feld. Der Server
+	// verhält sich dann exakt wie vor Einführung dieser Variablen.
+	InstanceDescription string
 
 	// MaxUploadBytes wird seit dem write-tools-Increment (Task 5,
 	// internal/tools/write_documents.go, uploadDocumentHandler) tatsaechlich
@@ -267,6 +288,7 @@ func LoadConfig(env Env) (*Config, error) {
 		SessionDir:           orDefault(env("FILEEE_SESSION_DIR"), "/home/nonroot/sessions"),
 		ClientIPHeaderMode:   origin.HeaderMode(orDefault(env("FILEEE_CLIENT_IP_HEADER_MODE"), string(origin.ModeCFConnectingIP))),
 		LogLevel:             diag.Level(orDefault(env("FILEEE_LOG_LEVEL"), string(diag.LevelInfo))),
+		InstanceDescription:  strings.TrimSpace(env("MCP_INSTANCE_DESCRIPTION")),
 	}
 
 	switch cfg.ClientIPHeaderMode {
@@ -280,6 +302,11 @@ func LoadConfig(env Env) (*Config, error) {
 	default:
 		return nil, fmt.Errorf("FILEEE_LOG_LEVEL = %q — erlaubt sind %q, %q",
 			cfg.LogLevel, diag.LevelInfo, diag.LevelDebug)
+	}
+
+	if n := utf8.RuneCountInString(cfg.InstanceDescription); n > maxInstanceDescriptionRunes {
+		return nil, fmt.Errorf("MCP_INSTANCE_DESCRIPTION ist %d Zeichen lang — erlaubt sind höchstens %d",
+			n, maxInstanceDescriptionRunes)
 	}
 
 	switch cfg.AuthMode {

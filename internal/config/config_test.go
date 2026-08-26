@@ -1115,3 +1115,79 @@ func TestLoadConfigSubjectClaimDefaultProProvider(t *testing.T) {
 		}
 	})
 }
+
+func TestInstanceDescriptionWirdGelesenUndBegrenzt(t *testing.T) {
+	basis := map[string]string{
+		"MCP_AUTH_MODE":                  "oidc",
+		"MCP_OIDC_PROVIDER":              "generic",
+		"MCP_OIDC_ISSUER":                "https://idp.example.invalid",
+		"MCP_OIDC_CLIENT_ID":             "fileee-mcp-server",
+		"MCP_RESOURCE_URL":               "https://mcp.example.invalid/mcp",
+		"MCP_ALLOWED_SUBJECTS":           "test-subject",
+		"FILEEE_ALLOWED_ORIGIN_PREFIXES": "0.0.0.0/0",
+		"FILEEE_USERNAME":                "test@example.invalid",
+		"FILEEE_PASSWORD":                "kein-echtes-passwort",
+	}
+	umgebung := func(zusatz map[string]string) func(string) string {
+		werte := map[string]string{}
+		for k, v := range basis {
+			werte[k] = v
+		}
+		for k, v := range zusatz {
+			werte[k] = v
+		}
+		return func(schluessel string) string { return werte[schluessel] }
+	}
+
+	t.Run("nicht gesetzt ergibt einen leeren Wert", func(t *testing.T) {
+		cfg, err := LoadConfig(umgebung(nil))
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.InstanceDescription != "" {
+			t.Errorf("InstanceDescription = %q, erwartet leer", cfg.InstanceDescription)
+		}
+	})
+
+	t.Run("gesetzter Wert kommt unverändert an", func(t *testing.T) {
+		// Umlaute und ein Zeilenumbruch müssen den Weg überstehen.
+		will := "Produktives Archiv.\nSchreibende Aufrufe nur auf ausdrückliche Anweisung."
+		cfg, err := LoadConfig(umgebung(map[string]string{"MCP_INSTANCE_DESCRIPTION": will}))
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.InstanceDescription != will {
+			t.Errorf("InstanceDescription = %q, erwartet %q", cfg.InstanceDescription, will)
+		}
+	})
+
+	t.Run("zu langer Wert bricht den Start ab", func(t *testing.T) {
+		_, err := LoadConfig(umgebung(map[string]string{
+			"MCP_INSTANCE_DESCRIPTION": strings.Repeat("x", maxInstanceDescriptionRunes+1),
+		}))
+		if err == nil {
+			t.Fatal("LoadConfig gab keinen Fehler, erwartet wurde einer")
+		}
+		if !strings.Contains(err.Error(), "MCP_INSTANCE_DESCRIPTION") {
+			t.Errorf("Fehlermeldung nennt die Variable nicht: %v", err)
+		}
+		if !strings.Contains(err.Error(), "2000") {
+			t.Errorf("Fehlermeldung nennt die Grenze nicht: %v", err)
+		}
+	})
+
+	t.Run("die Grenze zählt Zeichen, nicht Bytes", func(t *testing.T) {
+		// 2000 Umlaute sind 4000 Bytes. Würde len() statt
+		// utf8.RuneCountInString() zählen, schlüge dieser Fall
+		// fälschlich fehl.
+		cfg, err := LoadConfig(umgebung(map[string]string{
+			"MCP_INSTANCE_DESCRIPTION": strings.Repeat("ä", maxInstanceDescriptionRunes),
+		}))
+		if err != nil {
+			t.Fatalf("LoadConfig lehnte 2000 Zeichen ab: %v", err)
+		}
+		if cfg.InstanceDescription == "" {
+			t.Error("InstanceDescription ist leer, erwartet wurden 2000 Zeichen")
+		}
+	})
+}
