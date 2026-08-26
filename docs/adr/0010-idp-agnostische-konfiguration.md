@@ -6,7 +6,7 @@
 **Ersetzt durch:** —
 **Überarbeitet:** —
 **Überarbeitet durch:** [ADR-0016](0016-anbieter-namensraeume-statt-roher-oidc-parameter.md) — überarbeitet Punkt 2: anbieterspezifisch ist ab dort die Konfigurations-Oberfläche (`MCP_OIDC_PROVIDER` mit eigenem Variablen-Namensraum je Anbieter), die Token-Prüfung bleibt anbieterneutral. Alle übrigen Punkte dieses ADR gelten unverändert. [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md) — überarbeitet Punkt 3: `MCP_OIDC_CAPABILITY_CLAIM` entfällt (Funktionsumfang wird nicht mehr über Claims/Capability-Gruppen gesteuert).
-**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0012](0012-multi-account-mapping.md), [ADR-0015](0015-gangway-als-unterbau.md)
+**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0012](0012-multi-account-mapping.md), [ADR-0015](0015-gangway-als-unterbau.md), [ADR-0014](0014-self-service-onboarding.md)
 
 ## Kontext
 

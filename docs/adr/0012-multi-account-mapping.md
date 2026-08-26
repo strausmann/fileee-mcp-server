@@ -6,7 +6,7 @@
 **Ersetzt durch:** —
 **Überarbeitet:** —
 **Überarbeitet durch:** [ADR-0015](0015-gangway-als-unterbau.md)
-**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md), [go-fileee ADR-0005](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0005-schonender-betrieb-rate-limiting.md)
+**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md), [ADR-0014](0014-self-service-onboarding.md), [go-fileee ADR-0005](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0005-schonender-betrieb-rate-limiting.md)
 
 ## Kontext
 

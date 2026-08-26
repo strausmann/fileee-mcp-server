@@ -6,7 +6,7 @@
 **Ersetzt durch:** —
 **Überarbeitet:** —
 **Überarbeitet durch:** [ADR-0015](0015-gangway-als-unterbau.md), [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md) — Punkt 4
-**Verwandt:** [ADR-0011](0011-capability-gating.md), [ADR-0017](0017-diagnose-protokoll-mit-erzwungener-maskierung.md), [ADR-0019](0019-id-whitelist-gilt-auch-fuer-share.md), [go-fileee ADR-0007](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0007-ausschluss-destruktiver-operationen.md)
+**Verwandt:** [ADR-0011](0011-capability-gating.md), [ADR-0017](0017-diagnose-protokoll-mit-erzwungener-maskierung.md), [ADR-0019](0019-id-whitelist-gilt-auch-fuer-share.md), [ADR-0014](0014-self-service-onboarding.md), [go-fileee ADR-0007](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0007-ausschluss-destruktiver-operationen.md)
 
 ## Kontext
 
