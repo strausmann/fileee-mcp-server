@@ -36,7 +36,7 @@ Besonders relevant für dieses Repo sind [ADR-0005 (schonender Betrieb / Rate-Li
 | [0011](0011-capability-gating.md) | Funktionsumfang über nicht registrierte Tools statt Laufzeit-Ablehnung | superseded | 2026-08-06 |
 | [0012](0012-multi-account-mapping.md) | Konto-Auflösung über den signierten Claim des aktuellen Requests | accepted | 2026-08-06 |
 | [0013](0013-prompt-injection-schutz.md) | Dokumentinhalte sind fremdbestimmte Daten | accepted | 2026-08-06 |
-| [0014](0014-self-service-onboarding.md) | Self-Service-Onboarding der Fileee-Zugangsdaten über eine eigene Setup-Seite | proposed | 2026-08-06 |
+| [0014](0014-self-service-onboarding.md) | Self-Service-Onboarding der Fileee-Zugangsdaten über eine eigene Setup-Seite | proposed | 2026-08-26 |
 | [0015](0015-gangway-als-unterbau.md) | Gangway v0.2.0 als Unterbau für Anmeldung, Freigabeliste und Zugriffsprotokoll | accepted | 2026-08-08 |
 | [0016](0016-anbieter-namensraeume-statt-roher-oidc-parameter.md) | Ein Variablen-Namensraum je Identity Provider statt roher OIDC-Parameter | accepted | 2026-08-09 |
 | [0017](0017-diagnose-protokoll-mit-erzwungener-maskierung.md) | Diagnose-Protokoll mit erzwungener Maskierung statt vertrauensbasierter Feldwahl | accepted | 2026-08-12 |

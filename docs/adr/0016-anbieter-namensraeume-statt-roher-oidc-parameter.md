@@ -6,7 +6,7 @@
 **Ersetzt durch:** —
 **Überarbeitet:** [ADR-0010](0010-idp-agnostische-konfiguration.md) (Punkt 2 „Kein IdP-spezifischer Code")
 **Überarbeitet durch:** —
-**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0015](0015-gangway-als-unterbau.md)
+**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0015](0015-gangway-als-unterbau.md), [ADR-0014](0014-self-service-onboarding.md)
 
 ## Kontext
 
