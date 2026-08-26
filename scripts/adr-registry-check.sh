@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
 # Erzwingt die beiden Dauer-Regeln aus docs/adr/README.md:
 #
-#   Registry-Pflicht (:27) — "Ein ADR, das nicht in der Registry steht, gilt als
-#   uebersehen und damit als nicht existent." Ohne Gate faellt genau das still aus:
-#   die Datei ist da, die Entscheidung findet niemand.
+#   Registry-Pflicht (Abschnitt "ADR-Regelwerk", Regel "Registry-Pflicht") —
+#   "Ein ADR, das nicht in der Registry steht, gilt als uebersehen und damit
+#   als nicht existent." Ohne Gate faellt genau das still aus: die Datei ist
+#   da, die Entscheidung findet niemand.
 #
-#   Lineage beidseitig (:26) — nennt ADR A im Header ADR B, muss B auch A nennen.
-#   Einseitige Verweise sind der haeufige Fall, weil man beim Schreiben des neuen
-#   ADR nur nach vorn schaut und die alten Header vergisst.
+#   Lineage beidseitig (Abschnitt "ADR-Regelwerk", Regel "Lineage (beidseitig
+#   pflegen)") — nennt ADR A im Header ADR B, muss B auch A nennen. Einseitige
+#   Verweise sind der haeufige Fall, weil man beim Schreiben des neuen ADR nur
+#   nach vorn schaut und die alten Header vergisst.
 #
 # Geprueft wird nur der Header (erste 10 Zeilen). Fliesstext und der Abschnitt
 # Referenzen duerfen ADRs frei nennen, ohne einen Rueckverweis zu erzwingen.
 #
 # Nur REPO-INTERNE Verweise zaehlen, erkennbar am relativen Link-Ziel
 # [ADR-NNNN](NNNN-slug.md). Cross-Repo-ADRs (0001-0008 in go-fileee und
-# fileee-server) stehen laut :17 als vollstaendige URL da; fuer sie gibt es hier
-# weder eine Datei noch einen Header, in den man einen Rueckverweis schreiben
-# koennte. Ohne diese Unterscheidung meldet das Gate sie als tote Verweise —
-# und ein Gate mit False Positives wird umgangen statt befolgt.
+# fileee-server) stehen laut Abschnitt "Nummernkreis: fortlaufend ueber die
+# Repo-Familie" als vollstaendige URL da; fuer sie gibt es hier weder eine
+# Datei noch einen Header, in den man einen Rueckverweis schreiben koennte.
+# Ohne diese Unterscheidung meldet das Gate sie als tote Verweise — und ein
+# Gate mit False Positives wird umgangen statt befolgt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 reg=docs/adr/README.md

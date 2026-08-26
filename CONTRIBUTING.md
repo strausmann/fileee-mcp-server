@@ -18,7 +18,7 @@ Danke für dein Interesse an diesem Projekt. `fileee-mcp-server` stellt Fileee-I
    go build ./...
    go vet ./...
    go test ./... -race -coverprofile=cover.out
-   ./scripts/coverage-gate-strict.sh cover.out cmd/fileee-mcp-server/<geänderte-datei>.go:<schwelle>
+   ./scripts/coverage-gate-strict.sh cover.out <pfad-der-geänderten-datei>.go:<schwelle>
    ./scripts/doc-coverage.sh
    gofmt -l .    # muss leer bleiben
    ```
@@ -31,10 +31,16 @@ Die Schwellen pro Datei stehen in [`.github/workflows/test.yml`](.github/workflo
 
 | Kategorie | Schwelle | Dateien |
 |---|---|---|
-| Auth/Permission | 90 | `auth_oidc.go`, `auth_token.go`, `accounts.go`, `capabilities.go`, `config.go` |
-| Mutations-Logik | 85 | `clientpool.go`, `tools_destructive.go`, mutierende Tool-Pfade |
-| Business-Logik | 80 | übrige `tools_*.go`, `server.go`, `errors.go` |
-| Adapter/Boot | 60 | `main.go`, `secrets.go` |
+| Auth/Permission | 90 | `auth_oidc.go`, `auth_token.go`, `internal/accounts/accounts.go`, `internal/config/capabilities.go`, `internal/config/config.go`, `internal/server/scopes.go`, `internal/server/ratelimit.go`, `internal/diag/diag.go` (sicherheitskritisch: verhindert, dass ein Credential ins Diagnose-Protokoll gelangt) |
+| Mutations-Logik | 85 | `internal/clientpool/pool.go`, `tools_destructive.go`, mutierende Tool-Pfade |
+| Business-Logik | 80 | `internal/tools/read.go`, übrige `tools_*.go`, `internal/server/server.go`, `errors.go` |
+| Adapter/Boot | 60 | `cmd/fileee-mcp-server/main.go`, `secrets.go` |
+
+Dateien, die noch nicht existieren (`auth_oidc.go`, `auth_token.go`,
+`tools_destructive.go`, weitere `tools_*.go`, `errors.go`, `secrets.go`), sind absichtlich ohne
+Verzeichnis notiert — ihr Paketzuschnitt entsteht in den Umsetzungsschritten, die sie einführen,
+und bekommt dort seinen vollen Pfad. `internal/tools/read.go` (die ersten beiden lesenden
+Werkzeuge, `list_documents`/`search_documents`) ist die erste Datei in diesem Paketzuschnitt.
 
 Jede neue Datei bekommt ihre Schwelle **im selben PR**, in dem sie entsteht. Nachträglich nachziehen heißt, das Gate für diese Datei nie scharf zu schalten.
 
@@ -42,10 +48,9 @@ Jede neue Datei bekommt ihre Schwelle **im selben PR**, in dem sie entsteht. Nac
 
 Drei Bereiche sind sicherheitskritisch und brauchen im PR eine ausdrückliche Begründung:
 
-- **Konto-Auflösung.** Die Benutzeridentität wird ausschließlich aus `req.GetExtra().TokenInfo` gelesen, das pro Request neu gesetzt wird — **nie** aus dem Handler-Kontext. `auth.TokenInfoFromContext` liefert im Tool-Handler das Token des `initialize`-Requests und würde bei mehreren Benutzern pro Sitzung auf das falsche Fileee-Konto auflösen.
-- **`TokenInfo.UserID`.** Der Token-Verifier muss dieses Feld setzen, sonst greift der Session-Hijacking-Schutz des SDK nicht.
+- **Konto-Auflösung.** Die Benutzeridentität wird ausschließlich über `serve.IdentityFrom(ctx)` gelesen (Gangway, siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)) — **nie** selbst zwischengespeichert, **nie** über einen eigenen Zugriff auf den Handler-Kontext. Wer diesen Server ohne Gangway baut, gilt die ursprüngliche Regel aus [ADR-0012](docs/adr/0012-multi-account-mapping.md): ausschließlich `req.GetExtra().TokenInfo`, **nie** `auth.TokenInfoFromContext` — Letzteres liefert im Tool-Handler das Token des `initialize`-Requests und würde bei mehreren Benutzern pro Sitzung auf das falsche Fileee-Konto auflösen.
+- **Destruktive Whitelist.** Die Liste ausgelieferter IDs, die eine destruktive Operation erst gültig macht ([ADR-0013](docs/adr/0013-prompt-injection-schutz.md)), ist an die über `serve.IdentityFrom(ctx)` geprüfte Identität gebunden, nicht an die MCP-Sitzung — Gangways erzwungene Statelessness öffnet und schließt pro Anfrage eine neue Sitzung, eine sitzungsgebundene Merkliste könnte also nie etwas über den einzelnen Request hinaus merken.
 - **Tool-Ausgaben.** Dokumentinhalte und OCR-Text sind fremdbestimmte Daten und können an das Modell gerichtete Anweisungen enthalten. Sie werden als nicht vertrauenswürdig gekennzeichnet zurückgegeben.
-- **Setup-Formular.** Eingegebene Zugangsdaten werden nie geloggt — auch nicht im Fehlerpfad, auch nicht gekürzt. Absolute URLs kommen ausschließlich aus `SETUP_BASE_URL`, nie aus `r.Host` oder `X-Forwarded-*`. Cookies sind `Secure`, `HttpOnly` und `SameSite=Lax` (`Strict` bricht den Rücksprung vom Identity Provider); ihr Wert ist eine zufällige Session-ID, nie das Subject. Der TOTP-Seed wird nach dem Speichern nie wieder ausgeliefert. Die Fehlermeldung bei falschem Login ist generisch und timing-neutral, damit sie nicht verrät, ob ein Fileee-Benutzername existiert. Begründung in [ADR-0014](docs/adr/0014-self-service-onboarding.md).
 
 ## Commit-Konvention
 
@@ -61,9 +66,11 @@ Commit-Messages folgen [Conventional Commits](https://www.conventionalcommits.or
   | `fix`, `perf` | Patch-Release |
   | `refactor`, `build` | Patch-Release (abweichend vom Preset-Default, bewusst so gesetzt) |
   | `docs`, `test`, `chore`, `ci` | kein Release |
-  | Footer `BREAKING CHANGE:` | Major-Release, unabhängig vom Typ |
+  | Footer `BREAKING CHANGE:` | Major-Release, unabhängig vom Typ — **solange dieses Projekt in Entwicklung ist, nicht verwenden** (siehe unten) |
+
+  > **Kein `BREAKING CHANGE:` bis zur ersten stabilen Fassung.** Das Projekt ist in Entwicklung; ein Bruch ist hier der Normalfall und wird in der Commit-Beschreibung erklärt, nicht als Footer ausgezeichnet. Der Grund ist die Wirkung: semantic-release springt bei einem Bruch von `0.x` direkt auf `1.0.0` — die Versionsnummer sagt dann Stabilität zu, die der Funktionsumfang nicht hält. **Genau so ist am 09.08.2026 versehentlich `v1.0.0` entstanden.** Wer den Bruch dokumentieren will, schreibt ihn in den Fließtext des Commits und in die Anleitung, nicht in einen Footer.
 - **Subject in Kleinbuchstaben** (`subject-case`-Regel) — kein großgeschriebener Satzanfang.
-- **Scope** aus der festen Liste in `.commitlintrc.json` (`server`, `config`, `secrets`, `auth`, `accounts`, `tools`, `capabilities`, `deploy`, `adr`, `ci`, `deps`, `docs`, `release`) — kein neuer Scope ohne Anpassung der Datei.
+- **Scope** aus der festen Liste in `.commitlintrc.json` (`server`, `config`, `secrets`, `auth`, `accounts`, `clientpool`, `tools`, `capabilities`, `deploy`, `adr`, `ci`, `deps`, `docs`, `release`) — kein neuer Scope ohne Anpassung der Datei, auch nicht einer, der zum Verzeichnis passt (z. B. `betrieb` für `docs/betrieb/`): die Liste ist abschließend, nicht frei aus dem Pfad ableitbar.
 - **Issue-Referenz:** `Refs #N` oder `Closes #N` in Commit oder PR-Beschreibung.
 
 Der `commit-msg`-Hook läuft nach `npm install` (Husky via `"prepare": "husky"`). **Nie `git commit --no-verify` verwenden.**

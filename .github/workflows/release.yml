@@ -115,7 +115,7 @@ jobs:
           tags: ${{ steps.tags.outputs.list }}
           # VERSION/REVISION/CREATED speisen sowohl die OCI-Labels (org.opencontainers.image.*,
           # deploy/Dockerfile) als auch den ldflags-Override von
-          # cmd/fileee-mcp-server/version.go (main.version).
+          # internal/config/version.go (github.com/strausmann/fileee-mcp-server/internal/config.version).
           build-args: |
             VERSION=${{ needs.release.outputs.version }}
             REVISION=${{ github.sha }}

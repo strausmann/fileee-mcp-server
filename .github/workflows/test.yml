@@ -45,17 +45,223 @@ jobs:
           # Mindestwerte unterlaufen.
           #
           #   Auth-/Permission-Code ......... 90   auth_oidc.go, auth_token.go,
-          #                                        accounts.go, capabilities.go, config.go
-          #   Mutations-Logik ............... 85   clientpool.go, tools_destructive.go,
+          #                                        internal/accounts/accounts.go,
+          #                                        internal/config/config.go,
+          #                                        internal/server/scopes.go,
+          #                                        internal/server/ratelimit.go,
+          #                                        internal/diag/diag.go (sicherheitskritisch:
+          #                                        die Maskierung, die verhindert, dass ein
+          #                                        Credential ins Diagnose-Protokoll gelangt)
+          #   Mutations-Logik ............... 85   internal/clientpool/pool.go,
+          #                                        tools_destructive.go,
           #                                        alle mutierenden Tool-Pfade
-          #   Business-Logik ................ 80   uebrige tools_*.go, server.go, errors.go
-          #   Adapter/Boot .................. 60   main.go, secrets.go
+          #   Business-Logik ................ 80   uebrige tools_*.go,
+          #                                        internal/server/server.go, errors.go
+          #   Adapter/Boot .................. 60   cmd/fileee-mcp-server/main.go, secrets.go
+          #
+          # Noch nicht existierende Dateien (auth_oidc.go, auth_token.go,
+          # tools_destructive.go, tools_*.go, errors.go, secrets.go) sind bewusst ohne
+          # Verzeichnis notiert - ihr Paketzuschnitt (u.a. internal/tools) entsteht im
+          # jeweiligen Umsetzungsschritt.
           #
           # Die Liste waechst mit jedem Umsetzungsschritt mit. Jede neue Datei bekommt
           # ihre Schwelle im selben PR, in dem sie entsteht — nachtraeglich nachziehen
           # heisst, das Gate fuer diese Datei nie scharf zu schalten.
+          #
+          # internal/tools erweitert (Stand dieses PR, gemessen nach dem Zusammenfuehren der
+          # Dokument-/Personen-Werkzeuge): read.go war bereits gegattert (80, Business-Logik-
+          # Stufe wie oben). Vier weitere Dateien derselben Stufe erreichen 80% bereits mit
+          # Luft und werden hier scharf geschaltet:
+          #   read_sync.go      80,6%   read_people.go   83,3%
+          #   names.go          87,0%
+          # (Bei read_sync.go ist die Luft ueber der Schwelle knapp — 0,6 Punkte. Das ist die
+          # 80%-Business-Logik-Stufe selbst, keine eigens gewaehlte Marge; siehe PR-Beschreibung.)
+          #
+          # ZWEI Dateien derselben Stufe erreichen 80% NOCH NICHT: read_generic.go (79,3%) und
+          # read_reference.go (77,3%). Kontrollierte Ausnahme statt Luecke oder erfundenem
+          # Ersatzwert (test-coverage-pflicht.md, Abschnitt "Coverage-Whitelist") — Begruendung,
+          # Weg zum Ziel und Verfallsdatum je Datei:
+          #
+          #   read_generic.go:75 — Begruendung: genericListHandler (70%) und genericGetHandler
+          #     (50%) ziehen die Datei unter 80. Deren Erfolgspfad haengt an clientFor/einer
+          #     verifizierten Identitaet aus dem Kontext und ist aus diesem White-Box-Paket
+          #     heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar (siehe deren eigene
+          #     Doc-Kommentare) — keine vergessene Zeile, sondern eine strukturelle Grenze des
+          #     Unit-Tests. Die Logik-Ebene darunter (getFromService/listFromService/
+          #     untrustedLineOf) liegt bereits bei 87,5%/92,9%/100% (#51). 75 statt 80 laesst
+          #     Raum fuer eine weitere Funktion, ohne beim naechsten Commit rot zu faerben, und
+          #     faengt trotzdem ein Absinken unter den heutigen Stand ab.
+          #     Weg zum Ziel: Integrationstest nach dem Muster von internal/server/server_test.go
+          #     (echter Gangway/HTTP-Rundlauf mit verifizierter Identitaet) fuer beide Handler.
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          #   read_reference.go:75 — Begruendung: referenceTagDescriptor (33%) und
+          #     referenceDocumentTypeDescriptor (67%) ziehen die Datei unter 80 — reine
+          #     Deskriptor-Bauer, die nur indirekt ueber registerReadService/Registrierungstests
+          #     erreicht werden, nicht ueber eigene Tests ihrer Summarize/UntrustedLine-Closures.
+          #     Weg zum Ziel: gezielte Tests je Deskriptor-Funktion (Muster: tagDescriptor() in
+          #     read_generic_test.go).
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          # internal/tools nochmal erweitert (Boxen/Binaerdaten/OCR/Kontostand, #55): DREI weitere
+          # Dateien derselben Business-Logik-Stufe erreichen 80% NOCH NICHT — derselbe Grund wie
+          # bei read_generic.go/read_reference.go oben, hier noch ausgepraegter, weil jede Datei
+          # mehrere duenne Werkzeug-Anmelde-Huellen (getXxxHandler) traegt, die alle an
+          # clientFor/einer verifizierten Identitaet aus dem Kontext haengen und aus diesem
+          # White-Box-Paket heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar sind:
+          #
+          #   read_boxes.go:60 — gemessen 61,9%. listBoxesHandler (10%) und getBoxHandler (50%)
+          #     ziehen die Datei unter 80. Die Logik-Ebene darunter (boxesFromService/
+          #     boxFromService/boxSummaryOf/boxDetailOf) liegt bereits bei 100%.
+          #     Weg zum Ziel: Integrationstest nach dem Muster von internal/server/server_test.go
+          #     fuer beide Handler.
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          #   read_binary.go:68 — gemessen 71,3%. getDocumentPDFHandler/getPageImageHandler
+          #     (63,2%) und getPageOCRHandler (50%) ziehen die Datei unter 80; parsePDFMode/
+          #     parseImageSize selbst liegen bei 50% (nur der Ablehnungspfad eines unbekannten
+          #     Werts ist ueber den Handler getestet, kein eigener Erfolgstest fuer den
+          #     benannten Zweitwert "print"/"smedium"). Die Kernlogik (readLimited,
+          #     documentPDFFromService, documentPageImageFromService,
+          #     documentPageOCRFromService) liegt bei 87,5-92,9%.
+          #     Weg zum Ziel: Integrationstest fuer die drei Handler; je ein expliziter
+          #     Erfolgstest fuer parsePDFMode("print") und parseImageSize("smedium").
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          #   read_account.go:50 — gemessen 52,6%. getAccountStatusHandler (10%) zieht die Datei
+          #     unter 80 — derselbe Grund, staerker ausgepraegt, weil die Datei sonst nur aus
+          #     bereits vollstaendig getesteter Logik besteht (accountStatusDetail,
+          #     accountStatusFromService, formatTimePtr, registerAccountTools: alle 100%) und
+          #     ein einzelner duenner Handler den ganzen Dateidurchschnitt traegt.
+          #     Weg zum Ziel: Integrationstest nach demselben Muster.
+          #     Verfallsdatum: 2026-09-15 — dann auf 80 nachziehen oder Ausnahme neu begruenden.
+          #
+          # Alle drei Schwellen liegen unter dem gemessenen Ist-Stand (nicht darauf) — eine
+          # Schranke exakt auf dem Ist-Stand faerbt beim naechsten Commit rot und wird dann nur
+          # entschaerft statt eingehalten (test-coverage-pflicht.md, Abschnitt
+          # "Coverage-Whitelist"). Gegenprobe (lokal, scripts/coverage-gate-strict.sh): eine
+          # probeweise unerreichbar hohe Schwelle (99) liess das Gate fuer alle drei Dateien
+          # FAILen; die hier eingetragenen Werte bestehen denselben Lauf.
+          #
+          # internal/tools/ops.go (Aufgabe C3, self_check): fehlte hier bisher, weil die Datei
+          # entstand, waehrend diese Schranke gebaut wurde (nur get_runtime_stats/
+          # get_tool_manifest, keiner der beiden ruehrt Fileee an). Mit self_check kommt die
+          # erste echte Anmeldeprobe in die Datei — gemessen 87,1%, komfortabel ueber 80: die
+          # Kernlogik (classifySelfCheckOutcome, selfCheckResultFor) liegt bei 100%, einzig
+          # getSelfCheckHandler (44,4%) zieht den Dateidurchschnitt, aus demselben Grund wie
+          # read_boxes.go/read_binary.go/read_account.go oben — die duenne Anmelde-Huelle haengt
+          # an clientFor-aequivalenter Identitaetsaufloesung aus dem Kontext, aus diesem
+          # White-Box-Paket heraus nicht ohne einen echten Gangway/HTTP-Rundlauf testbar.
+          #
+          # internal/tools/write.go (Task 1+2, write-Tools-Plan, homelab-management repo):
+          # erste Datei des Write-Werkzeug-Baukastens. Task 1 (update_contact, Patch/Merge-
+          # Vorlage) und Task 2 (create_contact, ein einzelner Create-Aufruf, kein
+          # vorheriges Get) teilen sich die Datei. Business-Logik-Stufe (80) wie read.go/
+          # read_sync.go/read_people.go/names.go/ops.go oben — die Kernlogik
+          # (applyContactPatch, contactDisplayName, updateContactResult,
+          # updateContactFromService, createContactResult, createContactFromService) ist
+          # ueber Fakes (fakeContactWriteService/fakeContactCreateService, write_test.go)
+          # vollstaendig ohne Netzwerk testbar. updateContactHandlers/createContactHandlers
+          # duenne clientFor-Huelle traegt denselben strukturellen weissen Fleck wie
+          # getAccountStatusHandler/getBoxHandler (read_account.go/read_boxes.go oben) —
+          # createContactHandler haelt sich trotzdem bei ueber 80%, weil seine eigene
+          # Vor-clientFor-Pruefung (FirstName/LastName/CompanyName nicht alle leer, das
+          # Gegenstueck zu updateContactHandlers leere-ID-Pruefung) direkt testbar ist.
+          #
+          # internal/tools/write_people.go (Task 3, write-Tools-Plan): create_reminder +
+          # update_reminder, dieselben zwei Muster wie write.go (Create ohne vorheriges Get /
+          # Get-apply-Update-Patch-Merge), diesmal ueber fileee.ReminderService. Kernlogik
+          # (applyReminderPatch, reminderResult, createReminderFromService,
+          # updateReminderFromService) ueber Fakes (fakeReminderCreateService/
+          # fakeReminderWriteService, write_people_test.go) vollstaendig ohne Netzwerk testbar.
+          # Beide duennen clientFor-Huellen (createReminderHandler/updateReminderHandler)
+          # bekommen zusaetzlich je einen Gegenprobe-Test, der eine GUELTIGE Eingabe bis zu
+          # clientFor durchlaesst (TestCreateReminderHandlerLaesstEineGueltigeBeschreibung...,
+          # TestUpdateReminderHandlerLaesstEineGueltigeKennung...) — dieselbe Idee wie
+          # createContactHandlers eigener Firmenkontakt-Test oben, hier zusaetzlich fuer
+          # update_reminder nachgezogen (update_contact hat diesen Gegenprobe-Test bislang
+          # nicht). Datei liegt bei 85,0% — komfortabel ueber der 80%-Business-Logik-Stufe,
+          # keine Ausnahme noetig.
+          #
+          # internal/tools/write_boxes.go (Task 4, write-Tools-Plan): box_add_document +
+          # box_remove_document, ueber fileee.BoxService.AddDocument/RemoveDocument — anders
+          # als jedes Muster in write.go/write_people.go (kein Create, kein Get/apply/Update-
+          # Patch-Merge): ein einzelner Aufruf, der nur einen Fehler zurueckgibt, keine
+          # aktualisierte Entitaet. Kernlogik (boxDocumentResult, addBoxDocumentFromService,
+          # removeBoxDocumentFromService) ueber Fakes (fakeBoxDocumentAddService/
+          # fakeBoxDocumentRemoveService, write_boxes_test.go) vollstaendig ohne Netzwerk
+          # testbar, inklusive Netzwerk- und Backend-Fehlerpfad — hier besonders wichtig, da
+          # es ohne Rueckgabewert nichts anderes zu pruefen gibt als "kein Teilerfolg". Beide
+          # duennen clientFor-Huellen bekommen je zwei Vor-clientFor-Ablehnungstests (leere
+          # BoxID/DocumentID) und einen Gegenprobe-Test mit gueltiger Eingabe, dieselbe Idee
+          # wie write_people.go oben. Datei liegt bei 86,7% — komfortabel ueber der
+          # 80%-Business-Logik-Stufe, keine Ausnahme noetig.
+          #
+          # internal/tools/write_documents.go (Task 5+6, write-Tools-Plan): upload_document
+          # und update_document (Title-Patch/Merge). upload_document geht
+          # ueber *fileee.Client.Documents.Upload — ein einzelner Aufruf wie
+          # create_contact/create_reminder, dessen eigener Fehlerrueckgabewert
+          # (fileee.ErrDuplicateDocument) bewusst als normaler, informativer Erfolg behandelt
+          # wird statt als Fehlschlag (siehe die Datei eigenen Package-Doc-Kommentar).
+          # Kernlogik (uploadDocumentResult, uploadDocumentFromService) ueber ein Fake
+          # (fakeDocumentUploadService, write_documents_test.go) vollstaendig ohne Netzwerk
+          # testbar, inklusive Duplikat-, Netzwerk- und Backend-Fehlerpfad sowie zwei
+          # dedizierten Gegenprobe-Tests (Duplikat faelschlich als Fehler behandelt; roher
+          # base64-String statt dekodierter Bytes durchgereicht — beide mutationsgeprueft,
+          # beide faerben den jeweils zugehoerigen Test rot). Die duenne clientFor-Huelle
+          # (uploadDocumentHandler) traegt denselben strukturellen weissen Fleck wie
+          # addBoxDocumentHandler/updateContactHandler oben, haelt sich aber bei 80% dank der
+          # eigenen Vor-clientFor-Pruefung (ungueltiges base64 wird ohne Netzwerkzugriff
+          # abgelehnt, inklusive Gegenprobe mit gueltigem base64). Datei liegt bei 87,0% —
+          # komfortabel ueber der 80%-Business-Logik-Stufe, keine Ausnahme noetig.
+          #
+          # internal/issued/issued.go (ID-Whitelist-Plan, Task 1+2, homelab-management repo):
+          # der Kern der Whitelist aus ADR-0013 Punkt 3 — Store.Record/Check binden
+          # destruktive Operationen an eine ID aus einer vorangegangenen, echten Leseantwort,
+          # je verifizierter Identitaet (serve.IdentityFrom(ctx), fail-closed wie clientFor).
+          # Sicherheitstragender Code, Auth-/Permission-Stufe (90) wie internal/accounts/
+          # accounts.go & internal/server/scopes.go oben, nicht die niedrigere
+          # Mutations-Stufe (85) von internal/clientpool/pool.go — ein Fehler hier waere kein
+          # Datenverlust, sondern ein umgangener Zugriffs-Schutz. Kernlogik (New, subjectOf,
+          # Record, Check, errNotIssuedFor) vollstaendig ueber ein weisses-Kasten-Testfile
+          # (issued_test.go) abgedeckt, inklusive der Identitaetstrennung als dedizierter
+          # Sicherheitszusage-Test (TestIdentitaetenSindGetrennt, mit Gegenprobe: Subject
+          # ignoriert -> derselbe Test faerbt rot, weil eine fremde Identitaet durchgelassen
+          # wird) und des fail-closed-Pfads ohne Identitaet. Task 2 (Verfall/Deckel) fuegt
+          # Ttl-Verfall und den Deckel je Identitaet hinzu (Store.now austauschbar ueber
+          # SetClock, reiner Test-Seam) — inklusive der beiden fail-closed-Grenzfaelle
+          # ttl<=0 und maxPerIdentity<=0 (dieselbe FILEEE_MAX_INFLIGHT-Konvention: eine
+          # Grenze <=0 wird durchgesetzt, nie als "unbegrenzt" gelesen), je mit eigenem
+          # Test. Drei Gegenproben bestaetigt: Verfallsvergleich entfernt -> 31-Minuten-Test
+          # faerbt rot; Verdraengung nimmt den neuesten statt den aeltesten -> Deckel-Test
+          # faerbt rot und nennt die aelteste ID; Deckel global statt je Identitaet ->
+          # TestDerDeckelGiltJeIdentitaetNichtGlobal faerbt rot. Datei liegt weiterhin bei
+          # 100%.
           ./scripts/coverage-gate-strict.sh cover.out \
-            cmd/fileee-mcp-server/version.go:90
+            internal/accounts/accounts.go:90 \
+            internal/config/config.go:90 \
+            internal/config/version.go:90 \
+            internal/server/scopes.go:90 \
+            internal/server/ratelimit.go:90 \
+            internal/diag/diag.go:90 \
+            internal/issued/issued.go:90 \
+            internal/server/server.go:80 \
+            internal/clientpool/pool.go:85 \
+            internal/tools/read.go:80 \
+            internal/tools/read_sync.go:80 \
+            internal/tools/read_people.go:80 \
+            internal/tools/names.go:80 \
+            internal/tools/read_generic.go:75 \
+            internal/tools/read_reference.go:75 \
+            internal/tools/read_boxes.go:60 \
+            internal/tools/read_binary.go:68 \
+            internal/tools/read_account.go:50 \
+            internal/tools/ops.go:80 \
+            internal/tools/write.go:80 \
+            internal/tools/write_people.go:80 \
+            internal/tools/write_boxes.go:80 \
+            internal/tools/write_documents.go:80 \
+            cmd/fileee-mcp-server/main.go:60
       - name: Doc-Coverage (exportierte Symbole)
         run: |
           chmod +x scripts/doc-coverage.sh
@@ -64,3 +270,11 @@ jobs:
         run: |
           chmod +x scripts/adr-registry-check.sh
           ./scripts/adr-registry-check.sh
+      - name: Umlaut-Check (Ersatzschreibungen in .go-Dateien, Issue #71)
+        run: |
+          chmod +x scripts/umlaut-check.sh
+          ./scripts/umlaut-check.sh
+      - name: Entrypoint-Entscheidung (Start mit und ohne Infisical)
+        run: |
+          chmod +x deploy/entrypoint.sh deploy/entrypoint_test.sh
+          ./deploy/entrypoint_test.sh

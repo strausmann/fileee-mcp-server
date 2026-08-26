@@ -4,7 +4,7 @@
 
 Ein **inoffizieller** MCP-Server für [Fileee](https://www.fileee.com), der die eigenen Dokumente für AI-Clients zugänglich macht — als lokaler Server über einen statischen Token oder als **Remote-Connector mit OAuth-Anmeldung**, etwa in der Claude.ai-Web-UI.
 
-> **Status:** Gerüst. Konfiguration, Auth, Konto-Auflösung und Tools entstehen in den folgenden Umsetzungsschritten. Dieses README beschreibt das Zielbild und wird schrittweise konkretisiert.
+> **Stand:** Das Grundgerüst steht — Konfiguration, Anmeldung über [Gangway](https://gangway.strausmann.cloud), Zuordnung von Identität zu Fileee-Konto. Die lesenden UND die schreibenden Werkzeuge sind vollständig angemeldet: **32 lesende** plus **8 schreibende fileee-Werkzeuge** (siehe [`docs/tools.md`](docs/tools.md)) plus **4 Betriebswerkzeuge** (`get_runtime_stats`, `get_tool_manifest`, `self_check`, `whoami`) — **44 Werkzeuge** insgesamt. Teilende und löschende Werkzeuge entstehen weiterhin in den folgenden Umsetzungsschritten.
 
 Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/strausmann/go-fileee) und ist damit Geschwisterprojekt von [`strausmann/fileee-server`](https://github.com/strausmann/fileee-server) (REST-API für n8n/CI). Der Unterschied: `fileee-server` kennt genau ein Fileee-Konto und ein statisches Token; dieser Server bindet die **Identität des anfragenden Benutzers** an ein Fileee-Konto.
 
@@ -16,9 +16,9 @@ Der Server nutzt die Core-Lib [`strausmann/go-fileee`](https://github.com/straus
 - **OAuth 2.1 als Resource Server** nach [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) — der Identity Provider ist frei wählbar und reine Konfiguration
 - **Statisches Bearer-Token** als Alternative, wenn kein IdP vorhanden ist
 - **Ein oder mehrere Fileee-Konten**, zugeordnet über einen signierten Claim aus dem Token
-- **Konfigurierbarer Funktionsumfang** über Capability-Gruppen — nicht freigeschaltete Tools werden gar nicht erst registriert
+- **Alle Werkzeuge angemeldet, Freigabe je Werkzeug beim Client** — jedes Werkzeug trägt einen Titel und die zutreffenden `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`); Always allow / Needs approval / Blocked entscheidet der Client und dessen Benutzer, nicht der Server (siehe [ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md))
 
-## Vier Betriebsarten
+## Drei Betriebsarten
 
 Derselbe Container bedient sehr verschiedene Setups. Die drei Achsen sind unabhängig voneinander schaltbar.
 
@@ -31,23 +31,61 @@ FILEEE_MODE=single
 FILEEE_USERNAME=…
 FILEEE_PASSWORD=…
 FILEEE_TOTP_SEED=…        # nur bei aktiver Zwei-Faktor-Authentifizierung
-FILEEE_CAPABILITIES=read
 ```
 
 Drei Pflichtwerte, kein IdP, kein Reverse Proxy nötig. Für Claude Code lokal oder für Automatisierung im eigenen Netz.
 
 ### Remote-Connector mit OAuth
 
+`MCP_OIDC_PROVIDER` wählt den Identity Provider. **Jeder Anbieter hat seinen eigenen Satz Variablen** — du trägst ein, was dein Anbieter dir zeigt, und der Server baut die Aussteller-URL daraus (siehe [ADR-0016](docs/adr/0016-anbieter-namensraeume-statt-roher-oidc-parameter.md)):
+
+| `entra` | `authentik` | `generic` |
+|---|---|---|
+| `MCP_ENTRA_TENANT_ID` | `MCP_AUTHENTIK_BASE_URL` | `MCP_OIDC_ISSUER` |
+| `MCP_ENTRA_CLIENT_ID` | `MCP_AUTHENTIK_APP_SLUG` | `MCP_OIDC_CLIENT_ID` |
+| | `MCP_AUTHENTIK_CLIENT_ID` | |
+
+Variablen eines anderen als des gewählten Anbieters lassen den Start abbrechen — sie wären sonst wirkungslos gesetzt.
+
 ```dotenv
 MCP_AUTH_MODE=oidc
-MCP_OIDC_ISSUER=https://<idp-host>/…
-MCP_OIDC_AUDIENCE=<client-id>
+MCP_OIDC_PROVIDER=entra
+MCP_ENTRA_TENANT_ID=<verzeichnis-id>
+MCP_ENTRA_CLIENT_ID=<anwendungs-id>
 MCP_RESOURCE_URL=https://<mcp-host>/mcp
-MCP_ALLOWED_SUBJECTS=<sub des berechtigten Benutzers>
+MCP_ALLOWED_SUBJECTS=<subject des berechtigten Benutzers>
+FILEEE_ALLOWED_ORIGIN_PREFIXES=<CIDR-Liste der zulässigen Herkunftsadressen>
 FILEEE_MODE=single
 ```
 
-Einrichtung des Identity Providers: [`docs/idp/authentik.md`](docs/idp/authentik.md), [`docs/idp/entra-id.md`](docs/idp/entra-id.md), danach [`docs/idp/claude-connector.md`](docs/idp/claude-connector.md).
+Einrichtung des Identity Providers — eine Anleitung je Anbieter, jede nur mit ihren eigenen Variablen:
+
+| Anbieter | Anleitung |
+|---|---|
+| Microsoft Entra ID | [`docs/idp/entra-id.md`](docs/idp/entra-id.md) |
+| Authentik | [`docs/idp/authentik.md`](docs/idp/authentik.md) |
+| GitLab, Keycloak, Auth0, Google und andere | [`docs/idp/generic.md`](docs/idp/generic.md) |
+
+Danach in allen Fällen: [`docs/idp/claude-connector.md`](docs/idp/claude-connector.md).
+
+> **Aktuell nur `oidc`.** Der Server läuft auf [Gangway](https://gangway.strausmann.cloud) (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)) auf, und Gangway v0.2.0 baut intern ausschließlich einen OIDC-Verifier — es gibt (noch) keinen Weg, stattdessen ein statisches Bearer-Token zu verifizieren. `MCP_AUTH_MODE=token`/`both` werden von `LoadConfig` weiterhin akzeptiert, der Server verweigert den Start mit diesem Modus aber explizit. Details und der Ausblick auf eine Lösung stehen im Nachtrag zu ADR-0015.
+
+Weitere netzwerkbezogene Variablen, die im Modus `oidc` Pflicht bzw. relevant sind:
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `FILEEE_ALLOWED_ORIGIN_PREFIXES` | CIDR-Liste (oder einzelne Adressen) der Herkunftsadressen, die `/mcp` überhaupt erreichen dürfen — Pflicht im Modus `oidc`, ohne sie verweigert Gangway den Start | — |
+| `FILEEE_TRUSTED_PROXIES` | CIDR-Liste der Proxys, deren Weiterleitungs-Header (siehe `FILEEE_CLIENT_IP_HEADER_MODE`) geglaubt werden | leer — es zählt nur die Peer-Adresse |
+| `FILEEE_CLIENT_IP_HEADER_MODE` | genau ein Weiterleitungs-Header als Quelle der Client-Adresse: `x-forwarded-for`, `x-real-ip` oder `cf-connecting-ip` | `cf-connecting-ip` — vor dem Produktivbetrieb gegen die tatsächliche Proxy-Kette (z. B. Pangolin/Traefik) prüfen |
+
+Zwei weitere Variablen rund um Scopes — angefordert/geprüft und angekündigt sind bei den meisten Anbietern derselbe Wert, aber nicht bei jedem:
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `MCP_OIDC_REQUIRED_SCOPES` | Kommaliste der Scopes, die ein Token tragen muss — geprüft gegen den `scp`-Claim des verifizierten Tokens (ersatzweise `scope`) | leer — jeder authentifizierte Aufrufer erlaubt |
+| `MCP_OIDC_ADVERTISED_SCOPES` | überschreibt, wenn gesetzt, ausschließlich das, was **vor** dem Token-Austausch angekündigt wird (`WWW-Authenticate`-`scope`-Parameter, RFC-9728-`scopes_supported`) — `MCP_OIDC_REQUIRED_SCOPES` bleibt davon unberührt und bleibt das, wogegen tatsächlich geprüft wird | leer — Ankündigung fällt auf `MCP_OIDC_REQUIRED_SCOPES` zurück |
+
+Der Grund für die Trennung: ein Connector, der noch kein Token besitzt, erfährt den geforderten Scope ausschließlich über diese Ankündigung. Bei den meisten Anbietern (u. a. Authentik) ist der beim Anbieter angeforderte Scope-Name identisch mit dem später im Token ausgestellten `scp`-Wert — `MCP_OIDC_REQUIRED_SCOPES` allein reicht. Microsoft Entra ID ist die dokumentierte Ausnahme: angekündigt/angefordert werden muss dort eine vollqualifizierte Form (`https://<mcp-host>/mcp/<scope-name>`), während der ausgestellte `scp`-Claim weiterhin nur den kurzen Namen trägt — ein nackter Name scheitert beim Anbieter mit `AADSTS650053`. Details zur Entra-spezifischen Form: [`docs/idp/entra-id.md`](docs/idp/entra-id.md).
 
 ### Mehrere Benutzer, je eigenes Fileee-Konto
 
@@ -58,70 +96,100 @@ FILEEE_ACCOUNTS=alice,bob
 FILEEE_ACCOUNT_ALICE_USERNAME=…
 FILEEE_ACCOUNT_ALICE_PASSWORD=…
 FILEEE_ACCOUNT_ALICE_SUBJECTS=alice@example.com
-FILEEE_ACCOUNT_ALICE_CAPABILITIES=read
 FILEEE_ACCOUNT_BOB_USERNAME=…
 …
 ```
 
 Die Zuordnung läuft über einen konfigurierbaren Claim aus dem Token (Default `sub`). Mehrere Identitäten dürfen auf **ein** Fileee-Konto zeigen; eine Identität auf zwei Konten ist ein Startup-Fehler, kein „first match wins". Ein unbekanntes Subject bekommt `403` — es gibt keinen Fallback auf ein Standardkonto.
 
-### Mehrere Benutzer, die ihre Zugangsdaten selbst hinterlegen
+## Funktionsumfang
 
-```dotenv
-MCP_AUTH_MODE=oidc
-FILEEE_MODE=self-service
-SETUP_BASE_URL=https://<mcp-host>
-SETUP_OIDC_CLIENT_ID=<client-id>
-SETUP_OIDC_CLIENT_SECRET=CHANGE_ME
-SETUP_ENCRYPTION_KEY=CHANGE_ME        # openssl rand -base64 32
-SETUP_DB_PATH=/data/accounts.db       # Default
-```
+Der Server registriert **alle** Werkzeuge für jeden authentifizierten Aufrufer — es gibt keine
+serverseitige Einschränkung mehr, welche Werkzeuge ein Client zu sehen bekommt (siehe
+[ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)). Jedes Werkzeug trägt einen
+sprechenden Titel und die zutreffenden Hinweise (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`) — die Freigabe je Werkzeug (Always allow / Needs approval / Blocked) trifft der
+**Client und dessen Benutzer**, nicht der Server.
 
-Statt je Konto vier Secrets und einen Neustart hinterlegt jede Person ihre Fileee-Zugangsdaten selbst unter `https://<mcp-host>/setup`. Der Ablauf: Connector in Claude eintragen, verbinden, ein Tool aufrufen — der Server antwortet mit einem Hinweis samt Setup-Link. Dort meldet sich die Person nochmals am Identity Provider an und trägt Benutzername, Passwort und optional den TOTP-Seed ein. Die Daten werden gegen Fileee geprüft, verschlüsselt gespeichert und an das Subject aus dem Token gebunden.
+Destruktive Operationen (Hard-DELETE, unwiderruflich, kein Papierkorb) sind zusätzlich über ein
+serverseitiges Audit-Log vor jeder Löschung abgesichert und daran gebunden, dass die zu löschende
+ID aus einer vorangegangenen Leseantwort derselben geprüften Identität stammt — gebunden an
+`serve.IdentityFrom(ctx)`, nicht an die MCP-Sitzung, die es unter der erzwungenen Statelessness
+ohnehin nicht über den einzelnen Request hinaus gibt.
 
-Dafür braucht der Identity Provider einen **zweiten Redirect-URI** `https://<mcp-host>/setup/callback` — der MCP-Endpunkt selbst bleibt reiner Resource Server. Wer nicht in der Gruppenbindung bzw. `MCP_ALLOWED_SUBJECTS` steht, kommt gar nicht erst bis zum Formular und bekommt weiterhin `403`.
+## Werkzeuge
 
-ENV-Konten und Self-Service dürfen nebeneinander bestehen; ein Subject in beiden Quellen bricht den Start ab. Details in [ADR-0014](docs/adr/0014-self-service-onboarding.md).
+Der Katalog entsteht schrittweise. Die lesenden Werkzeuge sind vollständig angemeldet — **32
+Werkzeuge** über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dokumenttyp-Schemata),
+Kontakte/Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
+Seiten-OCR und Kontostand — vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert,
+inklusive der Absicherung gegen präparierte, fremdbestimmte Inhalte (Dokumenttitel, Firmen-/
+Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text).
 
-## Funktionsumfang festlegen
+Die schreibenden Werkzeuge sind ebenfalls vollständig angemeldet — **8 Werkzeuge** über Kontakte
+(`create_contact`/`update_contact`), Erinnerungen (`create_reminder`/`update_reminder`), Boxen
+(`box_add_document`/`box_remove_document`) und Dokumente (`upload_document`/`update_document`),
+jedes mit wahrheitsgemäßen `ToolAnnotations` (`destructiveHint`, `idempotentHint`) — ebenfalls
+vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert, im Abschnitt „`write` — schreibende
+Werkzeuge".
 
-```dotenv
-FILEEE_CAPABILITIES=read                              # Default
-FILEEE_CAPABILITIES=read,write
-FILEEE_CAPABILITIES=read,write,share
-FILEEE_CAPABILITIES=read,write,share,destructive      # zusätzlich FILEEE_ALLOW_DESTRUCTIVE=true
-```
-
-| Gruppe | Umfang |
-|---|---|
-| `read` | Suche, Dokument-Metadaten, OCR-Text, PDF-/Seiten-Download, Stammdaten, Kontakte/Erinnerungen/Boxen/Konversationen lesen |
-| `write` | Upload, Metadaten ändern, Erinnerungen und Kontakte anlegen/ändern, Box-Zuordnung |
-| `share` | Freigabe-Links, ZIP-Export, Konversations-Nachrichten und -Teilnehmer |
-| `destructive` | Hard-DELETE von Dokumenten, Kontakten und Erinnerungen — **doppeltes Gate** |
-
-Nicht freigeschaltete Tools werden dem Client gar nicht erst angeboten.
-
-### Wer wie viel darf
-
-Der Umfang kann aus drei Quellen kommen. Es gilt eine feste Rangfolge, keine Vermischung:
-
-1. **`FILEEE_CAPABILITIES` ist die Obergrenze.** Keine andere Quelle schaltet darüber hinaus etwas frei.
-2. **Der Identity Provider entscheidet**, sofern `MCP_OIDC_CAPABILITY_CLAIM` gesetzt ist — Entra über App-Rollen (`roles`), Authentik über Gruppen (`groups`). Damit werden Berechtigungen dort gepflegt, wo Benutzer ohnehin verwaltet werden. Für die meisten Setups genügen zwei Stufen: `read` und `write`.
-3. **Sonst** gilt `FILEEE_ACCOUNT_<KEY>_CAPABILITIES`, sonst die Obergrenze.
-
-Ist der Claim konfiguriert, der Benutzer hat aber keine passende Rolle oder Gruppe, bekommt er **`read`** — nicht den konfigurierten Standardumfang. Andernfalls wäre eine vergessene Zuweisung eine stille Rechteausweitung.
-
-`destructive` ist über keinen Claim erreichbar und bleibt eine bewusste Entscheidung am Server.
-
-Fileees Hard-DELETE ist unwiderruflich und kennt keinen Papierkorb. Deshalb die zwei Schalter, ein Audit-Log vor jeder Löschung und die Regel, dass eine zu löschende ID aus einer vorangegangenen Leseantwort derselben Sitzung stammen muss.
+Teilende und löschende Werkzeuge entstehen weiterhin in den folgenden Umsetzungsschritten — jedes
+davon wird, sobald es existiert, ebenso angemeldet und über seine `ToolAnnotations` beschrieben
+(siehe [ADR-0018](docs/adr/0018-werkzeug-freigabe-und-client-steuerung.md)).
 
 ## Sicherheit
 
-- **Credentials** (Fileee-Zugangsdaten, TOTP-Seed, API-Token) gehören ausschließlich in einen Secret-Manager, nie in Code oder Commits. Der Container unterstützt neben `.env` einen Infisical-Modus.
+- **Credentials** (Fileee-Zugangsdaten, TOTP-Seed, API-Token) gehören ausschließlich in einen Secret-Manager, nie in Code oder Commits. Der Container unterstützt neben `.env` einen Infisical-Modus: Sind `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` und `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` (oder `INFISICAL_TOKEN`) gesetzt, meldet sich der Entrypoint an und injiziert die Werte; sonst startet der Server direkt mit den vorhandenen Umgebungsvariablen. Ist nur **eine** der beiden Variablen gesetzt, bricht der Start ab — ein halbes Paar ist nie Absicht, und ein stiller Rückfall auf den Umgebungs-Weg würde den Fehler erst viel später sichtbar machen.
 - **Session-Dateien** des Client-Pools sind Secrets (`0600`, je Konto getrennt) und werden nie geloggt.
-- **Self-Service-Zugangsdaten** liegen AES-256-GCM-verschlüsselt in der SQLite-Datei (`0600`), der Schlüssel kommt aus `SETUP_ENCRYPTION_KEY` über das Secret-Backend. Das Subject steht nur als SHA-256-Hash im Klartext. Ohne den Schlüssel ist die Datei wertlos — er ist damit das wertvollste Secret des Deployments und gehört nicht neben die Datenbank auf dasselbe Volume.
 - **Dokumentinhalte sind fremdbestimmte Daten.** OCR-Text kann Anweisungen enthalten, die an das Modell gerichtet sind. Tool-Ausgaben werden deshalb als nicht vertrauenswürdig markiert, und destruktive Operationen sind zusätzlich abgesichert.
-- Die Core-Lib **schont Fileees Infrastruktur** über Rate-Limiting und Backoff. Dieser Server ergänzt einen globalen Deckel über alle Konten hinweg, damit mehrere Konten die Last nicht vervielfachen.
+- Die Core-Lib **schont Fileees Infrastruktur** über ihr eigenes Rate-Limiting und Backoff im HTTP-Transport ([`go-fileee` ADR-0005](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0005-schonender-betrieb-rate-limiting.md)). Dieser Server ergänzt eine zweite, unabhängige Begrenzung auf Ebene der Werkzeugaufrufe selbst — siehe „Ratenbegrenzung" unten.
+
+### Ratenbegrenzung
+
+Jeder Aufruf eines Werkzeugs (`tools/call`) muss drei unabhängige Kontingente passieren, bevor er den Tool-Handler überhaupt erreicht — ein Aufrufer, der eines davon überschreitet, bekommt sofort einen JSON-RPC-Fehler (Code `-32011`), nie eine Wartezeit:
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `FILEEE_RATE_RPS` / `FILEEE_RATE_BURST` | Anfragerate **je Anrufer** — geschlüsselt auf das verifizierte Token-Subject, nicht auf die Client-Adresse (die hängt von `FILEEE_TRUSTED_PROXIES` ab und ist bei falscher Einstellung sogar vom Anrufer selbst wählbar) | `1` RPS, Burst `3` |
+| `FILEEE_RATE_GLOBAL_RPS` / `FILEEE_RATE_GLOBAL_BURST` | Anfragerate **über alle Anrufer hinweg** — das globale Kontingent, das die README bereits vor dieser Einstellung beschrieb, tatsächlich durchgesetzt | `1` RPS, Burst `3` |
+| `FILEEE_MAX_INFLIGHT` | Obergrenze **gleichzeitig laufender** Werkzeugaufrufe, über alle Anrufer hinweg — schützt die eine, je Fileee-Konto geteilte Verbindung ([`internal/clientpool`](internal/clientpool)) vor Überlastung durch Parallelität, unabhängig von der Rate | `8` |
+
+`FILEEE_MAX_UPLOAD_BYTES` wird von `upload_document` durchgesetzt (`internal/tools/write_documents.go`, `uploadDocumentHandler`): Der Aufruf wird abgelehnt, **bevor** irgendetwas dekodiert wird, sobald allein die Länge der base64-kodierten `contentBase64`-Zeichenkette beweist, dass der dekodierte Inhalt das Limit überschreiten müsste — und ein zweites Mal auf der tatsächlichen dekodierten Bytezahl, falls die erste, konservative Prüfung eine Eingabe durchlässt, die sich erst nach dem Dekodieren als zu groß herausstellt. Ein Wert von `0` bedeutet dabei **nicht** „unbegrenzt", sondern wird wie jede andere Obergrenze durchgesetzt (lehnt jeden nicht-leeren Upload ab) — dieselbe Konvention, die `FILEEE_MAX_INFLIGHT` bei `0` bereits hat (siehe „Ratenbegrenzung" oben).
+
+`FILEEE_MAX_DOWNLOAD_BYTES` wird ebenfalls geladen, ist aber **nicht mit den beiden inzwischen existierenden Download-Werkzeugen verbunden**: `get_document_pdf` und `get_page_image` (siehe [`docs/tools.md`](docs/tools.md)) begrenzen ihren jeweiligen Datenstrom über eine eigene, im Code fest verdrahtete Obergrenze von 8 MiB (`maxBinaryBytes`, `internal/tools/read_binary.go`), unabhängig vom konfigurierten Wert dieser Variable (Default 1 MiB) — wer `FILEEE_MAX_DOWNLOAD_BYTES` setzt, ändert damit **nichts** am tatsächlichen Verhalten dieser beiden Werkzeuge. Das ist eine offene Inkonsistenz, keine bewusste Entscheidung; bis sie aufgelöst ist (entweder `maxBinaryBytes` auf `cfg.MaxDownloadBytes` umstellen oder die Variable als für diese Werkzeuge nicht zuständig dokumentieren), gilt für einen Betreiber: **die tatsächliche Grenze ist die feste 8-MiB-Konstante im Code, nicht `FILEEE_MAX_DOWNLOAD_BYTES`.**
+
+Die von `FILEEE_MAX_UPLOAD_BYTES` abgeleitete `MaxRequestBodyBytes` bleibt aus einem unabhängigen Grund offen: Gangway v0.2.0 baut den HTTP-Handler intern ohne einen Weg, dessen Größenlimit zu überschreiben (siehe [ADR-0015](docs/adr/0015-gangway-als-unterbau.md)).
+
+### ID-Whitelist für destruktive Operationen
+
+| Variable | Zweck | Default |
+|---|---|---|
+| `FILEEE_ISSUED_ID_TTL_SECONDS` | Wie lange eine von einem Lese-Werkzeug ausgelieferte ID gültig bleibt, bevor sie wie eine nie ausgelieferte behandelt wird | `1800` (30 Minuten) |
+| `FILEEE_ISSUED_ID_MAX_PER_IDENTITY` | Wie viele IDs sich dieser Server gleichzeitig **je verifizierter Identität** merkt — bei Überlauf wird die jeweils älteste verdrängt | `1000` |
+
+**Wichtiger Stand für dieses Increment, vorab:** `internal/server.New` baut aus beiden Werten den `internal/issued.Store`. Die eine Hälfte ist bereits verdrahtet — aber seit einem Sicherheits-Audit (2026-08-25, ADR-0019 „Nachtrag") mit einer bewusst engen Erfassungslinie, NICHT mehr „jeder erfolgreiche Lese-Aufruf": **NUR gezielte Einzelabrufe** — ein Werkzeug, dem der Aufrufer EINE ID im Parameter nennt und das GENAU DIESE eine, vom Server bestätigte Entität zurückgibt — ruft `rec.Record`. Das sind `get_document`, `get_box`, **`get_document_pdf`** und der generische Einzelabruf-Pfad hinter `registerReferenceTools`/`registerPeopleTools` (`getFromService`, jeweils nur die per `id`-Parameter angeforderte ID, NICHT zusätzliche Nebenprodukt-IDs wie `get_document`s `TagIDs` oder `get_box`s `DocumentIDs`). `get_document_pdf` gehört seit einer Korrektur (Codex-Review-Fund an PR #75, 2026-08-25) ebenfalls dazu: es ist genau so ein gezielter Einzelabruf — der Aufrufer nennt EINE ID, der Server bestätigt sie als existierend und lesbar, indem er das PDF erfolgreich lädt —, nur reist die ID dabei nicht in `StructuredContent`, sondern eingebettet in die Resource-URI des zurückgegebenen `mcp.EmbeddedResource` (siehe `internal/tools/read_binary.go`s eigenen WICHTIG-Kommentarblock). Die übrigen handgeschriebenen Werkzeuge — `list_documents`, `search_documents`, `sync_documents`, `list_document_conversations`, `list_boxes` — sowie alle generischen Listen-/Sync-Werkzeuge (`registerSyncTools`) nehmen SEIT DIESEM AUDIT KEINE ID mehr auf: sie liefern mehrere Entitäten zurück, ohne dass der Aufrufer eine davon einzeln genannt hätte, was die Erfassung sonst fast wertlos macht (ein einziger `list_documents`-Aufruf hätte bis zu 100 IDs aufgenommen, `sync_documents` beim ersten Aufruf gleich den gesamten Bestand, `list_boxes`/`get_box` waren zuvor ungedeckelt) — siehe ADR-0019s „Nachtrag" für die volle Begründung, den bewusst gezahlten Preis (ein zusätzlicher Einzelabruf pro ID) und was der Mechanismus weiterhin nicht leistet. `get_page_image`/`get_page_ocr` nehmen dagegen weiterhin nie eine ID auf (siehe deren eigene Doc-Kommentare — `get_page_image` gibt seine `pageId` in keiner Form an den Aufrufer zurück, und kein Schreib-Werkzeug dieses Servers akzeptiert überhaupt eine Seiten-ID als Parameter). `FILEEE_ISSUED_ID_TTL_SECONDS` und `FILEEE_ISSUED_ID_MAX_PER_IDENTITY` greifen dabei bereits produktiv — `FILEEE_ISSUED_ID_MAX_PER_IDENTITY=0` etwa sorgt dafür, dass sich der Store tatsächlich nichts merkt, weil jede Aufnahme sofort verdrängt wird. **Noch nicht verdrahtet ist die Gegenseite:** Kein Werkzeug befragt eine übergebene ID vor dem Handeln über `rec.Check` gegen diesen Store — das ist der Schritt, den ein späteres Increment (Spec 3b, destruktive und `share`-Werkzeuge, siehe ADR-0013/ADR-0019) nachträgt. Bis dahin hat das Aufnehmen selbst noch keine schützende Wirkung; es legt nur die Grundlage, gegen die eine künftige Prüfung greifen kann.
+
+Beide Werte steuern `internal/issued.Store` (ADR-0013 Punkt 3): Sobald ein Werkzeug ihn befragt, darf eine Identität ein destruktives Werkzeug nur auf eine ID anwenden, die ein vorheriges Lese-Werkzeug für **dieselbe** Identität tatsächlich ausgeliefert hat — eine ID, die nur im Text eines fremden Dokuments auftaucht (etwa in einem eingebetteten Prompt-Injection-Versuch), wäre nie Teil dieser Merkliste und würde deshalb abgelehnt. Innerhalb des Stores sind beide Grenzen bereits jetzt **tatsächlich durchgesetzt**, nicht nur geladen — derselbe Fehler, den `FILEEE_MAX_UPLOAD_BYTES` vor dem write-tools-Increment hatte (siehe oben): eine Einstellung ohne Aufrufstelle täuscht Sicherheit vor, die nicht besteht.
+
+Ein Wert von `0` bedeutet bei beiden **nicht** „unbegrenzt", sondern wird als reale Grenze durchgesetzt (`FILEEE_ISSUED_ID_TTL_SECONDS=0`: jede ID gilt sofort als verfallen; `FILEEE_ISSUED_ID_MAX_PER_IDENTITY=0`: es wird sich nichts gemerkt) — dieselbe fail-closed-Konvention wie bei `FILEEE_MAX_INFLIGHT`/`FILEEE_MAX_UPLOAD_BYTES` oben. Negative Werte lehnt der Start mit einer Fehlermeldung ab.
+
+## Diagnose
+
+`FILEEE_LOG_LEVEL` steuert das diagnostische Protokoll dieses Servers ([`internal/diag`](internal/diag)) — ein JSON-Objekt pro Zeile auf der Standardausgabe, unabhängig von Gangways eigenem Zugriffsprotokoll (NGINX-Format, siehe dessen Doku) und von den Start-/Fehlermeldungen in `cmd/fileee-mcp-server/main.go`, die weiterhin unverändert auf stdout/stderr laufen.
+
+```dotenv
+FILEEE_LOG_LEVEL=info     # Default
+FILEEE_LOG_LEVEL=debug
+```
+
+| Stufe | Was protokolliert wird |
+|---|---|
+| `info` (Default) | Je Werkzeugaufruf: Werkzeugname, Dauer, Erfolg oder Fehlerart (`ok`, `invalid_input`, `access_denied`, `fileee_error` mit HTTP-Status, `error`), der aufgerufene Fileee-Endpunkt und bei Erfolg die Anzahl zurückgegebener Treffer. Zusätzlich je aufgelöster Anfrage: die vom OIDC-Selector ermittelte Fähigkeitsmenge und wie viele Werkzeuge die dafür gebaute Instanz hält — der Befund, wenn ein Client einen leeren Werkzeugkatalog sieht — sowie, bei `MCP_OIDC_REQUIRED_SCOPES`, der Name des fehlenden Scopes bei einer Ablehnung. |
+| `debug` | Zusätzlich zu allem oben: die vom Aufrufer übergebenen Werkzeug-Argumente (Suchbegriffe, Limits, Paging-Offsets) sowie go-fileees eigenes Transport-Protokoll (Methode, Pfad, Statuscode je HTTP-Versuch gegen Fileee, `fileee.WithLogger`). |
+
+**Niemals, auf keiner Stufe:** Zugangsdaten, Token, TOTP-Seed, Antwortkörper der Fileee-API, Dokumentinhalte oder -titel. Jedes Attribut, das dieser Logger schreibt — unabhängig davon, welcher Code es erzeugt hat, unabhängig von der Stufe — läuft durch eine einzige Maskierung (`internal/diag`, `redactingHandler`): ein Feldname, der wie ein Credential aussieht (`password`, `secret`, `token`, `totp`, `seed`, `authorization`, `apikey`, `credential`, `cookie`, als Teilstring, unabhängig von Groß-/Kleinschreibung), wird durch `***` ersetzt, bevor er die Ausgabe erreicht — auch verschachtelt in einer Argument-Gruppe.
+
+> **`debug` enthält Suchbegriffe** (das Argument von `search_documents`) und ist damit selbst schon eine — wenn auch begrenzte — inhaltliche Angabe über die Dokumente des aufrufenden Kontos. Für den Dauerbetrieb ist `info` vorgesehen; `debug` ist ein befristetes Werkzeug zum Fehlersuchen, keine Dauereinstellung.
 
 ## Entwicklung
 

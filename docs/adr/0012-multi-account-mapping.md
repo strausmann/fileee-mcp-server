@@ -4,7 +4,9 @@
 **Datum:** 2026-08-06
 **Ersetzt:** —
 **Ersetzt durch:** —
-**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0014](0014-self-service-onboarding.md), [go-fileee ADR-0005](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0005-schonender-betrieb-rate-limiting.md)
+**Überarbeitet:** —
+**Überarbeitet durch:** [ADR-0015](0015-gangway-als-unterbau.md)
+**Verwandt:** [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), [ADR-0010](0010-idp-agnostische-konfiguration.md), [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md), [ADR-0014](0014-self-service-onboarding.md), [go-fileee ADR-0005](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0005-schonender-betrieb-rate-limiting.md)
 
 ## Kontext
 
@@ -22,9 +24,9 @@ Drei Aspekte machen das heikler, als es klingt:
 
 1. **Die Identität kommt aus dem signierten Token, nicht aus einem Header.** Ausgewertet wird der über `MCP_OIDC_SUBJECT_CLAIM` konfigurierte Claim (Default `sub`).
 
-2. **Gelesen wird ausschließlich aus `req.GetExtra().TokenInfo`**, das pro POST neu gesetzt wird. Ein Zugriff auf `auth.TokenInfoFromContext` innerhalb eines Tool-Handlers ist im Repo **verboten** und wird per Test abgesichert. `RequestExtra` hat übrigens kein Feld `HTTPRequest` — die Token-Information ist der vorgesehene Weg.
+2. **Gelesen wird ausschließlich über `serve.IdentityFrom(ctx)`** — mit [ADR-0015](0015-gangway-als-unterbau.md) der von Gangway bereitgestellte Weg, niemals selbst zwischengespeichert. Der ursprünglich hier verlangte Zugriffspfad `req.GetExtra().TokenInfo` (direkt auf der SDK-eigenen `auth`-Middleware) entfällt, weil dieser Server nicht mehr selbst gegen `auth.RequireBearerToken` verifiziert — Gangways `AttachMCP` übernimmt die Verifikation vor dem MCP-Handler und erzwingt `Stateless = true`, wodurch die oben unter „Die SDK-Semantik" beschriebene Kontextbindung gar nicht erst entsteht. **Wer diesen Server ohne Gangway baut**, gilt die ursprüngliche Regel unverändert: Zugriff auf `auth.TokenInfoFromContext` innerhalb eines Tool-Handlers ist verboten, stattdessen `req.GetExtra().TokenInfo`, das pro POST neu gesetzt wird.
 
-3. **Der `TokenVerifier` muss `TokenInfo.UserID` auf den Subject-Claim setzen.** Bleibt das Feld leer, ist der Session-Hijacking-Schutz des SDK wirkungslos und jeder Inhaber irgendeines gültigen Tokens könnte eine fremde `Mcp-Session-Id` weiterverwenden. Ein leeres `UserID` ist ein Startup-Fehler.
+3. **Die Pflicht, `TokenInfo.UserID` zu setzen, betraf den SDK-eigenen Session-Hijacking-Schutz und entfällt mit Gangway ebenso.** Die Identität wird pro Request neu über `serve.IdentityFrom(ctx)` gelesen; durch die erzwungene Statelessness gibt es keine fortbestehende Sitzung, an der eine fremde `Mcp-Session-Id` weiterverwendet werden könnte. **Wer diesen Server ohne Gangway baut**, gilt weiterhin: Der `TokenVerifier` muss `TokenInfo.UserID` auf den Subject-Claim setzen. Bleibt das Feld leer, ist der Session-Hijacking-Schutz des SDK wirkungslos und jeder Inhaber irgendeines gültigen Tokens könnte eine fremde `Mcp-Session-Id` weiterverwenden. Ein leeres `UserID` ist dort ein Startup-Fehler.
 
 4. **Ein Subject zeigt auf genau ein Konto.** Mehrere Identitäten dürfen dasselbe Konto nutzen; ein Subject in zwei Konten bricht den Start ab. Kein „first match wins" — bei zwei plausiblen Zuordnungen gibt es keine richtige Wahl, also darf der Server nicht raten.
 
@@ -64,3 +66,14 @@ Wenn fremde Benutzer ihre Fileee-Credentials selbst pflegen sollen. Dann greift 
 - [go-fileee#20](https://github.com/strausmann/go-fileee/issues/20) — `Upload` puffert den Multipart-Body vollständig im RAM; mitbestimmend für die Upload-Grenze
 - [go-fileee#22](https://github.com/strausmann/go-fileee/issues/22) — Cookie-Pfad beim Restore; Anlass für einen Test, der nach dem Laden einer Session-Datei einen XSRF-pflichtigen Request fährt
 - Go MCP SDK v1.7.0, `mcp/streamable.go` und `mcp/shared.go` — Grundlage der Punkte 2 und 3
+- [Gangway](https://github.com/strausmann/gangway), Dokumentation https://gangway.strausmann.cloud — unabhängiger zweiter Fund desselben SDK-Fehlers, strukturell andere Lösung; siehe Nachtrag unten
+
+## Nachtrag (2026-08-08)
+
+**Anlass.** Das separat entstandene Projekt [Gangway](https://github.com/strausmann/gangway) — eine wiederverwendbare Auth-/Autorisierungs-Schicht für MCP-Server auf demselben Go-SDK — hat unabhängig denselben Fehler gefunden, den dieses ADR unter „Die SDK-Semantik" beschreibt: den Doc-Kommentar zu `AttachMCP` in `serve/serve.go` (Stand Tag `v0.1.0`), Punkt 2.
+
+**Was dadurch bestätigt wird.** Kontext und Punkt 1 bleiben unverändert richtig — zwei getrennte Implementierungen sind unabhängig voneinander auf dasselbe SDK-Verhalten gestoßen. Ebenso unverändert: Punkte 4–10 (ein Subject pro Konto, kein Fallback, Client-Pool mit `singleflight`, globaler Rate-Limiter, getrennte Session-Dateien, präfigierte Secret-Keys, gekürztes Logging). Keiner dieser Punkte hängt an einem bestimmten Auth-Transportweg.
+
+**Was fraglich wird.** Gangway löst denselben Fehler strukturell anders als Punkt 2/3 hier: nicht durch einen Lese-Pfad, der den betroffenen Kontext umgeht (`req.GetExtra().TokenInfo`), sondern indem die SDK-eigene `auth`-Middleware für die Identität gar nicht erst verwendet wird. Eine eigene HTTP-Middleware verifiziert das Bearer-Token vor dem MCP-Handler und `AttachMCP` erzwingt `mcp.StreamableHTTPOptions.Stateless = true` — dadurch entsteht keine sitzungsübergreifende Kontextbindung mehr, an der ein `context.Value`-Read hängenbleiben könnte. Übernähme dieser Server Gangway als Unterbau für die OAuth-2.1-Rolle aus [ADR-0009](0009-resource-server-statt-eigener-authorization-server.md), entfiele der Code-Pfad, auf den sich Punkt 2 (GetExtra-Gebot) und Punkt 3 (TokenInfo.UserID-Pflicht) beziehen, vollständig — `auth.RequireBearerToken`, `TokenInfo` und `GetExtra()` würden dann nicht mehr benutzt. Die Identität käme stattdessen aus `serve.IdentityFrom(ctx)`, sicher aus demselben Grund, aus dem Gangway `AttachMCP` überhaupt so gebaut hat.
+
+**Wie es weiterging.** Zum Zeitpunkt dieses Nachtrags war die Übernahme noch keine getroffene Entscheidung. Sie ist es inzwischen: [ADR-0015](0015-gangway-als-unterbau.md) legt fest, dass dieser Server Gangway v0.2.0 als Unterbau für Anmeldung, Adress-Freigabeliste, Freigabe je Werkzeug und Zugriffsprotokoll benutzt. Punkt 2 und 3 oben sind entsprechend umformuliert — auf „Identität ausschließlich über `serve.IdentityFrom(ctx)`, niemals selbst zwischenspeichern" —, jeweils mit der ursprünglichen, weiterhin gültigen Regel für den Fall, dass dieser Server einmal ohne Gangway gebaut würde. Die ursprüngliche Fassung dieses Nachtrags bleibt oberhalb unverändert stehen, als Protokoll des Fundes.

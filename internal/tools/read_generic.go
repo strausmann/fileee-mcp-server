@@ -1,0 +1,722 @@
+// read_generic.go: seven Fileee services share fileee.ReadService[T]
+// (Query/Diff/Get, see go-fileee's own doc comment on that interface).
+// Instead of fourteen near-identical handlers, one generic helper mounts
+// them all — the differences between services live exclusively in a
+// descriptor, never in copy-pasted handler bodies.
+package tools
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"reflect"
+	"strings"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/strausmann/go-fileee/fileee"
+
+	"github.com/strausmann/fileee-mcp-server/internal/clientpool"
+	"github.com/strausmann/fileee-mcp-server/internal/issued"
+)
+
+// readServiceDescriptor describes how one ReadService[T] appears as a
+// list/get tool pair.
+//
+// S is Summarize's return type — a per-service, JSON-tagged struct (see
+// Aufgabe 3/4's own descriptors), deliberately NOT map[string]any: a map
+// return value would still work, but every caller of a generated tool
+// (including the model reading its schema) would see an untyped object
+// with no field list, and a typo in a map key would compile without
+// complaint and simply vanish from the output. A concrete struct type
+// parameter gives the SDK's schema derivation the same real field names
+// and types documentSummary already gives list_documents (read.go), for
+// every service this helper mounts, at the same one-descriptor cost.
+//
+// Summarize must return only fields Fileee itself assigns — never a value
+// that could contain third-party free text (a document's title, a
+// contact's note). UntrustedLine is the deliberate escape hatch for that
+// foreign content: it never appears in Summarize's return value, only in
+// the accompanying text content, framed by wrapUntrustedLines (ADR-0013;
+// see also listDocumentsHandler's own doc comment for why the same rule
+// applies there).
+//
+// Nothing about Summarize's and UntrustedLine's SIGNATURES enforces that
+// separation — they are two independent functions a descriptor author
+// writes by hand, and nothing stops one from accidentally also returning
+// what the other frames (the entity's foreign text would then reach the
+// model twice: once framed as untrusted, once again, unframed, inside
+// StructuredContent). Two things enforce it in practice instead:
+//
+//  1. PoisonProbe (below), checked once by registerReadService itself, at
+//     registration — not per request, and never against real Fileee data
+//     (see mustNotLeakUntrustedLine's own doc comment for the reasoning
+//     behind that split).
+//  2. Every descriptor's own registration test (the pattern
+//     TestRegisterReadServiceMeldetListeUndDetailAn already establishes)
+//     exercises registerReadService, and therefore exercises 1 for free —
+//     there is no separate assertion to remember.
+//
+// Neither of these — no mechanism this package can build — can decide
+// WHETHER a given T carries foreign text at all; that is domain knowledge
+// (does the account holder or a third party choose this value?), not
+// something derivable from a type or a running value. That classification
+// is made once, by hand, at each descriptor's UntrustedLine field itself —
+// see that field's own doc comment for the two ways to make it, and for
+// the boundary that stays a matter of author judgement no matter which
+// (Aufgabe 3's own tag/company/document-type/scheme descriptors are the
+// concrete case: their names are chosen by the account holder, per the
+// concept document, not by a third party — so they leave UntrustedLine
+// nil, deliberately, not as an oversight).
+type readServiceDescriptor[T any, S any] struct {
+	// ListName and GetName are the registered tool names.
+	ListName string
+	GetName  string
+	// ListTitle and GetTitle are each tool's Annotations.Title — the
+	// short, human-facing name a client shows or gates on (Task 4, the
+	// MCP connector standard), independent of the Description text below.
+	ListTitle string
+	GetTitle  string
+	// ListDescription and GetDescription are each tool's Description, held
+	// to the same four-part standard (what, returns, when, does-not) and
+	// minimum length descriptions_test.go checks for RegisterAll's own
+	// tools — checked there again once Aufgabe 3/4 wire a service through
+	// this helper into RegisterAll.
+	ListDescription string
+	GetDescription  string
+	// Service resolves this descriptor's ReadService[T] from an
+	// already-authenticated client — a field access on *fileee.Client
+	// (e.g. func(c *fileee.Client) fileee.ReadService[fileee.Tag] { return
+	// c.Tags }) in production, and a fake ignoring its argument entirely
+	// in a test that only cares about a service's Query/Get behaviour (see
+	// read_generic_test.go).
+	Service func(*fileee.Client) fileee.ReadService[T]
+	// Summarize renders one entity's Fileee-owned fields as S — never
+	// foreign free text, see this type's own doc comment.
+	Summarize func(*T) S
+	// UntrustedLine renders one entity's foreign free text as a single
+	// line for the untrusted block wrapUntrustedLines builds. There are
+	// two distinct ways for it to say "nothing to frame here", and they
+	// mean different things:
+	//
+	//   - Set, but returning "" for a PARTICULAR entity: this entity of an
+	//     otherwise foreign-text-carrying type just happens to have none
+	//     right now (list_documents' own title field, empty for a
+	//     document with no title, is this case — see
+	//     listDocumentsHandler's own doc comment). mustNotLeakUntrustedLine
+	//     still runs and still requires PoisonProbe.
+	//   - Left nil: this TYPE never carries foreign text at all — every
+	//     field Summarize could possibly expose is chosen by the account
+	//     holder, not by a third party (Aufgabe 3's tag/company/
+	//     document-type/scheme descriptors are the concrete case: their
+	//     names are the account holder's own, per the concept document).
+	//     mustNotLeakUntrustedLine skips its check entirely then — there
+	//     is nothing to verify a leak against — and PoisonProbe must be
+	//     nil too (see that field's own doc comment).
+	//
+	// This second case is a judgement call this package cannot verify —
+	// see readServiceDescriptor's own doc comment for why no mechanism
+	// here can decide it for you.
+	UntrustedLine func(*T) string
+	// PoisonProbe constructs a T whose foreign-text source — whichever
+	// field(s) UntrustedLine actually reads — is set to the marker it is
+	// given. registerReadService calls it once, at registration, to prove
+	// Summarize never reproduces what UntrustedLine frames (see
+	// mustNotLeakUntrustedLine).
+	//
+	// Required whenever UntrustedLine is set (a nil PoisonProbe then
+	// panics at registration rather than silently skipping the check —
+	// see UntrustedLine's own doc comment for why the two fields track
+	// each other, and names.go's reasoning for the same "silent gap must
+	// be loud" principle applied to readToolNames). Must itself be nil
+	// when UntrustedLine is nil: a set PoisonProbe with a nil
+	// UntrustedLine panics too — that combination reads as "I started
+	// wiring the foreign-text check and stopped partway", the one half of
+	// this mistake a mechanism CAN catch (see UntrustedLine's own doc
+	// comment on the half it cannot).
+	//
+	// Example, for a descriptor whose UntrustedLine composes "Max " +
+	// contact.LastName:
+	//
+	//	PoisonProbe: func(marker string) *fileee.Contact {
+	//		return &fileee.Contact{LastName: marker}
+	//	}
+	PoisonProbe func(marker string) *T
+	// IDOf liefert die Fileee-eigene ID einer Entität.
+	//
+	// WICHTIG (Nachprüfungs-Befund, Codex-Review nach ADR-0019):
+	// getFromService ruft d.IDOf SEIT DIESEM FIX NICHT MEHR AUF — es
+	// nahm zuvor entry's ANTWORT-ID auf (d.IDOf(entry)) statt der vom
+	// Aufrufer im Parameter genannten id, und hätte bei einer Divergenz
+	// zwischen beiden (der fremde Fileee-Server liefert theoretisch kein
+	// Kanonisierungsversprechen für entry.ID gegenüber der angefragten
+	// id) genau die falsche ID gewhitelistet — siehe getFromService's
+	// eigenen Doc-Kommentar für die volle Begründung. rec.Record läuft
+	// dort seither mit id, nicht mit d.IDOf(entry).
+	//
+	// IDOf bleibt hier trotzdem ein Pflichtfeld (mustHaveIDOf, unverändert
+	// durchgesetzt) — aus demselben Grund, den syncDescriptor.IDOf's
+	// eigener Doc-Kommentar (read_sync.go) für seinen bereits länger
+	// laufenden Aufrufer-losen Zustand nennt: es hält die Deskriptor-Form
+	// über alle generischen Konstruktoren hinweg einheitlich, und ein
+	// vergessenes IDOf bliebe ohne diesen Guard bis zum ersten realen
+	// Aufruf unsichtbar (mustHaveIDOf, unten). d.IDOf hat für
+	// readServiceDescriptor damit — wie für syncDescriptor bereits seit
+	// der ADR-0019-Verschärfung — KEINEN Aufrufer mehr zur Laufzeit; nur
+	// die Deskriptor-Konstruktoren setzen es weiterhin, und
+	// TestAlleGenerischenDeskriptorenHabenEinIDOf prüft weiterhin, dass
+	// keiner es vergisst.
+	IDOf func(*T) string
+}
+
+// genericListInput are every generic list tool's parameters — the same
+// shape listDocumentsInput already uses (read.go), so a caller learns one
+// paging convention instead of one per service.
+type genericListInput struct {
+	// Limit caps how many entries this call returns. 0 (the default) uses
+	// defaultLimit; anything above maxLimit is capped, not refused.
+	Limit int `json:"limit,omitempty" jsonschema:"maximum number of entries to return (default 20, max 100)"`
+	// Start is the zero-based offset into the caller's full entry list,
+	// for paging past Limit.
+	Start int `json:"start,omitempty" jsonschema:"zero-based offset into the result list, for paging"`
+}
+
+// genericListOutput is a generic list tool's structured result
+// (CallToolResult.StructuredContent). S is the same summary type its
+// readServiceDescriptor uses — see that type's own doc comment on why.
+type genericListOutput[S any] struct {
+	// Entries are the returned entries' structured summaries, in the order
+	// Fileee returned them.
+	Entries []S `json:"entries"`
+	// TotalRows is the caller's total entry count, independent of how many
+	// this one call actually returned.
+	TotalRows int `json:"totalRows"`
+}
+
+// genericGetInput are every generic get tool's parameters.
+type genericGetInput struct {
+	// ID identifies the entry to load. Required; an empty ID is rejected
+	// before any network access (see genericGetHandler).
+	ID string `json:"id" jsonschema:"identifier of the entry to load"`
+}
+
+// genericGetOutput is a generic get tool's structured result
+// (CallToolResult.StructuredContent).
+type genericGetOutput[S any] struct {
+	// Entry is the loaded entry's structured summary.
+	Entry S `json:"entry"`
+}
+
+// registerReadService mounts d.ListName and d.GetName onto s, resolving
+// their Fileee connection through p on every call (see clientFor) — the
+// same pattern RegisterAll uses for list_documents/search_documents,
+// generalized over any fileee.ReadService[T].
+//
+// logger receives d.ListName's and d.GetName's diagnostic log exactly the
+// way listDocumentsHandler/searchDocumentsHandler already do (read.go,
+// logToolStart/logToolEnd) — passed straight through to
+// genericListHandler/genericGetHandler, never rebuilt here. Aufgabe 2c
+// closed the gap where this parameter did not exist yet (#45); see this
+// function's own callers for why threading it through matters (RegisterAll's
+// own doc comment, read.go).
+//
+// It panics — like mcp.AddTool itself already does for a malformed tool —
+// if d fails mustNotLeakUntrustedLine's check, OR if d.IDOf is nil
+// (mustHaveIDOf). Both checks run once, here, at registration time, not per
+// request: see mustNotLeakUntrustedLine's own doc comment for why a
+// per-request version would be worse than the bug it replaces — the same
+// reasoning applies to d.IDOf, whose absence is likewise a property of the
+// descriptor's CODE, never of a particular call. Before this check existed,
+// a nil d.IDOf was caught only by TestAlleGenerischenDeskriptorenHabenEinIDOf
+// (a test, not a build-time guard) and crashed the whole server process on
+// the first real call that reached a handler's d.IDOf(&entry) — at the time
+// that was genericListHandler's own call (Issue #70, no recover() in the SDK
+// dispatch path); mustHaveIDOf turns that into a registration-time panic
+// instead, matching how mustNotLeakUntrustedLine already treats a comparable
+// descriptor defect. Since ADR-0019's whitelist tightening, genericListHandler
+// no longer calls d.IDOf at all; since a later fix (the same review round
+// that produced this comment — see getFromService's own doc comment,
+// readServiceDescriptor.IDOf's own doc comment), genericGetHandler's
+// getFromService no longer calls it either — rec.Record there runs with the
+// caller's requested id, not d.IDOf(entry). d.IDOf has, like
+// syncDescriptor.IDOf (read_sync.go) already did before it, no runtime
+// caller left at all; mustHaveIDOf still guards its non-nilness the same
+// way, at the same single registration point, purely to keep the
+// descriptor's shape consistent and to catch an author who forgets to set
+// it.
+//
+// rec is threaded straight through to genericGetHandler ONLY, never built
+// here — the same pattern logger establishes: RegisterAll (read.go) owns
+// the one *issued.Store this process uses and passes it down through
+// registerReferenceTools/registerPeopleTools, exactly as it does for
+// logger. genericListHandler does NOT receive rec (ADR-0019): since the
+// audit-driven whitelist tightening, only a single-entity get call records
+// an id as issued — see genericListHandler's/listFromService's own doc
+// comments for why a list/search/sync call recording every id it returns
+// made the whole whitelist nearly meaningless.
+func registerReadService[T any, S any](s *mcp.Server, p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) {
+	mustNotLeakUntrustedLine(d)
+	mustHaveIDOf("readServiceDescriptor", d.ListName+"/"+d.GetName, d.IDOf)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        d.ListName,
+		Description: d.ListDescription,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.ListTitle},
+	}, genericListHandler(p, logger, d))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        d.GetName,
+		Description: d.GetDescription,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: d.GetTitle},
+	}, genericGetHandler(p, logger, d, rec))
+}
+
+// mustNotLeakUntrustedLine proves, once, that d.Summarize never reproduces
+// what d.UntrustedLine frames — using a synthetic marker constructed by
+// d.PoisonProbe, never real Fileee data.
+//
+// Why a marker instead of comparing UntrustedLine's actual output against
+// Summarize's actual output directly: UntrustedLine's text can be COMPOSED
+// from several fields ("Max " + contact.LastName is the case that broke an
+// earlier, exact-equality version of this check — Summarize returning only
+// LastName is a real, partial leak that never equals the whole line). A
+// fixed, unpredictable marker embedded in the one field UntrustedLine
+// actually reads sidesteps that: it must appear, whole, inside
+// UntrustedLine's output BY CONSTRUCTION (checked below, and PoisonProbe
+// setting the wrong field is itself a bug this catches), and it can then
+// appear ANYWHERE inside Summarize's rendered fields — the whole line, a
+// substring of it, doesn't matter — while still being unable to
+// coincidentally match a real, unrelated field: reused from newUntrustedBoundary
+// (read.go) specifically for its "nobody could have predicted this ahead
+// of the call that produces it" property, the same property that makes it
+// safe to test with strings.Contains here without the false-positive risk
+// a real word ("Rechnung" turning up in two unrelated fields, a case this
+// package hit for real during review) would carry.
+//
+// Why once, at registration, not per request against real entities: a
+// leaking descriptor is a property of its CODE (does Summarize reproduce
+// UntrustedLine's source or not) — true for every entity of that type or
+// none, never data-dependent. A per-request version would need to compare
+// against the CALL's actual UntrustedLine output rather than a marker,
+// reintroducing the exact substring-vs-exact tradeoff this function's
+// marker design exists to avoid, and would turn a coincidental match in a
+// real caller's real documents into a rejected, working tool call —
+// worse than the silent duplication this exists to catch. This runs once
+// per process (registration time), so its cost is irrelevant regardless.
+//
+// d.UntrustedLine == nil is not a degenerate input to reject — it is the
+// descriptor's own declaration that this T never carries foreign text at
+// all (see that field's own doc comment), and this function has nothing
+// to check a leak against in that case: it returns immediately, requiring
+// PoisonProbe to be nil too (a set one with a nil UntrustedLine panics —
+// see PoisonProbe's own doc comment on why that combination is worth
+// catching even though the reverse mistake, both left nil for a type that
+// actually does carry foreign text, is not something any mechanism here
+// can detect).
+func mustNotLeakUntrustedLine[T any, S any](d readServiceDescriptor[T, S]) {
+	mustNotLeakUntrustedText("readServiceDescriptor", d.ListName+"/"+d.GetName, d.UntrustedLine, d.PoisonProbe, d.Summarize)
+}
+
+// mustNotLeakUntrustedText is mustNotLeakUntrustedLine's descriptor-agnostic
+// core — extracted (Aufgabe 2b, Antrag #46) so syncDescriptor's own leak
+// check (read_sync.go) can share it instead of re-implementing the exact
+// same marker/panic logic against a differently named struct. Go's generics
+// have no structural typing across distinct named struct types, so sharing
+// the CHECK means sharing a function of the four fields it actually reads,
+// not the two callers' descriptor types themselves.
+//
+// descriptorType and label together identify the caller in every panic
+// message below: descriptorType names the Go struct whose field is at
+// fault ("readServiceDescriptor" or "syncDescriptor", see each caller's own
+// call site), label identifies which instance of it ("list_tags/get_tag"
+// or "sync_tags"). The first extraction of this function (Aufgabe 2b's
+// first round) dropped descriptorType entirely and reasoned the loss away
+// as "cosmetic" — true only as long as exactly one descriptor type
+// existed. A whole-branch review caught it once a second type
+// (syncDescriptor) existed and the same wording no longer said which type
+// a given panic came from; see this repo's PR #46 review thread and
+// read_generic_test.go/read_sync_test.go's own message-content tests
+// (TestMustNotLeakUntrustedTextMeldetDenDeskriptorTyp and its
+// read_sync_test.go counterpart) for the regression test that would have
+// caught it.
+//
+// See mustNotLeakUntrustedLine's own (now slightly stale in wording, still
+// accurate in substance) doc comment above for the full reasoning behind the
+// marker design and the once-at-registration timing; this function is that
+// reasoning's implementation.
+func mustNotLeakUntrustedText[T any, S any](descriptorType, label string, untrustedLine func(*T) string, poisonProbe func(marker string) *T, summarize func(*T) S) {
+	if untrustedLine == nil {
+		if poisonProbe != nil {
+			panic(fmt.Sprintf(
+				"fileee-mcp: tools: %s: %s.PoisonProbe is set but UntrustedLine is nil — "+
+					"either wire UntrustedLine too, or remove PoisonProbe if this type truly carries no foreign text",
+				label, descriptorType))
+		}
+		return
+	}
+
+	if poisonProbe == nil {
+		panic(fmt.Sprintf(
+			"fileee-mcp: tools: %s: %s.PoisonProbe is required whenever UntrustedLine is set — "+
+				"without it, whether Summarize reproduces UntrustedLine's foreign text was never checked for this descriptor",
+			label, descriptorType))
+	}
+
+	marker, err := newUntrustedBoundary()
+	if err != nil {
+		panic(fmt.Sprintf("fileee-mcp: tools: %s: %s: generate poison marker: %v", label, descriptorType, err))
+	}
+
+	entity := poisonProbe(marker)
+	line := untrustedLine(entity)
+	if !strings.Contains(line, marker) {
+		panic(fmt.Sprintf(
+			"fileee-mcp: tools: %s: %s.PoisonProbe does not set the field UntrustedLine actually reads — "+
+				"UntrustedLine's rendered text %q does not contain the probe's marker",
+			label, descriptorType, line))
+	}
+
+	for _, v := range summaryFieldValues(summarize(entity)) {
+		if strings.Contains(v, marker) {
+			panic(fmt.Sprintf(
+				"fileee-mcp: tools: %s: %s.Summarize reproduces UntrustedLine's foreign text — "+
+					"a summary field's rendered value contains the probe's marker",
+				label, descriptorType))
+		}
+	}
+}
+
+// mustHaveIDOf panics if idOf is nil — used by registerReadService
+// (readServiceDescriptor.IDOf) and registerSync (syncDescriptor.IDOf) at
+// registration time, mirroring mustNotLeakUntrustedText's own
+// once-at-registration, panic-not-error treatment of a descriptor defect
+// that is a property of the descriptor's code, never of a particular call.
+//
+// Before this check existed, a nil IDOf was caught only by
+// TestAlleGenerischenDeskriptorenHabenEinIDOf (internal/tools/read_generic_test.go)
+// — a test a future descriptor constructor could simply not run for, or
+// whose failure could be missed in a partial test run. In production, a
+// mounted tool with a nil IDOf crashed the ENTIRE server process on its
+// first real call (genericListHandler's/genericSyncHandler's d.IDOf(&entry),
+// this file/read_sync.go, no recover() in the SDK dispatch path — Issue
+// #70): worse than the nil-UntrustedLine leak mustNotLeakUntrustedText
+// already guards against, because that leak is silent while this one is a
+// process-wide outage. label identifies which descriptor is at fault (its
+// ListName/GetName or SyncName), descriptorType which of the two
+// descriptor kinds it is — the same two-argument shape
+// mustNotLeakUntrustedText already uses for its own panic messages.
+func mustHaveIDOf[T any](descriptorType, label string, idOf func(*T) string) {
+	if idOf == nil {
+		panic(fmt.Sprintf(
+			"fileee-mcp: tools: %s: %s.IDOf is nil — a mounted read tool whose descriptor "+
+				"never sets IDOf crashes the whole server process on its first real call "+
+				"(Issue #70, no recover() in the SDK dispatch path); set IDOf in the "+
+				"descriptor constructor",
+			label, descriptorType))
+	}
+}
+
+// summaryFieldValues renders summary's exported field values as strings —
+// one level deep, without recursing into nested structs/slices: every
+// summary struct in this package so far (documentSummary in read.go
+// included) is flat. If summary itself is not a struct (or a pointer to
+// one), its single value is rendered as one candidate. Only used by
+// mustNotLeakUntrustedLine.
+func summaryFieldValues(summary any) []string {
+	rv := reflect.ValueOf(summary)
+	for rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return []string{fmt.Sprint(summary)}
+	}
+	values := make([]string, 0, rv.NumField())
+	for i := 0; i < rv.NumField(); i++ {
+		if !rv.Type().Field(i).IsExported() {
+			continue
+		}
+		values = append(values, fmt.Sprint(rv.Field(i).Interface()))
+	}
+	return values
+}
+
+// genericListHandler resolves d.ListName. It splits client resolution
+// (clientFor, which needs a real, gangway-verified caller identity — see
+// that function's own doc comment) from the actual Query/summarize/frame
+// logic (listFromService), so the latter stays testable against a fake
+// fileee.ReadService[T] without needing a live Fileee login (see
+// read_generic_test.go).
+//
+// It logs through logger exactly the way listDocumentsHandler does
+// (read.go): arguments once via logToolStart (debug only), outcome and
+// duration once via logToolEnd, on every path including a clientFor
+// failure. The Fileee wire endpoint a given service's Query call actually
+// reaches is, unlike list_documents' own listDocumentsEndpoint constant
+// (read.go), not something this generic layer knows per descriptor — d
+// carries no such field, and go-fileee's fileee.ReadService[T] does not
+// expose it either — so logToolEnd's endpoint argument is passed as "",
+// deliberately, rather than a guessed or hardcoded value.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit):
+// this handler takes NO *issued.Store — unlike genericGetHandler, it never
+// records any of the ids it returns as issued. See listFromService's own
+// doc comment for the full reasoning; in short, a single call here can
+// return up to maxLimit rows (and, paginated, an entire account's worth),
+// none of which the caller named individually — recording all of them
+// would have made the whitelist almost meaningless.
+func genericListHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S]) mcp.ToolHandlerFor[genericListInput, genericListOutput[S]] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericListInput) (*mcp.CallToolResult, genericListOutput[S], error) {
+		start := time.Now()
+		logToolStart(ctx, logger, d.ListName, slog.Int("start", in.Start), slog.Int("limit", in.Limit))
+
+		client, err := clientFor(ctx, p)
+		if err != nil {
+			logToolEnd(ctx, logger, d.ListName, start, "", 0, err)
+			return nil, genericListOutput[S]{}, err
+		}
+		result, out, err := listFromService(ctx, d, d.Service(client), in)
+		logToolEnd(ctx, logger, d.ListName, start, "", len(out.Entries), err)
+		return result, out, err
+	}
+}
+
+// listFromService is genericListHandler's logic below client resolution:
+// query service, summarize every row into S, collect the foreign lines
+// UntrustedLine hands back, and frame them (wrapUntrustedLines) — kept
+// separate from genericListHandler so a test can drive it directly against
+// a fake service instead of a live *fileee.Client.
+//
+// WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
+// verschärft gegenüber der ursprünglichen Aufgabe 4/5-Fassung): dieser
+// Pfad nimmt SEIT DEM AUDIT KEINE der zurückgegebenen IDs mehr in die
+// issued-Whitelist auf — weder hier noch über einen rec-Parameter, den
+// diese Funktion deshalb absichtlich nicht mehr entgegennimmt. Vorher rief
+// listFromService rec.Record(ctx, ids...) für JEDE Zeile auf, die eine
+// einzige Query lieferte (Standardgrenze defaultLimit=20, per Parameter
+// bis maxLimit=100 pro Aufruf, per wiederholtem Start/Limit-Paging bis zum
+// Deckel von 1000 IDs je Identität, issued.Store.maxPerIdentity) — bei
+// einem Konto mit ein paar hundert Dokumenten hebt EIN einziger
+// list_*-Aufruf damit praktisch den gesamten erreichbaren ID-Raum in die
+// Whitelist, ohne dass der Aufrufer auch nur eine dieser IDs je selbst
+// genannt hätte. Die Zusage "nur was echt gelesen wurde" entwertete sich
+// damit faktisch zu "fast alles im Konto" (Sicherheits-Audit, zwei
+// unabhängige Hunter, siehe ADR-0019).
+//
+// Die neue Linie: NUR ein gezielter Einzelabruf — ein Werkzeug, dem der
+// Aufrufer eine ID NENNT und das GENAU DIESE eine, vom Server als
+// existierend und lesbar bestätigte Entität zurückgibt (getFromService,
+// unten) — nimmt eine ID auf. Ein Werkzeug wie dieses hier, das MEHRERE
+// Entitäten liefert, ohne dass der Aufrufer sie einzeln genannt hat, nimmt
+// KEINE mehr auf. Der bewusst gezahlte Preis: ein Aufrufer, der mehrere
+// konkrete Treffer als gültige Ziele für ein späteres destruktives
+// Werkzeug braucht, muss sie nach einem list_*-Aufruf einzeln per
+// getFromService nachladen — errNotIssuedFor (internal/issued) nennt
+// genau diesen Weg. Was der Mechanismus damit weiterhin NICHT leistet:
+// eine Injektion kann weiterhin "ruf erst get_X(Y) auf, dann nutze Y" im
+// Text eines fremden Dokuments verlangen — der Schutz erzwingt nur, dass Y
+// wirklich im Konto existiert und lesbar ist, und macht den Angriff
+// mehrschrittig, mehr nicht (siehe ADR-0019).
+func listFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], in genericListInput) (*mcp.CallToolResult, genericListOutput[S], error) {
+	res, err := service.Query(ctx, fileee.QueryOptions{
+		Start: nonNegative(in.Start),
+		Limit: clampLimit(in.Limit),
+	})
+	if err != nil {
+		return nil, genericListOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.ListName, err)
+	}
+
+	out := genericListOutput[S]{TotalRows: res.TotalRows, Entries: make([]S, 0, len(res.Rows))}
+	lines := make([]string, 0, len(res.Rows))
+	for i := range res.Rows {
+		entry := res.Rows[i]
+		out.Entries = append(out.Entries, d.Summarize(&entry))
+		if line := untrustedLineOf(d, &entry); line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	result, err := wrapUntrustedLines(lines)
+	if err != nil {
+		return nil, genericListOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.ListName, err)
+	}
+	return result, out, nil
+}
+
+// genericGetHandler resolves d.GetName. The empty-ID check runs before
+// clientFor — the same order search_documentsHandler already uses for its
+// own required parameter (read.go) — so a caller's input mistake is
+// rejected without spending a login round trip on it, and so this path is
+// testable without a *clientpool.Pool at all (see
+// read_generic_test.go).
+//
+// It logs through logger the same way genericListHandler does (see that
+// function's own doc comment for the endpoint-argument caveat) — the
+// requested ID is logged at debug only (logToolStart), the same
+// "arguments are content, not bare operating metadata" reasoning
+// searchDocumentsHandler already applies to its own search term (read.go).
+func genericGetHandler[T any, S any](p *clientpool.Pool, logger *slog.Logger, d readServiceDescriptor[T, S], rec *issued.Store) mcp.ToolHandlerFor[genericGetInput, genericGetOutput[S]] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in genericGetInput) (*mcp.CallToolResult, genericGetOutput[S], error) {
+		start := time.Now()
+		logToolStart(ctx, logger, d.GetName, slog.String("id", in.ID))
+
+		if strings.TrimSpace(in.ID) == "" {
+			err := fmt.Errorf("fileee-mcp: tools: %s: id must not be empty", d.GetName)
+			logToolEnd(ctx, logger, d.GetName, start, "", 0, err)
+			return nil, genericGetOutput[S]{}, err
+		}
+
+		client, err := clientFor(ctx, p)
+		if err != nil {
+			logToolEnd(ctx, logger, d.GetName, start, "", 0, err)
+			return nil, genericGetOutput[S]{}, err
+		}
+		result, out, err := getFromService(ctx, d, d.Service(client), in.ID, rec)
+		logToolEnd(ctx, logger, d.GetName, start, "", 1, err)
+		return result, out, err
+	}
+}
+
+// getFromService is genericGetHandler's logic below client resolution —
+// split out for the same testability reason as listFromService.
+//
+// rec.Record (Aufgabe 4) runs only AFTER the response is fully,
+// successfully built — the same "never on an error path" rule
+// listFromService's own doc comment states, so a Get call whose response
+// never actually reached the caller can never mark its id as issued.
+//
+// WICHTIG (Nachprüfungs-Befund, Codex-Review nach ADR-0019): Record läuft
+// hier mit dem vom Aufrufer im Parameter genannten id, NICHT mehr mit
+// d.IDOf(entry) — der ID aus der ANTWORT. Vor diesem Fix nahm getFromService
+// entry's eigene ID auf, nicht die angeforderte; d.IDOf(entry) blieb dabei
+// weiterhin ein Pflichtfeld für mustHaveIDOf (readServiceDescriptor.IDOf's
+// eigener Doc-Kommentar), nur getFromService selbst ruft es seither nicht
+// mehr auf.
+//
+// Der Unterschied ist mehr als kosmetisch: service.Get(ctx, id) fragt
+// service.inner.Get intern per HTTP GET .../rest/<id> ab (go-fileee,
+// restService[T].Get) und dekodiert den Response-Body direkt in T — es gibt
+// dort KEINE clientseitige Kanonisierung, die id vor dem Request umschreiben
+// würde. Trotzdem ist entry.ID (das Feld, das der FREMDE Fileee-Server im
+// JSON-Body zurückgibt) nicht per Konstruktion identisch mit id: bestätigt
+// wird nur, dass die vom Aufrufer genannte id bei DIESEM Server auf eine
+// existierende, lesbare Entität auflöst — nicht, dass ihr "id"-Feld in der
+// Antwort exakt derselbe String ist (z. B. bei serverseitiger
+// Groß-/Kleinschreibungs-Normalisierung oder einem Alias/einer Dublette).
+// Divergiert id von entry's tatsächlicher ID, hätte d.IDOf(entry) also eine
+// ID aufgenommen, die der Aufrufer NIE genannt hat — und Check hätte
+// ausgerechnet die tatsächlich angeforderte id als "nicht ausgeliefert"
+// abgelehnt: die exakte Umkehrung von ADR-0019s Linie "erfasst wird nur die
+// ID, die der Aufrufer selbst im Parameter genannt hat UND die der Server
+// als existierend und lesbar bestätigt hat" (issued-Paket-Doc-Kommentar).
+//
+// id selbst erfüllt beide Hälften dieser Linie unabhängig davon, was
+// entry.ID enthält: der Aufrufer hat sie im Parameter genannt (erste
+// Hälfte), und der erfolgreiche, fehlerfrei dekodierte service.Get-Aufruf
+// IST die Bestätigung, dass sie bei diesem Server auf eine existierende,
+// lesbare Entität auflöst (zweite Hälfte) — unabhängig vom exakten Wert
+// von entry.ID. Dieselbe Begründung trägt bereits documentFromService
+// (read.go) und boxFromService (read_boxes.go), beide seit demselben Fund
+// ebenfalls auf id statt auf die jeweilige Antwort-ID umgestellt.
+//
+// Bewusst NICHT gewählt: BEIDE IDs aufnehmen, falls sie divergieren. Das
+// würde entry.ID als NEBENPRODUKT der Antwort in die Whitelist heben, ohne
+// dass der Aufrufer sie je einzeln genannt hätte — exakt das Muster, das
+// dieselbe Verschärfung für TagIDs/DocumentIDs/Konversations-IDs bereits
+// ausschließt (documentFromService's/boxFromService's eigene
+// Doc-Kommentare). Ob eine Divergenz bei diesem fremden Server überhaupt
+// vorkommt, ist von hier aus nicht belegbar (go-fileee selbst kanonisiert
+// nichts) — die gewählte Variante bleibt aber auch dann korrekt, wenn sie
+// künftig doch vorkäme, ohne eine zusätzliche, vom Aufrufer nie genannte ID
+// zu whitelisten.
+func getFromService[T any, S any](ctx context.Context, d readServiceDescriptor[T, S], service fileee.ReadService[T], id string, rec *issued.Store) (*mcp.CallToolResult, genericGetOutput[S], error) {
+	entry, err := service.Get(ctx, id)
+	if err != nil {
+		return nil, genericGetOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.GetName, err)
+	}
+
+	out := genericGetOutput[S]{Entry: d.Summarize(entry)}
+	result, err := wrapUntrustedLines([]string{untrustedLineOf(d, entry)})
+	if err != nil {
+		return nil, genericGetOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.GetName, err)
+	}
+	rec.Record(ctx, id)
+	return result, out, nil
+}
+
+// untrustedLineOf returns d.UntrustedLine(entity), or "" if UntrustedLine
+// is nil — the descriptor's own declaration that this T carries no foreign
+// text at all (see UntrustedLine's own doc comment on readServiceDescriptor).
+func untrustedLineOf[T any, S any](d readServiceDescriptor[T, S], entity *T) string {
+	if d.UntrustedLine == nil {
+		return ""
+	}
+	return d.UntrustedLine(entity)
+}
+
+// wrapUntrustedLines frames lines' non-empty entries as one untrusted
+// block, or produces no text content at all when none survive (an empty
+// frame would be pure noise, the same call renderDocumentList already
+// makes for list_documents — read.go). It composes wrapUntrusted (read.go)
+// for the actual boundary generation and template; it does not reimplement
+// either — the only thing this function decides is whether a block is
+// worth producing at all and how to turn the result into a
+// *mcp.CallToolResult.
+func wrapUntrustedLines(lines []string) (*mcp.CallToolResult, error) {
+	nonEmpty := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty = append(nonEmpty, line)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return &mcp.CallToolResult{}, nil
+	}
+	text, err := wrapUntrusted(strings.Join(nonEmpty, "\n"))
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+}
+
+// wrapUntrustedLinesWithBoundary ist das unfehlbare Gegenstück zu
+// wrapUntrustedLines für Aufrufer, die den Boundary-String VOR einem
+// mutierenden Backend-Aufruf erzeugen müssen, nicht danach.
+//
+// Hintergrund: newUntrustedBoundary (read.go) liest crypto/rand und
+// kann fehlschlagen. wrapUntrustedLines' eigener Fehlerpfad lief bei
+// create_reminder/update_reminder/update_contact/create_contact/
+// update_document bislang ERST NACH dem bereits persistierten
+// service.Create/Update/Upload-Aufruf — ein Boundary-Fehler an dieser
+// Stelle hätte den Aufruf als gescheitert gemeldet, obwohl die Mutation
+// längst passiert war, und einen Retry provoziert, der sie dupliziert.
+//
+// boundary wird vom Aufrufer (newUntrustedBoundary, read.go) VOR dem
+// mutierenden Service-Aufruf erzeugt, sodass ein crypto/rand-Fehler
+// auftritt, bevor irgendetwas persistiert wurde. Diese Funktion selbst
+// hat danach nichts mehr, das fehlschlagen könnte: sie entscheidet nur
+// noch, ob ein Block überhaupt lohnt (dieselbe "leerer Inhalt, keine
+// Rahmung"-Wahl wie wrapUntrustedLines) und formatiert den bereits
+// erzeugten Boundary-String in die Vorlage (formatUntrustedBlock,
+// read.go) — keine neue Boundary, kein Fehler-Rückgabewert mehr.
+//
+// Beide Funktionen rendern bei gleichem Boundary-String und gleichen
+// Zeilen byte-identischen Output — geprüft von
+// TestWrapUntrustedLinesWithBoundaryMatchesWrapUntrustedLinesFormat
+// (read_generic_test.go), die den Boundary-String beider Pfade fixiert
+// und die entstehenden CallToolResult-Werte vergleicht.
+func wrapUntrustedLinesWithBoundary(boundary string, lines []string) *mcp.CallToolResult {
+	nonEmpty := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty = append(nonEmpty, line)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return &mcp.CallToolResult{}
+	}
+	text := formatUntrustedBlock(boundary, strings.Join(nonEmpty, "\n"))
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+}
