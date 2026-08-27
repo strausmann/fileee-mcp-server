@@ -1,3 +1,9 @@
+## [0.9.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.8.0...v0.9.0) (2026-08-27)
+
+### Features
+
+* Instanz-Beschreibung für mehrere Fileee-Verbindungen ([#84](https://github.com/strausmann/fileee-mcp-server/issues/84)) ([410435d](https://github.com/strausmann/fileee-mcp-server/commit/410435dcc5d9baab73198c995912df60f428d557))
+
 ## [0.8.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.7.0...v0.8.0) (2026-08-25)
 
 ### Features
