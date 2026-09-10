@@ -1,3 +1,9 @@
+## [0.9.1](https://github.com/strausmann/fileee-mcp-server/compare/v0.9.0...v0.9.1) (2026-09-10)
+
+### Bug Fixes
+
+* **deps:** update module github.com/strausmann/go-fileee to v0.2.1 ([#86](https://github.com/strausmann/fileee-mcp-server/issues/86)) ([81db9e2](https://github.com/strausmann/fileee-mcp-server/commit/81db9e22caeca199fda20740f0d4b3bd9ea5d1a1))
+
 ## [0.9.0](https://github.com/strausmann/fileee-mcp-server/compare/v0.8.0...v0.9.0) (2026-08-27)
 
 ### Features
