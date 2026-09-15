@@ -3,7 +3,7 @@ module github.com/strausmann/fileee-mcp-server
 go 1.26.0
 
 require (
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/strausmann/gangway v0.5.0
 	github.com/strausmann/go-fileee v0.2.1
 	golang.org/x/sync v0.23.0
