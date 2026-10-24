@@ -369,6 +369,7 @@ type updateDocumentInput struct {
 // CallToolResult.Content via wrapUntrustedLines instead (see
 // updateDocumentResult below), never into a field here.
 type updateDocumentOutput struct {
+	untrustedTextField
 	// ID is the updated document's ID, unchanged by this call.
 	ID string `json:"id"`
 }
@@ -409,7 +410,9 @@ func applyDocumentTitlePatch(cur *fileee.Document, in updateDocumentInput) {
 // updateDocumentOutput (see that type's own doc comment above).
 func updateDocumentResult(boundary string, upd *fileee.Document) (*mcp.CallToolResult, updateDocumentOutput) {
 	result := wrapUntrustedLinesWithBoundary(boundary, []string{upd.Attributes.Title})
-	return result, updateDocumentOutput{ID: upd.ID}
+	out := updateDocumentOutput{ID: upd.ID}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
+	return result, out
 }
 
 // updateDocumentFromService is updateDocumentHandler's logic below

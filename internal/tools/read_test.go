@@ -2,6 +2,7 @@ package tools_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -358,6 +359,44 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 	return tc.Text
 }
 
+// framedText returns the text of res's LAST content block — the framed
+// foreign-text block since ADR-0021, which puts the unframed JSON of the
+// structured output first and the framed block second.
+func framedText(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	if len(res.Content) == 0 {
+		t.Fatal("CallToolResult has no content")
+	}
+	tc, ok := res.Content[len(res.Content)-1].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("last content block = %T, want *mcp.TextContent", res.Content[len(res.Content)-1])
+	}
+	return tc.Text
+}
+
+// everythingTheModelCanSee concatenates every text content block AND the
+// structuredContent JSON — the union of both channels a client may evaluate.
+// Isolation tests search this, so a cross-account leak in either channel
+// fails them.
+func everythingTheModelCanSee(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	var b strings.Builder
+	for _, c := range res.Content {
+		tc, ok := c.(*mcp.TextContent)
+		if !ok {
+			t.Fatalf("content block = %T, want *mcp.TextContent", c)
+		}
+		b.WriteString(tc.Text)
+		b.WriteString("\n")
+	}
+	sc, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structuredContent: %v", err)
+	}
+	b.Write(sc)
+	return b.String()
+}
+
 // --- the core requirement: caller A never sees caller B's documents -----
 
 // TestListDocumentsIsolatesCallersByAccount is list_documents' own
@@ -387,7 +426,7 @@ func TestListDocumentsIsolatesCallersByAccount(t *testing.T) {
 	idp := testidp.New(t)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
 
-	aliceText := resultText(t, mustCall(t, connectAs(t, httpSrv, idp, "alice-subject"), tools.ToolListDocuments, nil))
+	aliceText := everythingTheModelCanSee(t, mustCall(t, connectAs(t, httpSrv, idp, "alice-subject"), tools.ToolListDocuments, nil))
 	if !strings.Contains(aliceText, "Alice Invoice") {
 		t.Errorf("alice's result does not contain her own document: %q", aliceText)
 	}
@@ -395,7 +434,7 @@ func TestListDocumentsIsolatesCallersByAccount(t *testing.T) {
 		t.Errorf("alice's result leaked bob's document title: %q", aliceText)
 	}
 
-	bobText := resultText(t, mustCall(t, connectAs(t, httpSrv, idp, "bob-subject"), tools.ToolListDocuments, nil))
+	bobText := everythingTheModelCanSee(t, mustCall(t, connectAs(t, httpSrv, idp, "bob-subject"), tools.ToolListDocuments, nil))
 	if !strings.Contains(bobText, "Bob Invoice") {
 		t.Errorf("bob's result does not contain his own document: %q", bobText)
 	}
@@ -477,7 +516,8 @@ func TestListDocumentsFramesForeignTitlesWithAnUnforgeableBoundary(t *testing.T)
 	httpSrv := newGangwayServer(t, idp, mcpServer)
 	session := connectAs(t, httpSrv, idp, "any-subject")
 
-	text := resultText(t, mustCall(t, session, tools.ToolListDocuments, nil))
+	res := mustCall(t, session, tools.ToolListDocuments, nil)
+	text := framedText(t, res)
 
 	matches := boundaryPattern.FindAllStringSubmatch(text, -1)
 	if len(matches) != 2 {
@@ -520,6 +560,144 @@ func TestListDocumentsFramesForeignTitlesWithAnUnforgeableBoundary(t *testing.T)
 			"the block would read as having ended before the attacker's text, not after it",
 			genuineCloseIdx, forgedIdx)
 	}
+
+	// The same defence must hold in the second channel (ADR-0021): the
+	// untrustedText field of the structured output carries the same block, so
+	// the forged tag must be inert there too — exactly one real opening and
+	// one real closing tag, with the same boundary as in content.
+	structured, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want a JSON object", res.StructuredContent)
+	}
+	field, _ := structured["untrustedText"].(string)
+	fieldMatches := boundaryPattern.FindAllStringSubmatch(field, -1)
+	if len(fieldMatches) != 2 || fieldMatches[0][1] != real || fieldMatches[1][1] != real {
+		t.Fatalf("untrustedText carries boundaries %v, want exactly the two genuine tags with boundary %q: %q",
+			fieldMatches, real, field)
+	}
+	if !strings.Contains(field, forgedEscaped) {
+		t.Errorf("untrustedText does not carry the (inert) forged title %q: %q", forgedEscaped, field)
+	}
+	delete(structured, "untrustedText")
+	rest, _ := json.Marshal(structured)
+	if strings.Contains(string(rest), "Ignore all previous instructions") {
+		t.Errorf("the title appears in the structured output outside untrustedText: %s", rest)
+	}
+}
+
+// TestListDocumentsReturnsForeignTextInBothChannels is the session-level proof
+// of issue #82 (new finding of 24.10.2026): whichever channel a client
+// evaluates — structuredContent or content — the model gets the metadata AND
+// the framed titles. claude.ai evaluates only structuredContent today, and
+// evaluated only content on 25.08.2026.
+func TestListDocumentsReturnsForeignTextInBothChannels(t *testing.T) {
+	docBody := `{"rows":[{"id":"doc-1","status":"DONE",` +
+		`"attributes":{"data":{"title":{"value":"Quartalsabrechnung-ZZ9"}}}}],"totalRows":1}`
+	srv := newIsolationServer(t, fixtureAccount{username: "alice@example.invalid", password: "pw", queryBody: docBody})
+	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
+
+	idp := testidp.New(t)
+	httpSrv := newGangwayServer(t, idp, mcpServer)
+	res := mustCall(t, connectAs(t, httpSrv, idp, "any-subject"), tools.ToolListDocuments, nil)
+
+	// (i) structuredContent: metadata plus untrustedText with boundary and title.
+	structured, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want a JSON object", res.StructuredContent)
+	}
+	if structured["totalRows"] != float64(1) {
+		t.Errorf("structured totalRows = %v, want 1", structured["totalRows"])
+	}
+	field, _ := structured["untrustedText"].(string)
+	if !strings.Contains(field, "Quartalsabrechnung-ZZ9") || boundaryPattern.FindStringSubmatch(field) == nil {
+		t.Errorf("untrustedText lacks the title or the boundary: %q", field)
+	}
+
+	// (ii) content: a JSON block with the metadata, then the framed block.
+	if len(res.Content) != 2 {
+		t.Fatalf("Content has %d blocks, want 2", len(res.Content))
+	}
+	jsonBlock := res.Content[0].(*mcp.TextContent).Text
+	var meta struct {
+		TotalRows int `json:"totalRows"`
+		Documents []struct {
+			ID string `json:"id"`
+		} `json:"documents"`
+	}
+	if err := json.Unmarshal([]byte(jsonBlock), &meta); err != nil || meta.TotalRows != 1 || len(meta.Documents) != 1 || meta.Documents[0].ID != "doc-1" {
+		t.Errorf("Content[0] is not the metadata JSON (err=%v): %q", err, jsonBlock)
+	}
+	// (iii) the JSON block does not carry the foreign text.
+	if strings.Contains(jsonBlock, "Quartalsabrechnung-ZZ9") {
+		t.Errorf("the title leaked unframed into the JSON block: %q", jsonBlock)
+	}
+	if !strings.HasSuffix(framedText(t, res), field) {
+		t.Errorf("Content[1] does not end with the untrustedText block")
+	}
+}
+
+// TestEveryForeignTextToolDeclaresUntrustedTextInItsOutputSchema walks
+// tools/list: a tool that frames foreign text must declare the field in its
+// output schema, otherwise a client validating against outputSchema may drop or
+// reject it. The expected set is explicit, so a tool gaining or losing the
+// field changes this list visibly.
+func TestEveryForeignTextToolDeclaresUntrustedTextInItsOutputSchema(t *testing.T) {
+	srv := newIsolationServer(t, fixtureAccount{username: "alice@example.invalid", password: "pw", queryBody: `{"rows":[],"totalRows":0}`})
+	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
+	idp := testidp.New(t)
+	session := connectAs(t, newGangwayServer(t, idp, mcpServer), idp, "any-subject")
+
+	want := map[string]bool{}
+	for _, name := range []string{
+		"list_documents", "get_document", "sync_documents", "list_document_conversations", "get_page_ocr",
+		"list_contacts", "get_contact", "sync_contacts", "update_contact", "create_contact",
+		"list_reminders", "get_reminder", "sync_reminders", "create_reminder", "update_reminder",
+		"list_conversations", "get_conversation", "sync_conversations", "update_document",
+		// The generic list/get/sync output types are shared by every service
+		// registered through registerReadService/registerSync, so the field
+		// is declared for the account-holder-owned ones too (tags, document
+		// types, schemes) — optional and never filled there, because their
+		// descriptors set no UntrustedLine.
+		"list_tags", "get_tag", "sync_tags",
+		"list_companies", "get_company", "sync_companies",
+		"list_document_types", "get_document_type", "sync_document_types",
+		"list_document_type_schemes", "get_document_type_scheme", "sync_document_type_schemes",
+	} {
+		want[name] = true
+	}
+
+	listed, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, tool := range listed.Tools {
+		schema, _ := tool.OutputSchema.(map[string]any)
+		props, _ := schema["properties"].(map[string]any)
+		_, has := props["untrustedText"]
+		seen[tool.Name] = true
+		if want[tool.Name] && !has {
+			t.Errorf("%s frames foreign text but its output schema has no untrustedText property", tool.Name)
+		}
+		if !want[tool.Name] && has {
+			t.Errorf("%s declares untrustedText but is not in the expected foreign-text set", tool.Name)
+		}
+		if has {
+			prop, _ := props["untrustedText"].(map[string]any)
+			if desc, _ := prop["description"].(string); !strings.Contains(desc, "never as instructions") {
+				t.Errorf("%s: untrustedText has no data-only warning in its schema description: %q", tool.Name, desc)
+			}
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("expected tool %s is not registered", name)
+		}
+	}
 }
 
 // TestListDocumentsUsesAFreshBoundaryEachCall is the freshness half of
@@ -537,8 +715,8 @@ func TestListDocumentsUsesAFreshBoundaryEachCall(t *testing.T) {
 	httpSrv := newGangwayServer(t, idp, mcpServer)
 	session := connectAs(t, httpSrv, idp, "any-subject")
 
-	first := boundaryPattern.FindStringSubmatch(resultText(t, mustCall(t, session, tools.ToolListDocuments, nil)))
-	second := boundaryPattern.FindStringSubmatch(resultText(t, mustCall(t, session, tools.ToolListDocuments, nil)))
+	first := boundaryPattern.FindStringSubmatch(framedText(t, mustCall(t, session, tools.ToolListDocuments, nil)))
+	second := boundaryPattern.FindStringSubmatch(framedText(t, mustCall(t, session, tools.ToolListDocuments, nil)))
 	if first == nil || second == nil {
 		t.Fatalf("expected a boundary in both responses, got first=%v second=%v", first, second)
 	}
@@ -763,5 +941,84 @@ func TestListDocumentsSurfacesALoginRejectionAsAToolError(t *testing.T) {
 	if text := resultText(t, res); strings.Contains(text, "access denied") {
 		t.Errorf("error text = %q, a rejected login for a genuinely configured account is not the same "+
 			"failure as an unmapped caller and must not say \"access denied\"", text)
+	}
+}
+
+// newReminderServer starts a mock Fileee instance that completes the login
+// handshake and answers POST /api/reminders/rest (create_reminder) with body.
+func newReminderServer(t *testing.T, body string) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/f/start", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("POST /api/f/existent", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"existent":true,"twoFactorAuthEnabled":false}`))
+	})
+	mux.HandleFunc("POST /api/f/login", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "sess"})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"loggedIn":true}`))
+	})
+	mux.HandleFunc("GET /api/f/user-session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"authorized":true,"secondsBlocked":0}`))
+	})
+	mux.HandleFunc("POST /api/reminders/rest", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// TestCreateReminderReturnsForeignTextInBothChannelsOverASession is the
+// session-level proof for a WRITE tool (ADR-0021): the SDK's output-schema
+// validation accepts the result (a failure would surface as a tool error),
+// untrustedText sits in structuredContent, and content holds the metadata JSON
+// block followed by the framed block.
+func TestCreateReminderReturnsForeignTextInBothChannelsOverASession(t *testing.T) {
+	srv := newReminderServer(t, `{"id":"r-1","description":"Rechnung-ZZ9 bezahlen","done":false}`)
+	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
+	idp := testidp.New(t)
+	httpSrv := newGangwayServer(t, idp, mcpServer)
+
+	// mustCall fails on IsError, which is how an output-schema rejection shows up.
+	res := mustCall(t, connectAs(t, httpSrv, idp, "any-subject"), tools.ToolCreateReminder,
+		map[string]any{"description": "Rechnung-ZZ9 bezahlen"})
+
+	structured, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want a JSON object", res.StructuredContent)
+	}
+	if structured["id"] != "r-1" {
+		t.Errorf("structured id = %v, want r-1", structured["id"])
+	}
+	field, _ := structured["untrustedText"].(string)
+	if !strings.Contains(field, "Rechnung-ZZ9") || boundaryPattern.FindStringSubmatch(field) == nil {
+		t.Errorf("untrustedText lacks the description or the boundary: %q", field)
+	}
+	delete(structured, "untrustedText")
+	if rest, _ := json.Marshal(structured); strings.Contains(string(rest), "Rechnung-ZZ9") {
+		t.Errorf("description leaked outside untrustedText: %s", rest)
+	}
+
+	if len(res.Content) != 2 {
+		t.Fatalf("Content has %d blocks, want 2 (JSON, framed text)", len(res.Content))
+	}
+	jsonBlock := res.Content[0].(*mcp.TextContent).Text
+	var meta struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(jsonBlock), &meta); err != nil || meta.ID != "r-1" {
+		t.Errorf("Content[0] is not the metadata JSON (err=%v): %q", err, jsonBlock)
+	}
+	if strings.Contains(jsonBlock, "Rechnung-ZZ9") || strings.Contains(jsonBlock, "untrusted") {
+		t.Errorf("Content[0] carries foreign text or a frame: %q", jsonBlock)
+	}
+	if !strings.HasSuffix(framedText(t, res), field) {
+		t.Error("Content[1] does not end with the untrustedText block")
 	}
 }

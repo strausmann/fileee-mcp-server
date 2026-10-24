@@ -40,7 +40,7 @@ func TestReminderOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 	// reminderDescriptor (read_people.go) fuer list_reminders/
 	// get_reminder bereits tut, nie strukturiert in
 	// CallToolResult.StructuredContent.
-	want := []string{"ID", "Done"}
+	want := []string{"untrustedTextField", "ID", "Done"}
 	got := fieldNames(reminderOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("reminderOutput-Feldliste = %v, want %v", got, want)
@@ -145,17 +145,17 @@ func TestCreateReminderHappyPath(t *testing.T) {
 	}
 	// Struktur-Teil bleibt frei von der fremdbestimmten Beschreibung —
 	// dieselbe Pruefung wie TestCreateContactHappyPath (write_test.go).
-	if strings.Contains(fmt.Sprint(out), "Rechnung bezahlen") {
-		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung strukturiert — die gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Rechnung bezahlen") {
+		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung ungerahmt — die gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, "Rechnung bezahlen") {
 		t.Errorf("Content enthaelt nicht die Beschreibung %q: %q", "Rechnung bezahlen", text.Text)
@@ -365,17 +365,17 @@ func TestUpdateReminderPatchMerge(t *testing.T) {
 	if !out.Done {
 		t.Error("out.Done = false, want true")
 	}
-	if strings.Contains(fmt.Sprint(out), "Rechnung") {
-		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung strukturiert — die gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Rechnung") {
+		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung ungerahmt — die gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, "Rechnung bezahlen") {
 		t.Errorf("Content enthaelt nicht die Beschreibung %q: %q", "Rechnung bezahlen", text.Text)

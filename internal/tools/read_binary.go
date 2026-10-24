@@ -17,9 +17,11 @@
 // from a document a third party sent or scanned — not a title chosen
 // once by a sender, but the sender's ENTIRE page content. It is framed
 // exactly like every other foreign text in this server (wrapUntrustedLines)
-// and never appears in StructuredContent; only token count and
-// bounding-box coordinates do (ocrTokenPosition, deliberately excluding
-// Text).
+// and never appears in StructuredContent as a plain field; only token
+// count and bounding-box coordinates do (ocrTokenPosition, deliberately
+// excluding Text). Since ADR-0021 the framed block is additionally carried
+// in getPageOCROutput's one untrustedText field, byte-identical to the
+// Content block.
 //
 // Aufgabe 5 (internal/issued, ADR-0013 Punkt 3) originally decided all
 // three tools in this file need NO *issued.Store — none of them, back
@@ -386,8 +388,10 @@ type ocrTokenPosition struct {
 }
 
 // getPageOCROutput is get_page_ocr's structured result — a count and the
-// per-token coordinates, never the recognized text itself.
+// per-token coordinates, never the recognized text itself as a plain
+// field; it travels only framed, in the embedded untrustedText (ADR-0021).
 type getPageOCROutput struct {
+	untrustedTextField
 	TokenCount int                `json:"tokenCount"`
 	Tokens     []ocrTokenPosition `json:"tokens"`
 }
@@ -448,6 +452,7 @@ func documentPageOCRFromService(ctx context.Context, service documentBinaryServi
 	if err != nil {
 		return nil, getPageOCROutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetPageOCR, err)
 	}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
 	return result, out, nil
 }
 

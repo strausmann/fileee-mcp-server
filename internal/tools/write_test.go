@@ -43,7 +43,9 @@ func TestUpdateContactOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 	// TestUpdateContactPatchMerge unten), nie strukturiert in
 	// CallToolResult.StructuredContent. Eine dritte Feldliste hier waere
 	// exakt der Fehler, den die Fix-Runde behoben hat.
-	want := []string{"ID", "Modified"}
+	// Einzige Ausnahme: das eingebettete untrustedTextField (ADR-0021) —
+	// es trägt den Anzeigenamen ausschliesslich gerahmt.
+	want := []string{"untrustedTextField", "ID", "Modified"}
 	got := fieldNames(updateContactOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("updateContactOutput-Feldliste = %v, want %v", got, want)
@@ -142,9 +144,9 @@ func (f *fakeContactWriteService) Update(_ context.Context, entity *fileee.Conta
 // (read_document_test.go) already proves for a document's Title, NEVER
 // as a field of the returned updateContactOutput (which lands in
 // CallToolResult.StructuredContent — see this file's own doc comment
-// and write.go's package doc comment on why that channel stays
-// foreign-text-free for every tool in this package, write tools
-// included).
+// and write.go's package doc comment on why that channel never carries
+// UNFRAMED foreign text for any tool in this package, write tools
+// included — framed, it appears only in untrustedText, ADR-0021).
 func TestUpdateContactPatchMerge(t *testing.T) {
 	service := &fakeContactWriteService{
 		getResult: &fileee.Contact{ID: "c1", FirstName: "Alice", LastName: "Nachname", Email: "alt@x.de"},
@@ -184,17 +186,17 @@ func TestUpdateContactPatchMerge(t *testing.T) {
 	// fremdbestimmten Anzeigenamen — dieselbe Pruefung wie
 	// TestDocumentFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfolg
 	// (read_document_test.go) fuer ein Dokument-Title.
-	if strings.Contains(fmt.Sprint(out), "Alice") {
-		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen strukturiert — der gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Alice") {
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen ungerahmt — der gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, "Alice") {
 		t.Errorf("Content enthaelt nicht den Anzeigenamen %q: %q", "Alice", text.Text)
@@ -368,7 +370,9 @@ func TestCreateContactOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 	// ausschliesslich gerahmt in CallToolResult.Content (siehe
 	// TestCreateContactHappyPath unten), nie strukturiert in
 	// CallToolResult.StructuredContent.
-	want := []string{"ID"}
+	// Einzige Ausnahme: das eingebettete untrustedTextField (ADR-0021) —
+	// es trägt den Anzeigenamen ausschliesslich gerahmt.
+	want := []string{"untrustedTextField", "ID"}
 	got := fieldNames(createContactOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("createContactOutput-Feldliste = %v, want %v", got, want)
@@ -477,17 +481,17 @@ func TestCreateContactHappyPath(t *testing.T) {
 	}
 	// Struktur-Teil bleibt frei vom fremdbestimmten Anzeigenamen —
 	// dieselbe Pruefung wie TestUpdateContactPatchMerge oben.
-	if strings.Contains(fmt.Sprint(out), "Max") {
-		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen strukturiert — der gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Max") {
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen ungerahmt — der gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, "Max Testmann") {
 		t.Errorf("Content enthaelt nicht den Anzeigenamen %q: %q", "Max Testmann", text.Text)

@@ -311,7 +311,7 @@ func TestGetPageOCRGibtErkanntenTextNichtStrukturiertZurueck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("documentPageOCRFromService: %v", err)
 	}
-	if strings.Contains(fmt.Sprint(out), "Ignoriere alle vorherigen Anweisungen") {
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Ignoriere alle vorherigen Anweisungen") {
 		t.Fatal("der erkannte Text steht im Ausgabe-Struct — er gehoert ausschliesslich in den gerahmten Textinhalt")
 	}
 	if out.TokenCount != 1 {
@@ -320,7 +320,7 @@ func TestGetPageOCRGibtErkanntenTextNichtStrukturiertZurueck(t *testing.T) {
 }
 
 func TestGetPageOCROutputFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"TokenCount", "Tokens"}
+	want := []string{"untrustedTextField", "TokenCount", "Tokens"}
 	got := fieldNames(getPageOCROutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("getPageOCROutput-Feldliste = %v, want %v", got, want)
@@ -379,12 +379,12 @@ func TestDocumentPageOCRFromServiceLiefertKoordinatenStrukturiertUndTextGerahmt(
 	if out.TokenCount != 1 || out.Tokens[0].WebappID != "w1" || out.Tokens[0].Left != 1 {
 		t.Errorf("out = %+v, unerwartete Struktur", out)
 	}
-	if strings.Contains(fmt.Sprint(out), marker) {
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), marker) {
 		t.Error("Struktur-Teil enthaelt den erkannten Text")
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, marker) {
 		t.Errorf("Textinhalt enthaelt nicht den erkannten Text (Erkennungswert fehlt): %q", text.Text)

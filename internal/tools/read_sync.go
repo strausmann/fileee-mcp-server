@@ -202,6 +202,7 @@ type genericSyncInput struct {
 // genericSyncOutput is a generic sync tool's structured result
 // (CallToolResult.StructuredContent).
 type genericSyncOutput[S any] struct {
+	untrustedTextField
 	// Entries are the entities that changed since the cursor passed in —
 	// on the very first call (no cursor), every entity currently in the
 	// account.
@@ -350,6 +351,7 @@ func syncFromService[T any, S any](ctx context.Context, d syncDescriptor[T, S], 
 	if err != nil {
 		return nil, genericSyncOutput[S]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", d.SyncName, err)
 	}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
 	return result, out, nil
 }
 

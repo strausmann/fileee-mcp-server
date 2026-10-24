@@ -148,6 +148,7 @@ type updateReminderInput struct {
 // and is never treated as more trustworthy just because it arrived
 // through a write tool instead of a read one.
 type reminderOutput struct {
+	untrustedTextField
 	// ID is the reminder's ID — the new reminder's ID for
 	// create_reminder, unchanged for update_reminder.
 	ID string `json:"id"`
@@ -207,7 +208,9 @@ func applyReminderPatch(cur *fileee.Reminder, in updateReminderInput) {
 // comment).
 func reminderResult(boundary string, r *fileee.Reminder) (*mcp.CallToolResult, reminderOutput) {
 	result := wrapUntrustedLinesWithBoundary(boundary, []string{r.Description})
-	return result, reminderOutput{ID: r.ID, Done: r.Done}
+	out := reminderOutput{ID: r.ID, Done: r.Done}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
+	return result, out
 }
 
 // createReminderFromService is createReminderHandler's logic below

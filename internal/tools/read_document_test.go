@@ -33,7 +33,7 @@ import (
 // Testsuite). Diese feste Feldliste faengt jedes zusaetzliche Feld ab,
 // unabhaengig davon, ob es fremdbestimmten Text traegt oder nicht.
 func TestGetDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"ID", "Status", "Type", "Created", "Modified", "PageCount", "TagIDs"}
+	want := []string{"untrustedTextField", "ID", "Status", "Type", "Created", "Modified", "PageCount", "TagIDs"}
 	got := fieldNames(getDocumentOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("getDocumentOutput-Feldliste = %v, want %v — ein neues Feld ist ein moeglicher Fremdtext-Leck und braucht eine bewusste Pruefung, nicht nur eine Anpassung dieser Liste", got, want)
@@ -43,7 +43,7 @@ func TestGetDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 // TestListDocumentConversationsOutputFeldlisteIstAbgeschlossen ist
 // dasselbe fuer list_document_conversations' Ausgabe-Struktur.
 func TestListDocumentConversationsOutputFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"Conversations"}
+	want := []string{"untrustedTextField", "Conversations"}
 	got := fieldNames(listDocumentConversationsOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("listDocumentConversationsOutput-Feldliste = %v, want %v", got, want)
@@ -210,15 +210,15 @@ func TestDocumentFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfolg(t *
 	if out.ID != "d1" || out.PageCount != 1 || len(out.TagIDs) != 1 {
 		t.Errorf("out = %+v, unerwartete Struktur", out)
 	}
-	if strings.Contains(fmt.Sprint(out), marker) {
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), marker) {
 		t.Error("Struktur-Teil enthaelt den fremdbestimmten Titel")
 	}
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, marker) {
 		t.Errorf("Textinhalt enthaelt nicht den fremdbestimmten Titel (Erkennungswert fehlt): %q", text.Text)
@@ -336,9 +336,9 @@ func TestDocumentsSyncFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfol
 	if strings.Contains(fmt.Sprint(out.Entries), marker) {
 		t.Error("Struktur-Teil enthaelt den fremdbestimmten Titel")
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, marker) {
 		t.Errorf("Textinhalt enthaelt nicht den fremdbestimmten Titel (Erkennungswert fehlt): %q", text.Text)
@@ -409,9 +409,9 @@ func TestDocumentConversationsFromServiceZaehltNurTeilnehmer(t *testing.T) {
 	if strings.Contains(fmt.Sprint(out.Conversations), marker) {
 		t.Error("Struktur-Teil enthaelt den fremdbestimmten Betreff")
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, marker) {
 		t.Errorf("Textinhalt enthaelt nicht den fremdbestimmten Betreff (Erkennungswert fehlt): %q", text.Text)

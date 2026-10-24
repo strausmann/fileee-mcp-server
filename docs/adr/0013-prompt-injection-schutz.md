@@ -5,7 +5,7 @@
 **Ersetzt:** —
 **Ersetzt durch:** —
 **Überarbeitet:** —
-**Überarbeitet durch:** [ADR-0015](0015-gangway-als-unterbau.md), [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md) — Punkt 4
+**Überarbeitet durch:** [ADR-0015](0015-gangway-als-unterbau.md), [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md) — Punkt 4, [ADR-0021](0021-fremdtext-in-beiden-antwortkanaelen.md) — Ort der Rahmung
 **Verwandt:** [ADR-0011](0011-capability-gating.md), [ADR-0017](0017-diagnose-protokoll-mit-erzwungener-maskierung.md), [ADR-0019](0019-id-whitelist-gilt-auch-fuer-share.md), [go-fileee ADR-0007](https://github.com/strausmann/go-fileee/blob/main/docs/adr/0007-ausschluss-destruktiver-operationen.md)
 
 ## Kontext
@@ -97,3 +97,13 @@ künftig hinzukommt, unabhängig von einer Konfiguration.
 Punkt 4 und die Wirksamkeitsgrenze-Aussage bleiben oben unverändert stehen, als Protokoll dessen,
 wie die Entscheidung ursprünglich begründet war — [ADR-0018](0018-werkzeug-freigabe-und-client-steuerung.md)
 ist die verbindliche, aktuelle Quelle für das Freigabe-Modell dieses Servers.
+
+## Nachtrag (2026-10-24): Der Rahmen steht jetzt in beiden Antwortkanälen
+
+Punkt 1 verlangt, Fremdtext gerahmt auszuliefern; die Umsetzung hielt `structuredContent` dafür
+vollständig fremdtextfrei und legte den Rahmen nur in `content`. Das trug nur, solange Clients
+beide Kanäle auswerten — claude.ai wertet seit dem 24.10.2026 nur `structuredContent` aus, am
+25.08.2026 war es umgekehrt. [ADR-0021](0021-fremdtext-in-beiden-antwortkanaelen.md) legt den
+gerahmten Block deshalb zusätzlich in das Schemafeld `untrustedText` und gibt `content` als
+JSON-Block plus gerahmtem Block aus. Die Sicherheitsgrenze ist unverändert der Rahmen mit
+unvorhersagbarer Boundary; ungerahmter Fremdtext steht weiterhin in keinem Kanal.
