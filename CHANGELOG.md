@@ -1,3 +1,9 @@
+## [0.9.4](https://github.com/strausmann/fileee-mcp-server/compare/v0.9.3...v0.9.4) (2026-10-24)
+
+### Bug Fixes
+
+* **tools:** fremdtext auf beiden antwortkanälen ausliefern ([#92](https://github.com/strausmann/fileee-mcp-server/issues/92)) ([267a3a0](https://github.com/strausmann/fileee-mcp-server/commit/267a3a0d74ddd447704c8a3b4c8e0e6da9a04e0c)), closes [#82](https://github.com/strausmann/fileee-mcp-server/issues/82) [#77](https://github.com/strausmann/fileee-mcp-server/issues/77)
+
 ## [0.9.3](https://github.com/strausmann/fileee-mcp-server/compare/v0.9.2...v0.9.3) (2026-10-12)
 
 ### Bug Fixes
