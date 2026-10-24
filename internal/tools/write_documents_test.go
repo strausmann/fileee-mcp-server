@@ -573,7 +573,9 @@ func TestUpdateDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
 	// ausschliesslich gerahmt in CallToolResult.Content (siehe
 	// TestUpdateDocumentPatchMerge unten), nie strukturiert in
 	// CallToolResult.StructuredContent.
-	want := []string{"ID"}
+	// Einzige Ausnahme: das eingebettete untrustedTextField (ADR-0021) —
+	// es trägt den Titel ausschliesslich gerahmt.
+	want := []string{"untrustedTextField", "ID"}
 	got := fieldNames(updateDocumentOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("updateDocumentOutput-Feldliste = %v, want %v", got, want)
@@ -719,17 +721,17 @@ func TestUpdateDocumentPatchMerge(t *testing.T) {
 	// Struktur-Teil (CallToolResult.StructuredContent) bleibt frei vom
 	// fremdbestimmten Titel — dieselbe Pruefung wie
 	// TestUpdateContactPatchMerge (write_test.go) fuer den Anzeigenamen.
-	if strings.Contains(fmt.Sprint(out), "Neuer Titel") {
+	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Neuer Titel") {
 		t.Errorf("out = %+v enthaelt den fremdbestimmten Titel strukturiert — der gehoert "+
 			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
 	}
 
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, "Neuer Titel") {
 		t.Errorf("Content enthaelt nicht den neuen Titel %q: %q", "Neuer Titel", text.Text)
@@ -774,12 +776,12 @@ func TestUpdateDocumentTitleNilLaesstTitelUnveraendert(t *testing.T) {
 		t.Errorf("out.ID = %q, want %q", out.ID, "doc-1")
 	}
 
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, "Bestehender Titel") {
 		t.Errorf("Content enthaelt nicht den unveraenderten Titel %q: %q", "Bestehender Titel", text.Text)

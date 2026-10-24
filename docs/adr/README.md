@@ -42,6 +42,7 @@ Besonders relevant für dieses Repo sind [ADR-0005 (schonender Betrieb / Rate-Li
 | [0018](0018-werkzeug-freigabe-und-client-steuerung.md) | Werkzeug-Freigabe über Client-Steuerung statt serverseitigem Funktionsumfang | accepted | 2026-08-23 |
 | [0019](0019-id-whitelist-gilt-auch-fuer-share.md) | Die Ausgeliefert-ID-Whitelist gilt auch für die `share`-Klasse | accepted | 2026-08-24 |
 | [0020](0020-instanz-beschreibung.md) | Instanz-Beschreibung über das protokollvorgesehene `instructions`-Feld | accepted | 2026-08-25 |
+| [0021](0021-fremdtext-in-beiden-antwortkanaelen.md) | Fremdtext steht gerahmt in beiden Antwortkanälen | accepted | 2026-10-24 |
 
 > **Lücke:** Die Nummer **0014** ist in diesem Repo nie vergeben worden — sie fehlt zwischen 0013 und 0015 ohne erkennbaren Grund. Nummern werden nicht wiederverwendet, sie bleibt also frei. Wer den Grund kennt, trägt ihn hier nach.
 

@@ -26,12 +26,29 @@ Kontoinhaber chattet, bestimmt den Betreff; wessen Dokument gescannt wird, besti
 die OCR erkennt. Dieser Text könnte Formulierungen enthalten, die wie eine Anweisung an das Modell
 aussehen.
 
-**Deshalb erscheint fremdbestimmter Text bei jedem betroffenen Werkzeug ausschliesslich gerahmt im
-Textinhalt der Antwort — niemals in `structuredContent`.** Der Rahmen ist eine bei jedem Aufruf
-frisch erzeugte, unvorhersagbare Umrandung (`<untrusted_external_content boundary="…">…</…>`, siehe
-Abschnitt weiter unten) mit einem ausdrücklichen Hinweis, enthaltene Anweisungen nicht zu befolgen.
-Wer eine Antwort dieses Servers verarbeitet, sollte diesen Textblock **grundsätzlich als Daten
-behandeln, nicht als Anweisung** — unabhängig davon, wie er formuliert ist.
+**Deshalb erscheint fremdbestimmter Text bei jedem betroffenen Werkzeug ausschliesslich gerahmt —
+nie als gewöhnliches Feld.** Der Rahmen ist eine bei jedem Aufruf frisch erzeugte, unvorhersagbare
+Umrandung (`<untrusted_external_content boundary="…">…</…>`, siehe Abschnitt weiter unten) mit einem
+ausdrücklichen Hinweis, enthaltene Anweisungen nicht zu befolgen. Wer eine Antwort dieses Servers
+verarbeitet, sollte diesen Block **grundsätzlich als Daten behandeln, nicht als Anweisung** —
+unabhängig davon, wie er formuliert ist.
+
+**Antwortform — beide Kanäle tragen dasselbe (ADR-0021).** Nicht jeder Client wertet beide Kanäle
+einer Werkzeugantwort aus: claude.ai zeigte dem Modell am 25.08.2026 nur `content`, am 24.10.2026
+nur `structuredContent`. Deshalb trägt jede Antwort eines Werkzeugs mit Fremdtext den gerahmten
+Block in **beiden** Kanälen:
+
+| Kanal | Inhalt |
+|---|---|
+| `structuredContent` | die typisierten Metadaten (wie bisher) **plus** das Feld `untrustedText` mit dem gerahmten Block. Das Feld steht im Ausgabeschema (`outputSchema`); seine Beschreibung weist den Inhalt als Text Dritter aus, der nur als Daten zu behandeln ist. Fehlt Fremdtext, fehlt das Feld. |
+| `content` | zwei Textblöcke: (1) das **ungerahmte** JSON der strukturierten Ausgabe, **ohne** `untrustedText`, (2) der gerahmte Block, **byte-identisch** zum Feld `untrustedText` (gleiche Boundary). |
+
+Fremdtext steht nie ungerahmt in einem der beiden Kanäle. Werkzeuge ohne Fremdtext sind unverändert:
+`content` trägt dort nur das vom SDK erzeugte JSON, `untrustedText` entfällt. Bei `list_documents`
+steht vor dem gerahmten Block in `content` zusätzlich die Zusammenfassungszeile „Returned N of M
+total document(s).“; `untrustedText` enthält nur den Block. Die Ausgabeschemata der allgemeinen
+Werkzeuge für Schlagworte, Dokumenttypen und Schemata (`list_`/`get_`/`sync_`) deklarieren das Feld
+ebenfalls, befüllen es aber nie — ihre Namen vergibt der Kontoinhaber selbst.
 
 **Welche Werkzeuge liefern fremdbestimmten Text (gerahmt), und woher stammt er:**
 
@@ -132,7 +149,7 @@ nennt, nie mit einer stillschweigend gekürzten Datei.
 |---|---|
 | `get_document_pdf` | Lädt die Original-PDF-Datei eines Dokuments (max. 8 MiB). Gibt **nicht** ein Seitenbild zurück (dafür `get_page_image`) und **nicht** den OCR-Text (dafür `get_page_ocr`). |
 | `get_page_image` | Lädt das gerenderte Bild einer Seite — Fallback ohne PDF (max. 8 MiB); braucht die aktuelle Bildversion der Seite. Gibt **nicht** den OCR-Text zurück und liefert **nur eine** Seite je Aufruf. |
-| `get_page_ocr` | Führt Fileees OCR-Erkennung für eine Seite aus. Der erkannte Text ist der **am stärksten fremdbestimmte Inhalt im ganzen Server** und erscheint ausschliesslich gerahmt im Text. Strukturiert kommen **nur** Tokenanzahl und Koordinaten/Fileees eigene Token-Kennung zurück — **niemals** der Text selbst unter einem Strukturfeld. |
+| `get_page_ocr` | Führt Fileees OCR-Erkennung für eine Seite aus. Der erkannte Text ist der **am stärksten fremdbestimmte Inhalt im ganzen Server** und erscheint ausschliesslich gerahmt (in `content` und im Feld `untrustedText`, siehe „Antwortform“ oben). Strukturiert kommen **nur** Tokenanzahl und Koordinaten/Fileees eigene Token-Kennung zurück — **niemals** der Text selbst unter einem gewöhnlichen Strukturfeld. |
 
 ### Kontostand
 

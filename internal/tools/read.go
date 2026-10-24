@@ -403,10 +403,11 @@ type listDocumentsInput struct {
 // listDocumentsOutput is list_documents' structured result
 // (CallToolResult.StructuredContent).
 type listDocumentsOutput struct {
+	untrustedTextField
 	// Documents are the returned documents' structured metadata, in the
 	// order Fileee returned them. Titles are not included here — see
-	// listDocumentsHandler; they appear only in the accompanying text
-	// content, clearly marked as untrusted.
+	// listDocumentsHandler; they appear only framed and marked as
+	// untrusted: in the accompanying text content and in untrustedText.
 	Documents []documentSummary `json:"documents"`
 	// TotalRows is the caller's total document count, independent of how
 	// many this one call actually returned.
@@ -422,8 +423,10 @@ type listDocumentsOutput struct {
 // listDocumentsOutput — the SDK populates CallToolResult.StructuredContent
 // from that value regardless of what Content carries, so a title placed
 // there would reach the model unwrapped and unmarked, defeating the
-// framing applied below. It appears only inside the returned text
-// content, inside the boundary wrapUntrusted builds.
+// framing applied below. It appears only inside the boundary
+// wrapUntrusted builds — in the framed Content block and, byte-identical,
+// in listDocumentsOutput's one untrustedText field (ADR-0021:
+// attachUntrustedStructured, read_generic.go), never as a plain field.
 //
 // WICHTIG (ADR-0019, Betreiber-Entscheidung nach dem Sicherheits-Audit,
 // verschärft gegenüber der ursprünglichen Aufgabe 5-Fassung): this
@@ -461,28 +464,44 @@ func listDocumentsHandler(p *clientpool.Pool, logger *slog.Logger) mcp.ToolHandl
 			return nil, listDocumentsOutput{}, wrapped
 		}
 
-		out := listDocumentsOutput{TotalRows: res.TotalRows, Documents: make([]documentSummary, 0, len(res.Rows))}
-		lines := make([]string, 0, len(res.Rows))
-		for _, doc := range res.Rows {
-			out.Documents = append(out.Documents, documentSummary{
-				ID:       doc.ID,
-				Status:   string(doc.Status),
-				Type:     doc.Type,
-				Created:  formatTime(doc.Created),
-				Modified: formatTime(doc.Modified),
-			})
-			lines = append(lines, documentLine(doc.ID, doc.Attributes.Title))
-		}
-
-		text, err := renderDocumentList(len(out.Documents), out.TotalRows, lines)
+		result, out, err := listDocumentsResult(res)
 		if err != nil {
 			wrapped := fmt.Errorf("fileee-mcp: tools: list_documents: %w", err)
 			logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, 0, wrapped)
 			return nil, listDocumentsOutput{}, wrapped
 		}
 		logToolEnd(ctx, logger, ToolListDocuments, start, listDocumentsEndpoint, len(out.Documents), nil)
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
+		return result, out, nil
 	}
+}
+
+// listDocumentsResult is listDocumentsHandler's logic below the backend
+// query — split out so a test can drive the result shape without a live
+// *fileee.Client (the same seam the *FromService functions give the other
+// tools). The summary line plus the framed titles form Content[1]; the
+// framed block alone goes into untrustedText (ADR-0021). With no documents
+// there is nothing to frame, and the result stays summary-only.
+func listDocumentsResult(res *fileee.QueryResult[fileee.Document]) (*mcp.CallToolResult, listDocumentsOutput, error) {
+	out := listDocumentsOutput{TotalRows: res.TotalRows, Documents: make([]documentSummary, 0, len(res.Rows))}
+	lines := make([]string, 0, len(res.Rows))
+	for _, doc := range res.Rows {
+		out.Documents = append(out.Documents, documentSummary{
+			ID:       doc.ID,
+			Status:   string(doc.Status),
+			Type:     doc.Type,
+			Created:  formatTime(doc.Created),
+			Modified: formatTime(doc.Modified),
+		})
+		lines = append(lines, documentLine(doc.ID, doc.Attributes.Title))
+	}
+
+	text, err := renderDocumentList(len(out.Documents), out.TotalRows, lines)
+	if err != nil {
+		return nil, listDocumentsOutput{}, err
+	}
+	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
+	return result, out, nil
 }
 
 // searchDocumentsInput are search_documents' parameters.
@@ -770,6 +789,7 @@ type getDocumentInput struct {
 // section's own doc comment on why exactly these and no more. Title is
 // deliberately absent — see documentDetail.
 type getDocumentOutput struct {
+	untrustedTextField
 	ID       string `json:"id"`
 	Status   string `json:"status"`
 	Type     string `json:"type,omitempty"`
@@ -892,6 +912,7 @@ func documentFromService(ctx context.Context, service documentReadService, id st
 	if err != nil {
 		return nil, getDocumentOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolGetDocument, err)
 	}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
 	rec.Record(ctx, id)
 	return result, out, nil
 }
@@ -990,6 +1011,7 @@ func documentsSyncFromService(ctx context.Context, service documentReadService, 
 	if err != nil {
 		return nil, genericSyncOutput[documentSummary]{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolSyncDocuments, err)
 	}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
 	return result, out, nil
 }
 
@@ -1008,6 +1030,7 @@ type listDocumentConversationsInput struct {
 // never participant names (see conversationSummary's own doc comment on
 // why).
 type listDocumentConversationsOutput struct {
+	untrustedTextField
 	Conversations []conversationSummary `json:"conversations"`
 }
 
@@ -1086,5 +1109,6 @@ func documentConversationsFromService(ctx context.Context, service documentReadS
 	if err != nil {
 		return nil, listDocumentConversationsOutput{}, fmt.Errorf("fileee-mcp: tools: %s: %w", ToolListDocumentConversations, err)
 	}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
 	return result, out, nil
 }

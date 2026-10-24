@@ -30,11 +30,14 @@
 // written by the account holder) and is framed the same way: NEVER as a
 // structured field on updateContactOutput (which lands in
 // CallToolResult.StructuredContent), only as wrapUntrustedLines'd text
-// in CallToolResult.Content (ADR-0013) — exactly the same channel
+// in CallToolResult.Content (ADR-0013) and, byte-identical, in the one
+// framed untrustedText field (ADR-0021, attachUntrustedStructured in
+// read_generic.go) — exactly the same channel
 // getDocumentHandler's own documentFromService (read.go) already uses
 // for a document's Title, never returned as a field on
 // getDocumentOutput either. Every read tool in this package keeps its
-// StructuredContent 100% foreign-text-free by construction
+// StructuredContent free of UNFRAMED foreign text by construction —
+// foreign text appears there only inside untrustedText (ADR-0021)
 // (mustNotLeakUntrustedLine, read_generic.go, for the generic
 // descriptors; a bespoke handler like this one has no such automatic
 // check, so it must hold the same line by hand — see
@@ -113,10 +116,12 @@ type updateContactInput struct {
 // — never Fileee's own. The updated contact's own display name is
 // returned too, but NEVER as a field here (that would leak foreign text
 // into CallToolResult.StructuredContent) — only as clearly marked,
-// untrusted text in CallToolResult.Content, exactly like every read
+// untrusted text in CallToolResult.Content and the framed untrustedText
+// field (ADR-0021), exactly like every read
 // tool's own UntrustedLine/wrapUntrustedLines convention (see this
 // file's own doc comment, updateContactResult below, and ADR-0013).
 type updateContactOutput struct {
+	untrustedTextField
 	// ID is the updated contact's ID, unchanged by this call.
 	ID string `json:"id"`
 	// Modified is Fileee's own record of when the update was applied.
@@ -190,11 +195,15 @@ func contactDisplayName(c *fileee.Contact) string {
 // call documentFromService (read.go) already makes for a document's
 // Title — never into a field of the returned updateContactOutput: that
 // struct lands in CallToolResult.StructuredContent, and every tool in
-// this package keeps that channel free of foreign text (see this
-// file's own package doc comment).
+// this package keeps that channel free of UNFRAMED foreign text — the
+// display name reaches it only inside the framed untrustedText field
+// (attachUntrustedStructured, read_generic.go, ADR-0021; see this file's own
+// package doc comment).
 func updateContactResult(boundary string, upd *fileee.Contact) (*mcp.CallToolResult, updateContactOutput) {
 	result := wrapUntrustedLinesWithBoundary(boundary, []string{contactDisplayName(upd)})
-	return result, updateContactOutput{ID: upd.ID, Modified: upd.Modified}
+	out := updateContactOutput{ID: upd.ID, Modified: upd.Modified}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
+	return result, out
 }
 
 // updateContactFromService is updateContactHandler's logic below client
@@ -328,6 +337,7 @@ type createContactInput struct {
 // that would land in CallToolResult.StructuredContent (see
 // createContactResult below).
 type createContactOutput struct {
+	untrustedTextField
 	// ID is the newly created contact's ID.
 	ID string `json:"id"`
 }
@@ -357,7 +367,9 @@ type createContactOutput struct {
 // invariant).
 func createContactResult(boundary string, created *fileee.Contact) (*mcp.CallToolResult, createContactOutput) {
 	result := wrapUntrustedLinesWithBoundary(boundary, []string{contactDisplayName(created)})
-	return result, createContactOutput{ID: created.ID}
+	out := createContactOutput{ID: created.ID}
+	attachUntrustedStructured(result, &out, &out.UntrustedText)
+	return result, out
 }
 
 // createContactFromService is createContactHandler's logic below client

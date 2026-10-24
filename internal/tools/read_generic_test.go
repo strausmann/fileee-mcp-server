@@ -263,12 +263,12 @@ func TestGetFromServiceLiefertZusammenfassungUndGerahmtenFremdtextBeiErfolg(t *t
 	}
 
 	// Text-Teil: der fremdbestimmte Text erscheint gerahmt im Textinhalt.
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, marker) {
 		t.Errorf("Textinhalt enthaelt nicht den fremdbestimmten Text (Erkennungswert fehlt): %q", text.Text)
@@ -338,12 +338,12 @@ func TestListFromServiceLiefertMehrereEintraegeUndSammeltGerahmtenFremdtext(t *t
 	}
 
 	// Beide gerahmten Texte werden gesammelt und gemeinsam ausgeliefert.
-	if len(result.Content) != 1 {
-		t.Fatalf("Content hat %d Eintraege, want 1", len(result.Content))
+	if len(result.Content) != 2 {
+		t.Fatalf("Content hat %d Eintraege, want 2 (JSON, framed text)", len(result.Content))
 	}
-	text, ok := result.Content[0].(*mcp.TextContent)
+	text, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[0])
+		t.Fatalf("Content[0] ist %T, want *mcp.TextContent", result.Content[1])
 	}
 	if !strings.Contains(text.Text, marker1) || !strings.Contains(text.Text, marker2) {
 		t.Errorf("Textinhalt enthaelt nicht beide fremdbestimmten Zeilen: %q", text.Text)
