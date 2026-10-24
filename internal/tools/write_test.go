@@ -144,9 +144,9 @@ func (f *fakeContactWriteService) Update(_ context.Context, entity *fileee.Conta
 // (read_document_test.go) already proves for a document's Title, NEVER
 // as a field of the returned updateContactOutput (which lands in
 // CallToolResult.StructuredContent — see this file's own doc comment
-// and write.go's package doc comment on why that channel stays
-// foreign-text-free for every tool in this package, write tools
-// included).
+// and write.go's package doc comment on why that channel never carries
+// UNFRAMED foreign text for any tool in this package, write tools
+// included — framed, it appears only in untrustedText, ADR-0021).
 func TestUpdateContactPatchMerge(t *testing.T) {
 	service := &fakeContactWriteService{
 		getResult: &fileee.Contact{ID: "c1", FirstName: "Alice", LastName: "Nachname", Email: "alt@x.de"},
@@ -187,8 +187,8 @@ func TestUpdateContactPatchMerge(t *testing.T) {
 	// TestDocumentFromServiceLiefertZusammenfassungUndGerahmtenTitelBeiErfolg
 	// (read_document_test.go) fuer ein Dokument-Title.
 	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Alice") {
-		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen strukturiert — der gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen ungerahmt — der gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
 	if len(result.Content) != 2 {
@@ -482,8 +482,8 @@ func TestCreateContactHappyPath(t *testing.T) {
 	// Struktur-Teil bleibt frei vom fremdbestimmten Anzeigenamen —
 	// dieselbe Pruefung wie TestUpdateContactPatchMerge oben.
 	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Max") {
-		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen strukturiert — der gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Anzeigenamen ungerahmt — der gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
 	if len(result.Content) != 2 {

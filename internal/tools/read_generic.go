@@ -37,10 +37,11 @@ import (
 // Summarize must return only fields Fileee itself assigns — never a value
 // that could contain third-party free text (a document's title, a
 // contact's note). UntrustedLine is the deliberate escape hatch for that
-// foreign content: it never appears in Summarize's return value, only in
-// the accompanying text content, framed by wrapUntrustedLines (ADR-0013;
-// see also listDocumentsHandler's own doc comment for why the same rule
-// applies there).
+// foreign content: it never appears in Summarize's return value, only
+// framed by wrapUntrustedLines — in the accompanying text content and,
+// byte-identical, in the output's one untrustedText field (ADR-0013,
+// ADR-0021; see also listDocumentsHandler's own doc comment for why the
+// same rule applies there).
 //
 // Nothing about Summarize's and UntrustedLine's SIGNATURES enforces that
 // separation — they are two independent functions a descriptor author

@@ -146,8 +146,8 @@ func TestCreateReminderHappyPath(t *testing.T) {
 	// Struktur-Teil bleibt frei von der fremdbestimmten Beschreibung —
 	// dieselbe Pruefung wie TestCreateContactHappyPath (write_test.go).
 	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Rechnung bezahlen") {
-		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung strukturiert — die gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung ungerahmt — die gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
 	if len(result.Content) != 2 {
@@ -366,8 +366,8 @@ func TestUpdateReminderPatchMerge(t *testing.T) {
 		t.Error("out.Done = false, want true")
 	}
 	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Rechnung") {
-		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung strukturiert — die gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+		t.Errorf("out = %+v enthaelt die fremdbestimmte Beschreibung ungerahmt — die gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
 	if len(result.Content) != 2 {

@@ -722,8 +722,8 @@ func TestUpdateDocumentPatchMerge(t *testing.T) {
 	// fremdbestimmten Titel — dieselbe Pruefung wie
 	// TestUpdateContactPatchMerge (write_test.go) fuer den Anzeigenamen.
 	if strings.Contains(fmt.Sprint(withoutFrame(out)), "Neuer Titel") {
-		t.Errorf("out = %+v enthaelt den fremdbestimmten Titel strukturiert — der gehoert "+
-			"ausschliesslich gerahmt in CallToolResult.Content, nie in StructuredContent", out)
+		t.Errorf("out = %+v enthaelt den fremdbestimmten Titel ungerahmt — der gehoert "+
+			"nie UNGERAHMT in StructuredContent — gerahmt steht er nur in untrustedText (ADR-0021)", out)
 	}
 
 	if len(result.Content) != 2 {

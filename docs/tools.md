@@ -46,7 +46,10 @@ Block in **beiden** Kanälen:
 Fremdtext steht nie ungerahmt in einem der beiden Kanäle. Werkzeuge ohne Fremdtext sind unverändert:
 `content` trägt dort nur das vom SDK erzeugte JSON, `untrustedText` entfällt. Bei `list_documents`
 steht vor dem gerahmten Block in `content` zusätzlich die Zusammenfassungszeile „Returned N of M
-total document(s).“; `untrustedText` enthält nur den Block. Die Ausgabeschemata der allgemeinen
+total document(s).“; `untrustedText` enthält nur den Block. **Sonderfall `list_documents` ohne
+Treffer:** Es gibt nichts zu rahmen, also auch keinen JSON-Block und kein `untrustedText` — `content`
+trägt nur die Zeile „Returned 0 of N total document(s).“, die Metadaten stehen allein in
+`structuredContent`. Die Ausgabeschemata der allgemeinen
 Werkzeuge für Schlagworte, Dokumenttypen und Schemata (`list_`/`get_`/`sync_`) deklarieren das Feld
 ebenfalls, befüllen es aber nie — ihre Namen vergibt der Kontoinhaber selbst.
 

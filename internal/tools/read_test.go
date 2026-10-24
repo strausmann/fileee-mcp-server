@@ -943,3 +943,82 @@ func TestListDocumentsSurfacesALoginRejectionAsAToolError(t *testing.T) {
 			"failure as an unmapped caller and must not say \"access denied\"", text)
 	}
 }
+
+// newReminderServer starts a mock Fileee instance that completes the login
+// handshake and answers POST /api/reminders/rest (create_reminder) with body.
+func newReminderServer(t *testing.T, body string) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/f/start", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("POST /api/f/existent", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"existent":true,"twoFactorAuthEnabled":false}`))
+	})
+	mux.HandleFunc("POST /api/f/login", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "sess"})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"loggedIn":true}`))
+	})
+	mux.HandleFunc("GET /api/f/user-session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"authorized":true,"secondsBlocked":0}`))
+	})
+	mux.HandleFunc("POST /api/reminders/rest", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// TestCreateReminderReturnsForeignTextInBothChannelsOverASession is the
+// session-level proof for a WRITE tool (ADR-0021): the SDK's output-schema
+// validation accepts the result (a failure would surface as a tool error),
+// untrustedText sits in structuredContent, and content holds the metadata JSON
+// block followed by the framed block.
+func TestCreateReminderReturnsForeignTextInBothChannelsOverASession(t *testing.T) {
+	srv := newReminderServer(t, `{"id":"r-1","description":"Rechnung-ZZ9 bezahlen","done":false}`)
+	pool := testPool(t, srv, accounts.NewSingle(fileee.Credentials{Username: "alice@example.invalid", Password: "pw"}))
+	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	tools.RegisterAll(mcpServer, pool, tools.ServerInfo{}, testLogger(t), testRec(t))
+	idp := testidp.New(t)
+	httpSrv := newGangwayServer(t, idp, mcpServer)
+
+	// mustCall fails on IsError, which is how an output-schema rejection shows up.
+	res := mustCall(t, connectAs(t, httpSrv, idp, "any-subject"), tools.ToolCreateReminder,
+		map[string]any{"description": "Rechnung-ZZ9 bezahlen"})
+
+	structured, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want a JSON object", res.StructuredContent)
+	}
+	if structured["id"] != "r-1" {
+		t.Errorf("structured id = %v, want r-1", structured["id"])
+	}
+	field, _ := structured["untrustedText"].(string)
+	if !strings.Contains(field, "Rechnung-ZZ9") || boundaryPattern.FindStringSubmatch(field) == nil {
+		t.Errorf("untrustedText lacks the description or the boundary: %q", field)
+	}
+	delete(structured, "untrustedText")
+	if rest, _ := json.Marshal(structured); strings.Contains(string(rest), "Rechnung-ZZ9") {
+		t.Errorf("description leaked outside untrustedText: %s", rest)
+	}
+
+	if len(res.Content) != 2 {
+		t.Fatalf("Content has %d blocks, want 2 (JSON, framed text)", len(res.Content))
+	}
+	jsonBlock := res.Content[0].(*mcp.TextContent).Text
+	var meta struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(jsonBlock), &meta); err != nil || meta.ID != "r-1" {
+		t.Errorf("Content[0] is not the metadata JSON (err=%v): %q", err, jsonBlock)
+	}
+	if strings.Contains(jsonBlock, "Rechnung-ZZ9") || strings.Contains(jsonBlock, "untrusted") {
+		t.Errorf("Content[0] carries foreign text or a frame: %q", jsonBlock)
+	}
+	if !strings.HasSuffix(framedText(t, res), field) {
+		t.Error("Content[1] does not end with the untrustedText block")
+	}
+}
