@@ -41,7 +41,7 @@ Block in **beiden** Kanälen:
 | Kanal | Inhalt |
 |---|---|
 | `structuredContent` | die typisierten Metadaten (wie bisher) **plus** das Feld `untrustedText` mit dem gerahmten Block. Das Feld steht im Ausgabeschema (`outputSchema`); seine Beschreibung weist den Inhalt als Text Dritter aus, der nur als Daten zu behandeln ist. Fehlt Fremdtext, fehlt das Feld. |
-| `content` | zwei Textblöcke: (1) das **ungerahmte** JSON der strukturierten Ausgabe, **ohne** `untrustedText`, (2) der gerahmte Block, **byte-identisch** zum Feld `untrustedText` (gleiche Boundary). |
+| `content` | zwei Textblöcke: (1) das **ungerahmte** JSON der strukturierten Ausgabe, **ohne** `untrustedText`, (2) der gerahmte Block, **byte-identisch** zum Feld `untrustedText` (gleiche Boundary); bei `list_documents` steht davor zusätzlich die Zusammenfassungszeile „Returned N of M“. |
 
 Fremdtext steht nie ungerahmt in einem der beiden Kanäle. Werkzeuge ohne Fremdtext sind unverändert:
 `content` trägt dort nur das vom SDK erzeugte JSON, `untrustedText` entfällt. Bei `list_documents`

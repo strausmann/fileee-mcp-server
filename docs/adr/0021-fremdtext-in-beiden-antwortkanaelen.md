@@ -38,7 +38,7 @@ auswertet. Jedes Werkzeug, das Fremdtext liefert, gibt deshalb **dasselbe in bei
    die den Inhalt als Text Dritter ausweist, der nur als Daten zu behandeln ist. Es wird nichts
    außerhalb des Schemas eingeschleust, weil manche Clients gegen `outputSchema` validieren.
 2. **`content` bekommt zwei Blöcke:** das **ungerahmte** JSON der strukturierten Ausgabe **ohne**
-   `untrustedText`, danach der gerahmte Block, byte-identisch zum Feld.
+   `untrustedText`, danach der gerahmte Block, byte-identisch zum Feld (Ausnahme `list_documents`: dort steht vor dem Rahmen zusätzlich die Zusammenfassungszeile „Returned N of M“, die nicht im Feld steht).
 3. **Der Rahmen bleibt die Sicherheitsgrenze.** Fremdtext steht nie ungerahmt in einem Kanal:
    weder im JSON-Block (er wird mit geleertem Feld erzeugt) noch als eigenes Strukturfeld ohne
    Rahmen. Das Feld bekommt Text erst ab dem ersten Öffnungs-Tag des Rahmens.
