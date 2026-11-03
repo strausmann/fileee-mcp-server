@@ -84,7 +84,7 @@ und Erfolg zurück).
 |---|---|
 | `list_documents` | Listet Dokumente, zuletzt geänderte zuerst, mit ID und Metadaten (Status, Typ, Zeitstempel); der Titel steht getrennt gerahmt im Text. |
 | `search_documents` | Volltextsuche über Dokumente, liefert nur Trefferzahl und IDs (relevanteste zuerst) — **keine** Titel, keine sonstigen Metadaten (go-fileees `Documents.Search` liefert selbst nichts anderes). |
-| `get_document` | Lädt ein Dokument per Kennung: Metadaten, Seitenanzahl, Schlagwort-Kennungen, Titel gerahmt. Gibt **nicht** die Datei selbst zurück (dafür `get_document_pdf`) und sucht **nicht** nach Titel. |
+| `get_document` | Lädt ein Dokument per Kennung: Metadaten, Seitenanzahl, `pages` mit echten Seiten-IDs und aktueller `imageVersion` in Fileee-Reihenfolge, Schlagwort-Kennungen, Titel gerahmt. Seitenmetadaten stehen in beiden Antwortkanälen, auch ohne Titel; ein Dokument ohne Seiten liefert `pages: []`. Gibt **nicht** die Datei selbst zurück (dafür `get_document_pdf`) und sucht **nicht** nach Titel. |
 | `sync_documents` | Gleicht Dokumente inkrementell ab (Cursor-basiert): geänderte/neue Dokumente strukturiert, gelöschte IDs, neuer Cursor, Titel gerahmt. Nimmt **keinen** Cursor eines anderen Abgleich-Werkzeugs entgegen und sucht **nicht** nach Titel. |
 | `list_document_conversations` | Listet die Konversationen, in denen ein Dokument geteilt wurde (Kennung, Typ, Art, Teilnehmerzahl), Betreff gerahmt. Gibt **keine** Teilnehmernamen oder Nachrichteninhalte zurück und sucht **nicht** nach Dokumenttitel. |
 
@@ -151,8 +151,25 @@ nennt, nie mit einer stillschweigend gekürzten Datei.
 | Werkzeug | Was es tut und was nicht |
 |---|---|
 | `get_document_pdf` | Lädt die Original-PDF-Datei eines Dokuments (max. 8 MiB). Gibt **nicht** ein Seitenbild zurück (dafür `get_page_image`) und **nicht** den OCR-Text (dafür `get_page_ocr`). |
-| `get_page_image` | Lädt das gerenderte Bild einer Seite — Fallback ohne PDF (max. 8 MiB); braucht die aktuelle Bildversion der Seite. Gibt **nicht** den OCR-Text zurück und liefert **nur eine** Seite je Aufruf. |
+| `get_page_image` | Lädt das gerenderte Bild einer Seite — Fallback ohne PDF oder bei fehlender PDF-Unterstützung des Clients (max. 8 MiB). Direkt zuvor `get_document` laden: `pages[].id` als `pageId`, `pages[].imageVersion` als `version` verwenden. Gibt **nicht** den OCR-Text zurück und liefert **nur eine** Seite je Aufruf. |
 | `get_page_ocr` | Führt Fileees OCR-Erkennung für eine Seite aus. Der erkannte Text ist der **am stärksten fremdbestimmte Inhalt im ganzen Server** und erscheint ausschliesslich gerahmt (in `content` und im Feld `untrustedText`, siehe „Antwortform“ oben). Strukturiert kommen **nur** Tokenanzahl und Koordinaten/Fileees eigene Token-Kennung zurück — **niemals** der Text selbst unter einem gewöhnlichen Strukturfeld. |
+
+**Dokumentinhalt lesen:** Zuerst `get_document` mit der Dokument-ID aufrufen. Die
+Seiten-IDs stammen aus `pages[].id`; sie lassen sich nicht aus der Dokument-ID oder
+einem angehängten Seitensuffix ableiten. Mit einer solchen ID liest `get_page_ocr`
+den erkannten Text. Ist kein OCR-Text vorhanden oder wird das Layout benötigt,
+`get_document` unmittelbar vor jedem Bildabruf neu laden und `get_page_image` mit
+der echten Seiten-ID und ihrer aktuellen `imageVersion` aufrufen. Bildversionen
+nicht zwischenspeichern.
+
+Künstliches Beispiel: `get_document {"id":"example-document"}` liefert
+`pages: [{"id":"example-page","imageVersion":42}]`. Daraus wird
+`get_page_ocr {"pageId":"example-page"}` beziehungsweise, nach erneutem Laden der
+aktuellen Seitenmetadaten, `get_page_image {"pageId":"example-page","version":42}`.
+`get_document_pdf` bleibt eine eingebettete `application/pdf`-Binärressource;
+Clients, die diesen Typ nicht unterstützen (siehe [#83](https://github.com/strausmann/fileee-mcp-server/issues/83)),
+verwenden den OCR-/Seitenbildweg. Der PDF-Download allein ist keine Bestätigung,
+dass ein Client das Dokument auswerten kann.
 
 ### Kontostand
 

@@ -276,10 +276,9 @@ func documentPDFFromService(ctx context.Context, service documentBinaryService, 
 // getPageImageInput are get_page_image's parameters. Version is
 // required and MUST come from the page's own current imageVersion —
 // go-fileee's own doc comment on DownloadPageImage (documents.go)
-// requires it to be freshly read each time, never cached. No tool in
-// this server currently exposes a page's imageVersion (get_document
-// returns only a page COUNT, not per-page detail) — a caller has to get
-// it from wherever it already tracks page metadata outside this server.
+// requires it to be freshly read each time, never cached. Load get_document
+// immediately before the image fetch and use that page's id and imageVersion
+// from its pages array; a document ID is not a page ID.
 type getPageImageInput struct {
 	PageID string `json:"pageId" jsonschema:"identifier of the page to load as an image"`
 	// Size selects Fileee's own image size: "smedium" or "medium" (the
@@ -479,8 +478,10 @@ func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger,
 			"available for a document. Returns it as image content, capped at 8 MiB with the " +
 			"same explicit over-limit failure get_document_pdf uses, never a silently truncated " +
 			"image. Requires the page's current imageVersion, freshly read, never cached — a " +
-			"stale version returns a stale or missing image. Use it only when get_document_pdf " +
-			"is not applicable. It does not return the document's OCR text and does not return " +
+			"stale version returns a stale or missing image. Load get_document first and use " +
+			"pages[].id as pageId and pages[].imageVersion as version. Use it when get_document_pdf " +
+			"is not applicable or the client cannot consume embedded PDFs. It does not return the " +
+			"document's OCR text and does not return " +
 			"more than one page per call.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get page image"},
 	}, getPageImageHandler(p, logger))
@@ -493,8 +494,8 @@ func registerBinaryTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger,
 			"marked, untrusted text, since it is copied verbatim from a document a third party " +
 			"sent or scanned — the single strongest case of foreign content this server handles. " +
 			"Use it when you need a page's actual wording, not just its existence or image. It " +
-			"does not return the text under any structured field, and it does not search by " +
-			"content.",
+			"includes the framed text in content and untrustedText. Supply pages[].id from " +
+			"get_document as pageId, never the document ID. It does not search by content.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get page OCR text"},
 	}, getPageOCRHandler(p, logger))
 }
