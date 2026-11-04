@@ -13,7 +13,7 @@ require (
 require (
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
