@@ -140,8 +140,10 @@ func RegisterAll(s *mcp.Server, p *clientpool.Pool, info ServerInfo, logger *slo
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: ToolGetDocument,
-		Description: "Load one document by its ID. Returns the document's metadata, page count " +
-			"and tag IDs; its title arrives separately as clearly marked, untrusted text. Use it " +
+		Description: "Load one document by its ID. Returns the document's metadata, page count, " +
+			"ordered page IDs with current imageVersion, and tag IDs; its title arrives separately " +
+			"as clearly marked, untrusted text. Use pages[].id for get_page_ocr or get_page_image " +
+			"and pages[].imageVersion as get_page_image's version; reload before each image fetch. Use it " +
 			"after list_documents or search_documents handed you an ID. It does not return the " +
 			"document's file — use get_document_pdf — and it does not search by title.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "Get document"},
@@ -785,7 +787,7 @@ type getDocumentInput struct {
 
 // getDocumentOutput is get_document's structured result
 // (CallToolResult.StructuredContent) — documentSummary's fields (ID,
-// Status, Type, Created, Modified) plus PageCount and TagIDs, per this
+// Status, Type, Created, Modified) plus PageCount, Pages and TagIDs, per this
 // section's own doc comment on why exactly these and no more. Title is
 // deliberately absent — see documentDetail.
 type getDocumentOutput struct {
@@ -798,11 +800,22 @@ type getDocumentOutput struct {
 	// PageCount is len(doc.Pages) — Fileee's own page count, not
 	// document content.
 	PageCount int `json:"pageCount"`
+	// Pages preserves Fileee's order and exposes only the metadata needed
+	// by the page tools, not raw page objects or document content.
+	Pages []documentPageSummary `json:"pages" jsonschema:"pages in Fileee order; id is the pageId for get_page_ocr/get_page_image and imageVersion is get_page_image's version; reload before fetching an image"`
 	// TagIDs are the tag IDs Attributes.TagIDs carries — structural
 	// foreign keys into list_tags/get_tag, not tag names themselves
 	// (which, per Aufgabe 3's referenceTagDescriptor, are the account
 	// holder's own naming anyway and would be safe either way).
 	TagIDs []string `json:"tagIds,omitempty"`
+}
+
+// documentPageSummary contains Fileee-owned identifiers and numeric image
+// versions. Do not expose the raw Page type: additional fields could carry
+// foreign text. A plain int64 normalizes Fileee's numeric/string wire versions.
+type documentPageSummary struct {
+	ID           string `json:"id" jsonschema:"actual page identifier for get_page_ocr or get_page_image; never derive it from a document ID"`
+	ImageVersion int64  `json:"imageVersion" jsonschema:"current image version to pass as get_page_image's version; reload get_document before each image fetch"`
 }
 
 // documentDetail renders doc's Fileee-owned fields as getDocumentOutput —
@@ -811,6 +824,10 @@ type getDocumentOutput struct {
 // independent of client resolution, so it is directly testable
 // (TestGetDocumentGibtTitelNichtStrukturiertZurueck).
 func documentDetail(doc *fileee.Document) getDocumentOutput {
+	pages := make([]documentPageSummary, len(doc.Pages))
+	for i, page := range doc.Pages {
+		pages[i] = documentPageSummary{ID: page.ID, ImageVersion: int64(page.ImageVersion)}
+	}
 	return getDocumentOutput{
 		ID:        doc.ID,
 		Status:    string(doc.Status),
@@ -818,6 +835,7 @@ func documentDetail(doc *fileee.Document) getDocumentOutput {
 		Created:   formatTime(doc.Created),
 		Modified:  formatTime(doc.Modified),
 		PageCount: len(doc.Pages),
+		Pages:     pages,
 		TagIDs:    doc.Attributes.TagIDs,
 	}
 }

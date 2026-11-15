@@ -33,10 +33,40 @@ import (
 // Testsuite). Diese feste Feldliste faengt jedes zusaetzliche Feld ab,
 // unabhaengig davon, ob es fremdbestimmten Text traegt oder nicht.
 func TestGetDocumentOutputFeldlisteIstAbgeschlossen(t *testing.T) {
-	want := []string{"untrustedTextField", "ID", "Status", "Type", "Created", "Modified", "PageCount", "TagIDs"}
+	want := []string{"untrustedTextField", "ID", "Status", "Type", "Created", "Modified", "PageCount", "Pages", "TagIDs"}
 	got := fieldNames(getDocumentOutput{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("getDocumentOutput-Feldliste = %v, want %v — ein neues Feld ist ein moeglicher Fremdtext-Leck und braucht eine bewusste Pruefung, nicht nur eine Anpassung dieser Liste", got, want)
+	}
+}
+
+// TestDocumentPageSummaryContainsOnlyMetadata prevents a future raw page or
+// foreign-text field from silently entering the unframed result channels.
+func TestDocumentPageSummaryContainsOnlyMetadata(t *testing.T) {
+	if got, want := fieldNames(documentPageSummary{}), []string{"ID", "ImageVersion"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("documentPageSummary fields = %v, want %v", got, want)
+	}
+}
+
+// TestDocumentPagesAreNotIssuedForWrites keeps the additional page IDs out
+// of the flat issued-ID store: only the requested document ID is recorded.
+func TestDocumentPagesAreNotIssuedForWrites(t *testing.T) {
+	ctx := ctxMitIdentitaet(t, "alice")
+	rec := issued.New(time.Hour, 100)
+	service := &fakeDocumentService{getResult: &fileee.Document{
+		ID: "document", Pages: []fileee.Page{{ID: "first-page"}, {ID: "second-page"}},
+	}}
+	_, out, err := documentFromService(ctx, service, "document", rec)
+	if err != nil {
+		t.Fatalf("documentFromService: %v", err)
+	}
+	if err := rec.Check(ctx, "document"); err != nil {
+		t.Fatalf("requested document was not recorded: %v", err)
+	}
+	for _, page := range out.Pages {
+		if err := rec.Check(ctx, page.ID); err == nil {
+			t.Fatalf("page ID %q was recorded as a write target", page.ID)
+		}
 	}
 }
 
