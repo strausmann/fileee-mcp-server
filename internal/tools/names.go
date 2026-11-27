@@ -61,6 +61,11 @@ const (
 	// people-data services' registered list/get tool names
 	// (read_people.go, Aufgabe 4) — readServiceDescriptor's own list/get
 	// pair, this time for Contacts, Reminders and Conversations.
+	// ToolListReviewDocuments filters documents by Dashboard or archive state.
+	ToolListReviewDocuments = "list_review_documents"
+	// ToolGetDocumentReview returns selected extracted metadata for one document.
+	ToolGetDocumentReview = "get_document_review"
+
 	ToolListContacts      = "list_contacts"
 	ToolGetContact        = "get_contact"
 	ToolListReminders     = "list_reminders"

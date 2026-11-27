@@ -288,7 +288,7 @@ func writeJSON(w http.ResponseWriter, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handWrittenReadTools sind genau die zehn Werkzeuge, für die diese
+// handWrittenReadTools sind die Werkzeuge, für die diese
 // Aufgabe (Aufgabe 5) die Aufnahme verantwortet — benannt über die
 // exportierten Konstanten, die names.go bereits definiert, nie über ein
 // rohes String-Literal, damit eine Umbenennung einer dieser Konstanten
@@ -304,6 +304,8 @@ var handWrittenReadTools = map[string]bool{
 	tools.ToolGetDocumentPDF:            true,
 	tools.ToolGetPageImage:              true,
 	tools.ToolGetPageOCR:                true,
+	tools.ToolListReviewDocuments:       true,
+	tools.ToolGetDocumentReview:         true,
 }
 
 // knownNonEntityReadTools sind die fünf Werkzeuge, die überhaupt KEINE

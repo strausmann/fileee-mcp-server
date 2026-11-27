@@ -33,6 +33,8 @@ github.com/strausmann/go-fileee v0.2.1/go.mod h1:Lebef2B1ToOOrccB4Up3GCaLiG5vJib
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0 h1:TivCn/peBQ7UY8ooIcPgZFpTNSz0Q2U6UrFlUfqbe0Q=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
+github.com/tomgutt/go-fileee v0.0.0-20261127080209-ed74655ee072 h1:aFomW3VZGVx94yCPQqfPYSiyCI8rWOZF73zhySGultI=
+github.com/tomgutt/go-fileee v0.0.0-20261127080209-ed74655ee072/go.mod h1:Lebef2B1ToOOrccB4Up3GCaLiG5vJibLy6blc4+2ZXE=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
 github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT040gmv5BQTMR2HP4=
 golang.org/x/oauth2 v0.36.0 h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=
