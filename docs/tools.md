@@ -9,11 +9,11 @@ Benutzer (Always allow / Needs approval / Blocked), nicht der Server. Details un
 [ADR-0018](adr/0018-werkzeug-freigabe-und-client-steuerung.md) (löst
 [ADR-0011](adr/0011-capability-gating.md)s serverseitiges Capability-Gating ab).
 
-Der heutige Stand: **32 lesende fileee-Werkzeuge** (unten nach Sachgebiet gruppiert) plus **8
+Der heutige Stand: **33 lesende fileee-Werkzeuge** (unten nach Sachgebiet gruppiert) plus **8
 schreibende fileee-Werkzeuge** (eigener Abschnitt weiter unten, ebenfalls nach Sachgebiet
 gruppiert) plus **4 operative Werkzeuge**, die keine Fileee-Daten berühren (`get_runtime_stats`,
 `get_tool_manifest`, `self_check`, `whoami`; siehe deren eigene Beschreibung im Code, nicht Teil
-einer der beiden Gruppierungen nach Sachgebiet) — **44 Werkzeuge** insgesamt. Jede Zusammenfassung
+einer der beiden Gruppierungen nach Sachgebiet) — **45 Werkzeuge** insgesamt. Jede Zusammenfassung
 fasst die Beschreibung zusammen, die das jeweilige Werkzeug selbst im Code trägt (die eigentliche
 Quelle) — sie erfindet nichts Neues. Teilende und löschende Werkzeuge existieren noch nicht und
 entstehen in künftigen Umsetzungsschritten (siehe README, Abschnitt „Werkzeuge").
@@ -60,6 +60,7 @@ ebenfalls, befüllen es aber nie — ihre Namen vergibt der Kontoinhaber selbst.
 | `list_documents`, `sync_documents`, `get_document` | Dokumenttitel | wer das Dokument verfasst/eingescannt hat |
 | `list_companies`, `sync_companies`, `get_company` | Firmenname | wer das Dokument gesendet hat, sofern automatisch erkannt (`FromUserDB=false`) |
 | `list_contacts`, `sync_contacts`, `get_contact` | Kontaktname | der Kontakt selbst, oder aus einem Dokument extrahiert |
+| `search_contacts` | Kontakt- und Firmenname, Adresse und Kontaktdaten, nach Kontakt-ID zugeordnet | vorhandene Kontakt- und Firmeneinträge |
 | `list_reminders`, `sync_reminders`, `get_reminder` | Erinnerungs-Beschreibung | kann aus dem verknüpften Dokument übernommen sein |
 | `list_conversations`, `sync_conversations`, `get_conversation`, `list_document_conversations` | Konversations-Betreff | wer auf der anderen Seite der Konversation steht |
 | `get_page_ocr` | erkannter Seitentext | wörtlich das, was auf dem Papier eines Dritten steht — der stärkste Fall im ganzen Server |
@@ -119,6 +120,7 @@ Abgleich-Werkzeug rahmt ihn getrennt und lässt ihn aus der Struktur weg.
 |---|---|
 | `list_contacts` | Listet Kontakte (Kennung, Firmen-Kennung, Kontakttyp/-status, Herkunft, Dokumentzähler); Kontaktname gerahmt. Sucht **nicht** nach Namen, gibt **nicht** E-Mail/Telefon/Adresse zurück. |
 | `get_contact` | Lädt einen Kontakt per Kennung, Kontaktname gerahmt. Sucht **nicht** nach Namen, gibt **nicht** E-Mail/Telefon/Adresse zurück. |
+| `search_contacts` | Sucht nach einem kurzen Personen- oder Firmennamen. Liefert vorhandene Kandidaten mit Kontakt-ID, Firmenzuordnung und Haupt- oder Vorzugskontakt. Identitätsdetails stehen im gerahmten Text und sind nach Kontakt-ID zugeordnet. |
 | `sync_contacts` | Gleicht Kontakte inkrementell ab, Name gerahmt. |
 | `list_reminders` | Listet Erinnerungen (Kennung, verknüpfte Dokument-Kennung, Startdatum, Erledigt-Status); Beschreibung gerahmt. Gibt **nicht** die ausführliche Beschreibung zurück. |
 | `get_reminder` | Lädt eine Erinnerung per Kennung, Beschreibung gerahmt. Gibt **nicht** die ausführliche Beschreibung zurück. |
@@ -126,6 +128,22 @@ Abgleich-Werkzeug rahmt ihn getrennt und lässt ihn aus der Struktur weg.
 | `list_conversations` | Listet Konversationen (Kennung, Typ, Art, Teilnehmerzahl); Betreff gerahmt. Gibt **keine** Teilnehmernamen oder Nachrichteninhalte zurück (auch die sind fremdbestimmt, siehe unten). |
 | `get_conversation` | Lädt eine Konversation per Kennung, Betreff gerahmt. Gibt **keine** Teilnehmernamen oder Nachrichteninhalte zurück. |
 | `sync_conversations` | Gleicht Konversationen inkrementell ab, Betreff gerahmt. |
+
+Dieser Aufruf sucht nach einem erkannten Rechnungsabsender.
+
+```json
+{"query":"Stadtwerke Beispielstadt","limit":10}
+```
+
+`search_contacts` verwendet Fileees Namensfilter und lädt die Kontaktinformationen
+der gewählten Trefferseite. Die Suche ist rein lesend. `start` beginnt bei
+`0`, `limit` liegt zwischen `1` und `100` (Standard `20`). Bei weiteren
+Treffern enthält `nextStart` den nächsten Offset. Ein Suchstand wird pro
+Fileee-Konto und Suchbegriff bis zu zwei Minuten wiederverwendet. Mit
+`refresh:true` kann er neu geladen werden. Bei mehr als 1.000 passenden
+Firmeneinträgen verlangt das Werkzeug einen genaueren Suchbegriff.
+Fehlende Kontaktdetails sind im Ergebnis gekennzeichnet. Aus einer unvollständigen
+Suche lässt sich nicht ableiten, dass ein Kontakt fehlt.
 
 **Nebenbefund zu Konversationen:** Nicht nur der Betreff ist fremdbestimmt — auch jeder
 Teilnehmername und jeder Nachrichtentext sind vom jeweiligen Teilnehmer verfasst, nicht vom

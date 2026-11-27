@@ -133,12 +133,16 @@ ohnehin nicht über den einzelnen Request hinaus gibt.
 
 ## Werkzeuge
 
-Der Katalog entsteht schrittweise. Die lesenden Werkzeuge sind vollständig angemeldet — **32
+Der Katalog entsteht schrittweise. Die lesenden Werkzeuge sind vollständig angemeldet — **33
 Werkzeuge** über Dokumente, Stammdaten (Schlagworte, Firmen, Dokumenttypen, Dokumenttyp-Schemata),
 Kontakte/Erinnerungen/Konversationen, Boxen, PDF-/Seitenbild-Download mit harter Größenobergrenze,
 Seiten-OCR und Kontostand — vollständig in [`docs/tools.md`](docs/tools.md) dokumentiert,
 inklusive der Absicherung gegen präparierte, fremdbestimmte Inhalte (Dokumenttitel, Firmen-/
 Kontaktnamen, Erinnerungstexte, Konversationsbetreffs, erkannter OCR-Text).
+
+`search_contacts` sucht gezielt nach vorhandenen Kontakten, etwa nach dem
+Absender einer gescannten Rechnung. Treffer enthalten Kontakt- und Firmen-IDs
+sowie die Zuordnung zu Haupt- und Vorzugskontakten.
 
 Die schreibenden Werkzeuge sind ebenfalls vollständig angemeldet — **8 Werkzeuge** über Kontakte
 (`create_contact`/`update_contact`), Erinnerungen (`create_reminder`/`update_reminder`), Boxen

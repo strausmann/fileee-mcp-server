@@ -68,6 +68,9 @@ const (
 	ToolListConversations = "list_conversations"
 	ToolGetConversation   = "get_conversation"
 
+	// ToolSearchContacts is the read-only name lookup for existing contacts.
+	ToolSearchContacts = "search_contacts"
+
 	// ToolGetDocument, ToolSyncDocuments and ToolListDocumentConversations
 	// are the three document-detail tools' registered names
 	// (Aufgabe 5-7, read.go) — bespoke handlers, not registered through

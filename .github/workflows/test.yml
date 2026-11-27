@@ -250,6 +250,7 @@ jobs:
             internal/tools/read.go:80 \
             internal/tools/read_sync.go:80 \
             internal/tools/read_people.go:80 \
+            internal/tools/read_contact_search.go:80 \
             internal/tools/names.go:80 \
             internal/tools/read_generic.go:75 \
             internal/tools/read_reference.go:75 \
