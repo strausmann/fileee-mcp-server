@@ -22,3 +22,6 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
+
+// Vorläufig für den Entwurf, bis die Dokumentänderungen in go-fileee veröffentlicht sind.
+replace github.com/strausmann/go-fileee => github.com/tomgutt/go-fileee v0.0.0-20261127080209-ed74655ee072
