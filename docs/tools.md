@@ -9,11 +9,11 @@ Benutzer (Always allow / Needs approval / Blocked), nicht der Server. Details un
 [ADR-0018](adr/0018-werkzeug-freigabe-und-client-steuerung.md) (löst
 [ADR-0011](adr/0011-capability-gating.md)s serverseitiges Capability-Gating ab).
 
-Der heutige Stand: **32 lesende fileee-Werkzeuge** (unten nach Sachgebiet gruppiert) plus **8
+Der heutige Stand: **34 lesende fileee-Werkzeuge** (unten nach Sachgebiet gruppiert) plus **8
 schreibende fileee-Werkzeuge** (eigener Abschnitt weiter unten, ebenfalls nach Sachgebiet
 gruppiert) plus **4 operative Werkzeuge**, die keine Fileee-Daten berühren (`get_runtime_stats`,
 `get_tool_manifest`, `self_check`, `whoami`; siehe deren eigene Beschreibung im Code, nicht Teil
-einer der beiden Gruppierungen nach Sachgebiet) — **44 Werkzeuge** insgesamt. Jede Zusammenfassung
+einer der beiden Gruppierungen nach Sachgebiet) — **46 Werkzeuge** insgesamt. Jede Zusammenfassung
 fasst die Beschreibung zusammen, die das jeweilige Werkzeug selbst im Code trägt (die eigentliche
 Quelle) — sie erfindet nichts Neues. Teilende und löschende Werkzeuge existieren noch nicht und
 entstehen in künftigen Umsetzungsschritten (siehe README, Abschnitt „Werkzeuge").
@@ -57,6 +57,8 @@ ebenfalls, befüllen es aber nie — ihre Namen vergibt der Kontoinhaber selbst.
 
 | Werkzeug(e) | Fremdbestimmtes Feld | Herkunft |
 |---|---|---|
+| `list_review_documents` | Dokumenttitel | aus Fileee übernommen |
+| `get_document_review` | Unterstützte extrahierte Feldwerte | aus Fileee übernommen |
 | `list_documents`, `sync_documents`, `get_document` | Dokumenttitel | wer das Dokument verfasst/eingescannt hat |
 | `list_companies`, `sync_companies`, `get_company` | Firmenname | wer das Dokument gesendet hat, sofern automatisch erkannt (`FromUserDB=false`) |
 | `list_contacts`, `sync_contacts`, `get_contact` | Kontaktname | der Kontakt selbst, oder aus einem Dokument extrahiert |
@@ -83,6 +85,8 @@ und Erfolg zurück).
 | Werkzeug | Was es tut und was nicht |
 |---|---|
 | `list_documents` | Listet Dokumente, zuletzt geänderte zuerst, mit ID und Metadaten (Status, Typ, Zeitstempel); der Titel steht getrennt gerahmt im Text. |
+| `list_review_documents` | Listet Dokumente nach Dashboard-, Archiv- oder allgemeinem Zustand. Optional mit `tagId`, `start` und `limit`; der Standard ist `dashboard`. |
+| `get_document_review` | Liefert tatsächlichen Dokumenttyp, Kontakt- und Tag-IDs, Archivzustand, Änderungszeitpunkt und Seitenkennungen. Unterstützte Feldwerte, etwa Datum und Betrag, stehen gerahmt unter `fieldValues`. |
 | `search_documents` | Volltextsuche über Dokumente, liefert nur Trefferzahl und IDs (relevanteste zuerst) — **keine** Titel, keine sonstigen Metadaten (go-fileees `Documents.Search` liefert selbst nichts anderes). |
 | `get_document` | Lädt ein Dokument per Kennung: Metadaten, Seitenanzahl, Schlagwort-Kennungen, Titel gerahmt. Gibt **nicht** die Datei selbst zurück (dafür `get_document_pdf`) und sucht **nicht** nach Titel. |
 | `sync_documents` | Gleicht Dokumente inkrementell ab (Cursor-basiert): geänderte/neue Dokumente strukturiert, gelöschte IDs, neuer Cursor, Titel gerahmt. Nimmt **keinen** Cursor eines anderen Abgleich-Werkzeugs entgegen und sucht **nicht** nach Titel. |
