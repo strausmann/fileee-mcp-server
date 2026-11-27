@@ -206,4 +206,5 @@ func registerPeopleTools(s *mcp.Server, p *clientpool.Pool, logger *slog.Logger,
 	registerReadService(s, p, logger, contactDescriptor(), rec)
 	registerReadService(s, p, logger, reminderDescriptor(), rec)
 	registerReadService(s, p, logger, conversationDescriptor(), rec)
+	registerContactSearchTool(s, p, logger)
 }

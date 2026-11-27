@@ -654,7 +654,7 @@ func TestEveryForeignTextToolDeclaresUntrustedTextInItsOutputSchema(t *testing.T
 	want := map[string]bool{}
 	for _, name := range []string{
 		"list_documents", "get_document", "sync_documents", "list_document_conversations", "get_page_ocr",
-		"list_contacts", "get_contact", "sync_contacts", "update_contact", "create_contact",
+		"list_contacts", "get_contact", "sync_contacts", "search_contacts", "update_contact", "create_contact",
 		"list_reminders", "get_reminder", "sync_reminders", "create_reminder", "update_reminder",
 		"list_conversations", "get_conversation", "sync_conversations", "update_document",
 		// The generic list/get/sync output types are shared by every service
